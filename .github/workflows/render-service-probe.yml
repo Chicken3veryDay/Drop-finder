@@ -17,7 +17,7 @@ jobs:
         with:
           ref: deploy/full-stack-hf
           fetch-depth: 0
-      - name: Query Render service and public health
+      - name: Query Render service and public release
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
@@ -40,7 +40,7 @@ jobs:
                   headers={
                       'Accept': 'application/json',
                       'Authorization': f'Bearer {token}',
-                      'User-Agent': 'DropFinder-Render-Service-Probe/1.0',
+                      'User-Agent': 'DropFinder-Render-Service-Probe/2.0',
                   },
               )
               with urllib.request.urlopen(request, timeout=30) as response:
@@ -58,33 +58,73 @@ jobs:
           if not matches:
               raise SystemExit('dropfinder-os Render service was not found')
           service = matches[0]
+          service_id = str(service.get('id') or '')
           details = service.get('serviceDetails') if isinstance(service.get('serviceDetails'), dict) else {}
           app_url = str(details.get('url') or service.get('url') or '').rstrip('/')
           if not app_url and service.get('slug'):
               app_url = f"https://{service['slug']}.onrender.com"
 
-          def public_json(path):
+          deploy_rows = api(f'/services/{service_id}/deploys?limit=5') or []
+          deploys = [row.get('deploy', row) for row in deploy_rows if isinstance(row, dict)]
+
+          def public(path, *, decode_json=True):
               request = urllib.request.Request(
                   app_url + path,
-                  headers={'User-Agent': 'DropFinder-Public-Health-Probe/1.0'},
+                  headers={'User-Agent': 'DropFinder-Public-Release-Probe/2.0'},
               )
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  return json.load(response)
+              with urllib.request.urlopen(request, timeout=90) as response:
+                  raw = response.read().decode('utf-8', 'replace')
+              return json.loads(raw) if decode_json else raw
 
           report = {
-              'schema_version': 'dropfinder-render-service-probe-v1',
+              'schema_version': 'dropfinder-render-service-probe-v2',
               'checked_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-              'service_id': service.get('id'),
+              'service_id': service_id,
               'service_name': service.get('name'),
               'service_url': app_url,
               'service_type': service.get('type'),
               'suspended': service.get('suspended'),
               'dashboard_url': service.get('dashboardUrl'),
+              'recent_deploys': [
+                  {
+                      'id': row.get('id'),
+                      'status': row.get('status'),
+                      'created_at': row.get('createdAt'),
+                      'updated_at': row.get('updatedAt'),
+                      'commit_id': (row.get('commit') or {}).get('id') if isinstance(row.get('commit'), dict) else None,
+                      'commit_message': (row.get('commit') or {}).get('message') if isinstance(row.get('commit'), dict) else None,
+                  }
+                  for row in deploys[:5]
+              ],
           }
           try:
-              report['health'] = public_json('/health')
-              report['ready'] = public_json('/ready')
-              report['status'] = 'healthy' if report['health'].get('status') == 'healthy' and report['ready'].get('ready') is True else 'unhealthy'
+              health = public('/health')
+              ready = public('/ready')
+              catalog = public('/api/catalog')
+              page = public('/', decode_json=False)
+              products = catalog.get('products') or []
+              invalid_ppg = [
+                  product for product in products
+                  if product.get('price_per_gram') is not None
+                  and product.get('pricing_confidence') not in {'exact_variant', 'exact_title'}
+              ]
+              false_four_ounce = [
+                  product for product in products
+                  if abs(float(product.get('grams') or 0) - 113.398) < 0.01
+                  and product.get('weight_source') not in {'variant', 'title'}
+              ]
+              report.update(
+                  health=health,
+                  ready=ready,
+                  status='healthy' if health.get('status') == 'healthy' and ready.get('ready') is True else 'unhealthy',
+                  product_count=len(products),
+                  exact_unit_price_count=sum(product.get('pricing_confidence') in {'exact_variant', 'exact_title'} and product.get('price_per_gram') is not None for product in products),
+                  starting_price_count=sum(product.get('price_type') == 'starting_at' for product in products),
+                  invalid_price_per_gram_count=len(invalid_ppg),
+                  false_four_ounce_count=len(false_four_ounce),
+                  rebuilt_ui=('Best verified $/g' in page and 'id="scanButton"' in page),
+                  legacy_banner_removed=('Always-available phone snapshot' not in page and 'class="stats"' not in page),
+              )
           except Exception as exc:
               report['status'] = 'warming_or_unhealthy'
               report['public_error_type'] = type(exc).__name__
@@ -98,6 +138,6 @@ jobs:
           git config user.name "DropFinder Render Service Probe"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deployment/render-service-probe.json
-          git commit -m "deploy: record live Render service probe [skip ci]"
+          git commit -m "deploy: record live pricing and UI probe [skip ci]"
           git pull --rebase origin deploy/full-stack-hf
           git push origin HEAD:deploy/full-stack-hf
