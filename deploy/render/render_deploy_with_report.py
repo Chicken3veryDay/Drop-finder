@@ -35,10 +35,29 @@ def apply_free_tier_compatibility() -> None:
     render_deploy.service_details = free_service_details
 
 
+def apply_complete_catalog_floor() -> None:
+    original = render_deploy.render_env
+
+    def complete_env(hf_token: str, operator_token: str, state_repo: str) -> list[dict[str, str]]:
+        rows = original(hf_token, operator_token, state_repo)
+        result: list[dict[str, str]] = []
+        for row in rows:
+            item = dict(row)
+            if item.get("key") == "DROPFINDER_MIN_ACTIVE_SOURCES":
+                item["value"] = "4"
+            elif item.get("key") == "DROPFINDER_MIN_PRODUCTS":
+                item["value"] = "25"
+            result.append(item)
+        return result
+
+    render_deploy.render_env = complete_env
+
+
 def main() -> int:
     error_path = Path("deployment/render-deployment-error.json")
     try:
         apply_free_tier_compatibility()
+        apply_complete_catalog_floor()
         render_complete_verifier.apply()
         code = render_deploy.main()
         if error_path.exists():
@@ -46,13 +65,15 @@ def main() -> int:
         return code
     except Exception as exc:
         report = {
-            "schema_version": "dropfinder-render-deployment-error-v2",
+            "schema_version": "dropfinder-render-deployment-error-v3",
             "status": "failed",
             "failed_at": utc_now(),
             "error_type": type(exc).__name__,
             "error": redact(str(exc))[:8000],
             "traceback": redact(traceback.format_exc())[-12000:],
             "complete_data_verifier_enabled": True,
+            "minimum_active_sources": 4,
+            "minimum_complete_products": 25,
             "render_key_present": bool(os.getenv("RENDER_API_KEY", "").strip()),
             "hf_token_present": bool(os.getenv("HF_TOKEN", "").strip()),
             "operator_token_present": bool(os.getenv("DROPFINDER_OPERATOR_TOKEN", "").strip()),
