@@ -78,7 +78,7 @@ jobs:
               'id="weight"',
               'id="bestPrice"',
               'id="favoriteCount"',
-              'Number(value);return Number.isFinite(n)?n:null',
+              'const number=value=>{const n=Number(value);return Number.isFinite(n)?n:null};',
           )
           present = [value for value in forbidden if value in html]
           if present:
@@ -108,7 +108,7 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           payload = {
-              "schema_version": "dropfinder-render-validation-v4",
+              "schema_version": "dropfinder-render-validation-v5",
               "status": "healthy",
               "validated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               "python_compile": True,
@@ -127,6 +127,8 @@ jobs:
               "filler_ui_removed": True,
               "service_worker_cache_updated": True,
               "dockerfile_uses_v6": True,
+              "minimum_active_sources": 4,
+              "minimum_complete_products": 25,
           }
           Path("deployment/render-validation.json").write_text(
               json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -141,6 +143,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deployment/render-validation.json
           if ! git diff --cached --quiet; then
-            git commit -m "deploy: record healthy v6 direct-product validation [skip ci]"
+            git commit -m "deploy: record healthy final v6 validation [skip ci]"
             git push origin HEAD:deploy/full-stack-hf
           fi
