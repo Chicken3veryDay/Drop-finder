@@ -40,6 +40,47 @@ jobs:
           test -s deploy/render/Dockerfile
           grep -q 'plan.*free' deploy/render/render_deploy.py
           grep -q 'render_autonomous_service' deploy/render/Dockerfile
+      - name: Validate browser shell
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          html = Path('cloud_pages/index.html').read_text(encoding='utf-8')
+          required = (
+              'id="query"',
+              'id="vendor"',
+              'id="stock"',
+              'id="sort"',
+              'id="favoritesOnly"',
+              'id="sourcesButton"',
+              'id="scanButton"',
+              'id="grid"',
+          )
+          missing = [value for value in required if value not in html]
+          if missing:
+              raise SystemExit(f'missing required UI hooks: {missing}')
+          forbidden = (
+              'Always-available phone snapshot',
+              'class="stats"',
+              'id="weight"',
+              'id="bestPrice"',
+              'id="favoriteCount"',
+          )
+          present = [value for value in forbidden if value in html]
+          if present:
+              raise SystemExit(f'filler UI remains: {present}')
+          scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
+          if len(scripts) != 1:
+              raise SystemExit(f'expected one inline script, found {len(scripts)}')
+          Path('/tmp/dropfinder-index.js').write_text(scripts[0], encoding='utf-8')
+          PY
+          node --check /tmp/dropfinder-index.js
+          node --check deploy/huggingface-space/operator.js
+          grep -q "dropfinder-cloud-v3" cloud_pages/sw.js
+          grep -q "exact_variant" cloud_pages/index.html
+          grep -q "starting_at" cloud_pages/index.html
       - name: Record validation result
         run: |
           set -euo pipefail
@@ -48,12 +89,17 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           payload = {
-              "schema_version": "dropfinder-render-validation-v1",
+              "schema_version": "dropfinder-render-validation-v2",
               "status": "healthy",
               "validated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               "python_compile": True,
               "worker_self_tests": True,
+              "pricing_pairing_tests": True,
               "merge_self_test": True,
+              "browser_javascript_syntax": True,
+              "operator_javascript_syntax": True,
+              "filler_ui_removed": True,
+              "service_worker_cache_updated": True,
               "dockerfile_present": True,
           }
           Path("deployment/render-validation.json").write_text(
@@ -64,6 +110,6 @@ jobs:
           git config user.name "DropFinder Render Validator"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deployment/render-validation.json
-          git commit -m "deploy: record healthy Render package validation [skip ci]"
+          git commit -m "deploy: record healthy pricing and UI validation [skip ci]"
           git pull --rebase origin deploy/full-stack-hf
           git push origin HEAD:deploy/full-stack-hf
