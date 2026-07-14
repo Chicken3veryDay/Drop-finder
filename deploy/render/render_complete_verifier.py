@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 import math
+import sys
 import urllib.parse
+from pathlib import Path
 from typing import Any
 
 import render_deploy
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from catalog_normalization import (  # type: ignore
+    NORMALIZATION_CONTRACT,
+    normalization_failures,
+)
 
 CONTRACT = "exact_price_weight_ppg_thca_stock_image_v1"
 EXACT_PRICING = {"exact_variant", "exact_title"}
@@ -60,6 +71,8 @@ def product_failures(product: dict[str, Any]) -> list[str]:
         failures.append("comparison_complete")
     if product.get("comparison_contract") != CONTRACT:
         failures.append("comparison_contract")
+    if product.get("normalization_contract") != NORMALIZATION_CONTRACT:
+        failures.append("normalization_contract")
     if price is None:
         failures.append("price")
     if grams is None:
@@ -82,7 +95,8 @@ def product_failures(product: dict[str, Any]) -> list[str]:
         failures.append("image")
     if not direct_product_url(product.get("url")):
         failures.append("direct_product_url")
-    return failures
+    failures.extend(normalization_failures(product))
+    return sorted(set(failures))
 
 
 def verify_catalog(app_url: str) -> dict[str, Any]:
@@ -98,12 +112,21 @@ def verify_catalog(app_url: str) -> dict[str, Any]:
         raise RuntimeError(f"unexpected status comparison contract: {source_status.get('comparison_contract')}")
     if runtime.get("comparison_contract") != CONTRACT:
         raise RuntimeError(f"unexpected runtime comparison contract: {runtime.get('comparison_contract')}")
+    if catalog.get("normalization_contract") != NORMALIZATION_CONTRACT:
+        raise RuntimeError(f"unexpected catalog normalization contract: {catalog.get('normalization_contract')}")
+    if source_status.get("normalization_contract") != NORMALIZATION_CONTRACT:
+        raise RuntimeError(f"unexpected status normalization contract: {source_status.get('normalization_contract')}")
+    if runtime.get("normalization_contract") != NORMALIZATION_CONTRACT:
+        raise RuntimeError(f"unexpected runtime normalization contract: {runtime.get('normalization_contract')}")
     if source_status.get("complete_products") != len(products):
         raise RuntimeError("status complete-product count mismatch")
     if runtime.get("complete_products") != len(products):
         raise RuntimeError("runtime complete-product count mismatch")
-    if source_status.get("services", {}).get("comparison_completeness_gate") != "healthy":
+    services = source_status.get("services", {})
+    if services.get("comparison_completeness_gate") != "healthy":
         raise RuntimeError("comparison completeness gate is not healthy")
+    if services.get("final_normalizer") != "healthy":
+        raise RuntimeError("final normalizer is not healthy")
 
     failures = []
     for product in products:
@@ -111,12 +134,14 @@ def verify_catalog(app_url: str) -> dict[str, Any]:
         if failed:
             failures.append({"id": product.get("id"), "source_id": product.get("source_id"), "failed": failed})
     if failures:
-        raise RuntimeError(f"hosted complete-product contract failed for {len(failures)} rows: {failures[:10]}")
+        raise RuntimeError(f"hosted product contracts failed for {len(failures)} rows: {failures[:10]}")
 
     verified["completeness"] = {
         "contract": CONTRACT,
+        "normalization_contract": NORMALIZATION_CONTRACT,
         "complete_products": len(products),
         "field_failure_count": 0,
+        "normalization_failure_count": 0,
         "direct_product_url_failures": 0,
         "sources": source_status.get("healthy_sources"),
     }
