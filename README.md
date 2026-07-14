@@ -58,6 +58,7 @@ This credential-free design uses scheduled, resumable GitHub Actions workers and
 - `cloud_pages/data/status.json` contains active service and source health.
 - `cloud_pages/data/quarantine.json` contains failed source candidates.
 - `cloud_pages/data/rejections.json` contains product-level rejection evidence.
+- `docs/REPOSITORY_MAINTENANCE.md` is the canonical future-update and rollback guide.
 
 ## Repository
 
