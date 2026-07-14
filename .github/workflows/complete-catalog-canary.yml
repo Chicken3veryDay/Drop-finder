@@ -1,0 +1,141 @@
+name: Canary complete DropFinder catalog
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/complete-catalog-canary-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-complete-catalog-canary
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile and self-test strict pipeline
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/cloud_scan.py \
+            scripts/cloud_scan_v2.py \
+            scripts/autonomous_worker.py \
+            scripts/autonomous_worker_v2.py \
+            scripts/autonomous_worker_v4.py \
+            scripts/autonomous_merge.py \
+            scripts/catalog_completeness_audit.py
+          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_merge.py --self-test
+      - name: Run complete live catalog canary
+        run: |
+          set -euo pipefail
+          rm -rf .canary-complete
+          mkdir -p .canary-complete/shards .canary-complete/output
+          python scripts/autonomous_worker_v4.py \
+            --shard 0 \
+            --shards 1 \
+            --workers 4 \
+            --output .canary-complete/shards
+          python scripts/autonomous_merge.py \
+            --input .canary-complete/shards \
+            --output .canary-complete/output \
+            --min-active 0 \
+            --min-products 0
+          python scripts/catalog_completeness_audit.py \
+            --catalog-file .canary-complete/output/catalog.json \
+            --output .canary-complete/completeness.json
+      - name: Build canary report
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          root = Path('.canary-complete')
+          catalog = json.loads((root / 'output/catalog.json').read_text())
+          status = json.loads((root / 'output/status.json').read_text())
+          runtime = json.loads((root / 'output/runtime.json').read_text())
+          quarantine = json.loads((root / 'output/quarantine.json').read_text())
+          rejections = json.loads((root / 'output/rejections.json').read_text())
+          completeness = json.loads((root / 'completeness.json').read_text())
+          products = catalog.get('products') or []
+          by_source = Counter(str(row.get('source_id') or 'unknown') for row in products)
+          field_failures = []
+          for row in products:
+              required = {
+                  'comparison_complete': row.get('comparison_complete') is True,
+                  'price': isinstance(row.get('price'), (int, float)) and row.get('price') > 0,
+                  'grams': isinstance(row.get('grams'), (int, float)) and row.get('grams') > 0,
+                  'price_per_gram': isinstance(row.get('price_per_gram'), (int, float)) and row.get('price_per_gram') > 0,
+                  'thca': isinstance(row.get('thca'), (int, float)) and 0 < row.get('thca') <= 100,
+                  'availability': row.get('availability') in {'in_stock', 'out_of_stock'},
+                  'image': str(row.get('image') or '').startswith(('http://', 'https://')),
+                  'url': str(row.get('url') or '').startswith(('http://', 'https://')),
+              }
+              if not all(required.values()):
+                  field_failures.append({'id': row.get('id'), 'failed': [key for key, value in required.items() if not value]})
+          report = {
+              'schema_version': 'dropfinder-complete-catalog-canary-v1',
+              'canary_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'status': 'healthy' if not field_failures and products else 'empty' if not products else 'invalid',
+              'comparison_contract': catalog.get('comparison_contract'),
+              'candidate_sources': status.get('candidate_sources'),
+              'active_sources': status.get('enabled_sources'),
+              'quarantined_sources': quarantine.get('count'),
+              'complete_products': len(products),
+              'complete_products_by_source': dict(sorted(by_source.items())),
+              'rejected_products': rejections.get('count'),
+              'rejection_reasons': rejections.get('reason_counts'),
+              'field_failure_count': len(field_failures),
+              'field_failure_examples': field_failures[:50],
+              'completeness_audit': {
+                  'complete_product_count': completeness.get('complete_product_count'),
+                  'incomplete_product_count': completeness.get('incomplete_product_count'),
+                  'complete_ratio': completeness.get('complete_ratio'),
+                  'issue_counts': completeness.get('issue_counts'),
+              },
+              'runtime': runtime,
+              'source_quality': {
+                  str(row.get('source_id')): row.get('quality', {})
+                  for row in status.get('sources', [])
+              },
+              'sample_products': products[:30],
+          }
+          Path('deployment/complete-catalog-canary.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps({
+              'status': report['status'],
+              'active_sources': report['active_sources'],
+              'complete_products': report['complete_products'],
+              'rejected_products': report['rejected_products'],
+              'field_failure_count': report['field_failure_count'],
+          }, indent=2))
+          PY
+      - name: Record canary evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -s deployment/complete-catalog-canary.json; then
+            git config user.name "DropFinder Complete Catalog Canary"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add deployment/complete-catalog-canary.json
+            git commit -m "audit: record complete catalog canary [skip ci]"
+            git pull --rebase origin deploy/full-stack-hf
+            git push origin HEAD:deploy/full-stack-hf
+          fi
