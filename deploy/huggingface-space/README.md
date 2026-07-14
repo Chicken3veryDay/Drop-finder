@@ -1,5 +1,5 @@
 ---
-title: DropFinder OS v9 Full Stack
+title: DropFinder OS v9 Cloud
 emoji: "🔎"
 colorFrom: blue
 colorTo: green
@@ -8,25 +8,44 @@ app_port: 7860
 pinned: false
 ---
 
-# DropFinder OS v9 Full Stack
+# DropFinder OS v9 Cloud
 
-This Docker Space runs the complete DropFinder FastAPI interface, queue worker,
-scan scheduler, reliability scheduler, Playwright browser runtime, and durable
-SQLite state replication.
+This Docker Space runs DropFinder as a live hosted service rather than a static
+snapshot. It includes:
 
-Required Space secrets:
+- the strict THCA-flower storefront retrieval workers;
+- product-level THCA and flower evidence requirements;
+- final non-flower sanitization and source quarantine;
+- a FastAPI health, readiness, catalog, status, and scan-control API;
+- automatic scans every three hours;
+- a mobile web interface with search, sorting, filters, favorites, source health,
+  and an authenticated **Scan now** control;
+- private persistent state snapshots stored in a Hugging Face dataset repository.
 
-- `DROPFINDER_OPERATOR_TOKEN`
-- `R2_ENDPOINT_URL`
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
-- `R2_BUCKET`
+## Public endpoints
 
-Optional variables:
+- `/` mobile catalog
+- `/health` process health
+- `/ready` catalog and source-state readiness
+- `/api/catalog`
+- `/api/status`
+- `/api/runtime`
+- `/api/quarantine`
+- `/api/rejections`
+- `/api/scan-state`
 
-- `R2_STATE_KEY` (default: `dropfinder/state-v1.tar.gz`)
-- `DROPFINDER_WORKER_COUNT` (default: `1`)
-- `DROPFINDER_BACKUP_INTERVAL_SECONDS` (default: `300`)
+`POST /api/scan` requires the operator token using either
+`Authorization: Bearer <token>` or `X-Operator-Token: <token>`.
 
-The operator token is entered from the **Operator** button in the web UI and is
-kept only in browser session storage.
+## Runtime secrets
+
+The GitHub deployment workflow installs these automatically:
+
+- `HF_TOKEN`, used only for the private state repository;
+- `DROPFINDER_OPERATOR_TOKEN`, used for mutation authorization.
+
+No email password, payment method, Oracle account, Cloudflare account, personal
+computer, SSH key, or external database is required.
+
+The free Space may sleep after inactivity. Opening the app wakes it; restored
+state remains available through the private dataset snapshot.
