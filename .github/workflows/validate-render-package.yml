@@ -27,6 +27,7 @@ jobs:
             deploy/render/render_deploy.py \
             deploy/render/render_complete_verifier.py \
             deploy/render/render_deploy_with_report.py \
+            deploy/render/render_space_app.py \
             deploy/huggingface-space/space_app.py \
             deploy/huggingface-space/hf_state.py \
             deploy/huggingface-space/hf_supervisor.py \
@@ -45,9 +46,23 @@ jobs:
           python scripts/autonomous_merge_complete.py --self-test
           test -s deploy/render/Dockerfile
           grep -q 'plan.*free' deploy/render/render_deploy.py
-          grep -q 'render_autonomous_service' deploy/render/Dockerfile
-          grep -q 'autonomous_worker_v6.py' deploy/render/Dockerfile
-          grep -q 'autonomous_merge_complete.py' deploy/render/Dockerfile
+          grep -q 'DROPFINDER_ASGI_APP=render_space_app:app' deploy/render/Dockerfile
+          grep -q 'DROPFINDER_WORKER_SCRIPT=autonomous_worker_v6.py' deploy/render/Dockerfile
+          grep -q 'DROPFINDER_MERGER_SCRIPT=autonomous_merge_complete.py' deploy/render/Dockerfile
+          grep -q 'DROPFINDER_REQUIRED_COMPARISON_CONTRACT=exact_price_weight_ppg_thca_stock_image_v1' deploy/render/Dockerfile
+          grep -q 'COPY.*render_space_app.py.*/app/render_space_app.py' deploy/render/Dockerfile
+          grep -q 'asgi_app = os.getenv("DROPFINDER_ASGI_APP"' deploy/huggingface-space/hf_supervisor.py
+          grep -q 'WORKER_SCRIPT = os.getenv' deploy/render/render_space_app.py
+          grep -q 'MERGER_SCRIPT = os.getenv' deploy/render/render_space_app.py
+          grep -q 'complete product contract failed' deploy/render/render_space_app.py
+          if grep -q "text.replace('autonomous_worker_v4.py'" deploy/render/Dockerfile; then
+            echo 'Dockerfile still mutates worker source text' >&2
+            exit 1
+          fi
+          if grep -q "text.replace('autonomous_merge.py'" deploy/render/Dockerfile; then
+            echo 'Dockerfile still mutates merger source text' >&2
+            exit 1
+          fi
           grep -q 'exact_price_weight_ppg_thca_stock_image_v1' scripts/autonomous_merge.py
           grep -q 'direct_product_url' scripts/autonomous_merge_complete.py
           grep -q 'product_failures' deploy/render/render_complete_verifier.py
@@ -108,7 +123,7 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           payload = {
-              "schema_version": "dropfinder-render-validation-v5",
+              "schema_version": "dropfinder-render-validation-v6",
               "status": "healthy",
               "validated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               "python_compile": True,
@@ -121,12 +136,15 @@ jobs:
               "complete_comparison_gate_tests": True,
               "merge_complete_self_test": True,
               "live_complete_verifier_compiles": True,
+              "explicit_asgi_runtime": True,
+              "explicit_worker_selection": True,
+              "explicit_merger_selection": True,
+              "docker_source_mutation_removed": True,
               "browser_javascript_syntax": True,
               "null_safe_ui_values": True,
               "operator_javascript_syntax": True,
               "filler_ui_removed": True,
               "service_worker_cache_updated": True,
-              "dockerfile_uses_v6": True,
               "minimum_active_sources": 4,
               "minimum_complete_products": 25,
           }
@@ -143,6 +161,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deployment/render-validation.json
           if ! git diff --cached --quiet; then
-            git commit -m "deploy: record healthy final v6 validation [skip ci]"
+            git commit -m "deploy: record explicit strict runtime validation [skip ci]"
             git push origin HEAD:deploy/full-stack-hf
           fi
