@@ -170,10 +170,11 @@ button{cursor:pointer}
 const $=selector=>document.querySelector(selector);
 const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const state={products:[],status:{},favorites:new Set(JSON.parse(localStorage.getItem('dropfinder-favorites')||'[]')),favoritesOnly:false};
-const number=value=>{const n=Number(value);return Number.isFinite(n)?n:null};
-const money=value=>number(value)!==null?'$'+number(value).toFixed(2):'—';
-const exactPricing=product=>['exact_variant','exact_title'].includes(product.pricing_confidence)&&number(product.price_per_gram)!==null;
-const exactWeight=product=>['variant','title'].includes(product.weight_source)&&number(product.grams)!==null;
+const number=value=>{if(value===null||value===undefined||value===''||typeof value==='boolean')return null;const n=Number(value);return Number.isFinite(n)?n:null};
+const positive=value=>{const n=number(value);return n!==null&&n>0?n:null};
+const money=value=>positive(value)!==null?'$'+positive(value).toFixed(2):'—';
+const exactPricing=product=>['exact_variant','exact_title'].includes(product.pricing_confidence)&&positive(product.price_per_gram)!==null;
+const exactWeight=product=>['variant','title'].includes(product.weight_source)&&positive(product.grams)!==null;
 function relativeTime(raw){const time=Date.parse(raw||'');if(!Number.isFinite(time))return 'Update time unavailable';const seconds=Math.max(0,Math.floor((Date.now()-time)/1000));if(seconds<60)return 'Updated just now';if(seconds<3600)return `Updated ${Math.floor(seconds/60)}m ago`;if(seconds<86400)return `Updated ${Math.floor(seconds/3600)}h ago`;return `Updated ${Math.floor(seconds/86400)}d ago`}
 function saveFavorites(){localStorage.setItem('dropfinder-favorites',JSON.stringify([...state.favorites]))}
 function productText(product){return `${product.name||''} ${product.vendor||''} ${product.source_id||''} ${product.variant||''} ${product.thca||''}`.toLowerCase()}
@@ -184,7 +185,7 @@ function filtered(){
   const sort=$('#sort').value;
   const large=Number.MAX_SAFE_INTEGER;
   const rows=state.products.filter(product=>(!query||productText(product).includes(query))&&(!vendor||product.source_id===vendor)&&(!stock||product.availability===stock)&&(!state.favoritesOnly||state.favorites.has(product.id)));
-  rows.sort((a,b)=>sort==='name'?String(a.name||'').localeCompare(String(b.name||'')):sort==='price'?(number(a.price)??large)-(number(b.price)??large):(exactPricing(a)?number(a.price_per_gram):large)-(exactPricing(b)?number(b.price_per_gram):large));
+  rows.sort((a,b)=>sort==='name'?String(a.name||'').localeCompare(String(b.name||'')):sort==='price'?(positive(a.price)??large)-(positive(b.price)??large):(exactPricing(a)?positive(a.price_per_gram):large)-(exactPricing(b)?positive(b.price_per_gram):large));
   return rows;
 }
 function availability(product){
@@ -195,14 +196,15 @@ function availability(product){
 function card(product){
   const stock=availability(product);
   const favorite=state.favorites.has(product.id);
-  const price=number(product.price);
+  const price=positive(product.price);
+  const potency=positive(product.thca);
   const starting=product.price_type==='starting_at';
   const prefix=starting?'<span class="price-prefix">From</span>':'';
   const priceHtml=price===null?'<span class="price missing">Price unavailable</span>':`${prefix}<span class="price">${money(price)}</span>`;
   const facts=[];
   if(exactPricing(product))facts.push(`<span class="fact value">${money(product.price_per_gram)}/g</span>`);
-  if(exactWeight(product))facts.push(`<span class="fact">${esc(number(product.grams).toFixed(number(product.grams)%1?1:0))}g</span>`);
-  if(number(product.thca)!==null)facts.push(`<span class="fact">${esc(number(product.thca).toFixed(1).replace(/\.0$/,''))}% THCA</span>`);
+  if(exactWeight(product)){const grams=positive(product.grams);facts.push(`<span class="fact">${esc(grams.toFixed(grams%1?1:0))}g</span>`)}
+  if(potency!==null&&potency<=100)facts.push(`<span class="fact">${esc(potency.toFixed(1).replace(/\.0$/,''))}% THCA</span>`);
   if(product.availability!=='unknown')facts.push(`<span class="fact ${stock.className==='in_stock'?'good':stock.className==='out_of_stock'?'bad':''}">${stock.label}</span>`);
   const image=product.image?`<img loading="lazy" src="${esc(product.image)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">`:'';
   return `<article class="card">
