@@ -10,11 +10,23 @@ from typing import Any
 
 import space_app as base
 
+if str(base.SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(base.SCRIPTS_DIR))
+
+from catalog_normalization import (  # type: ignore
+    NORMALIZATION_CONTRACT,
+    normalization_failures,
+)
+
 WORKER_SCRIPT = os.getenv("DROPFINDER_WORKER_SCRIPT", "autonomous_worker_v6.py").strip()
 MERGER_SCRIPT = os.getenv("DROPFINDER_MERGER_SCRIPT", "autonomous_merge_complete.py").strip()
 REQUIRED_CONTRACT = os.getenv(
     "DROPFINDER_REQUIRED_COMPARISON_CONTRACT",
     "exact_price_weight_ppg_thca_stock_image_v1",
+).strip()
+REQUIRED_NORMALIZATION = os.getenv(
+    "DROPFINDER_REQUIRED_NORMALIZATION_CONTRACT",
+    NORMALIZATION_CONTRACT,
 ).strip()
 EXACT_PRICING = {"exact_variant", "exact_title"}
 KNOWN_STOCK = {"in_stock", "out_of_stock"}
@@ -40,6 +52,8 @@ def _product_failures(product: dict[str, Any]) -> list[str]:
         failures.append("comparison_complete")
     if product.get("comparison_contract") != REQUIRED_CONTRACT:
         failures.append("comparison_contract")
+    if product.get("normalization_contract") != REQUIRED_NORMALIZATION:
+        failures.append("normalization_contract")
     if price is None:
         failures.append("price")
     if grams is None:
@@ -62,7 +76,8 @@ def _product_failures(product: dict[str, Any]) -> list[str]:
         calculated = round(price / grams, 4)
         if abs(calculated - ppg) > max(0.02, calculated * 0.01):
             failures.append("price_per_gram_arithmetic")
-    return failures
+    failures.extend(normalization_failures(product))
+    return sorted(set(failures))
 
 
 def _validate_output(output_root: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -82,6 +97,14 @@ def _validate_output(output_root: Path) -> tuple[dict[str, Any], dict[str, Any],
         raise RuntimeError(f"status comparison contract failed: {status_payload.get('comparison_contract')}")
     if runtime_payload.get("comparison_contract") != REQUIRED_CONTRACT:
         raise RuntimeError(f"runtime comparison contract failed: {runtime_payload.get('comparison_contract')}")
+    if catalog.get("normalization_contract") != REQUIRED_NORMALIZATION:
+        raise RuntimeError(f"catalog normalization contract failed: {catalog.get('normalization_contract')}")
+    if status_payload.get("normalization_contract") != REQUIRED_NORMALIZATION:
+        raise RuntimeError(f"status normalization contract failed: {status_payload.get('normalization_contract')}")
+    if runtime_payload.get("normalization_contract") != REQUIRED_NORMALIZATION:
+        raise RuntimeError(f"runtime normalization contract failed: {runtime_payload.get('normalization_contract')}")
+    if status_payload.get("services", {}).get("final_normalizer") != "healthy":
+        raise RuntimeError("final normalizer is not healthy")
     if status_payload.get("degraded_sources") != 0:
         raise RuntimeError("degraded source invariant failed")
     if status_payload.get("healthy_sources") != status_payload.get("enabled_sources"):
@@ -99,7 +122,7 @@ def _validate_output(output_root: Path) -> tuple[dict[str, Any], dict[str, Any],
         if not evidence.get("explicit_flower"):
             failed.append("explicit_flower_evidence")
         if failed:
-            failures.append({"id": product.get("id"), "source_id": product.get("source_id"), "failed": failed})
+            failures.append({"id": product.get("id"), "source_id": product.get("source_id"), "failed": sorted(set(failed))})
     if failures:
         raise RuntimeError(f"complete product contract failed for {len(failures)} rows: {failures[:10]}")
     return catalog, status_payload, runtime_payload
@@ -120,6 +143,7 @@ def run_scan(reason: str = "scheduled") -> bool:
             worker_script=WORKER_SCRIPT,
             merger_script=MERGER_SCRIPT,
             required_contract=REQUIRED_CONTRACT,
+            required_normalization_contract=REQUIRED_NORMALIZATION,
         )
     base._persist_scan_state()
     run_root = base.RUNTIME_DIR / "runs" / started_at.replace(":", "-")
@@ -138,7 +162,8 @@ def run_scan(reason: str = "scheduled") -> bool:
         with log_path.open("w", encoding="utf-8") as log:
             log.write(
                 f"DropFinder strict scan started {started_at}; trigger={reason}; "
-                f"worker={WORKER_SCRIPT}; merger={MERGER_SCRIPT}; contract={REQUIRED_CONTRACT}\n"
+                f"worker={WORKER_SCRIPT}; merger={MERGER_SCRIPT}; "
+                f"comparison={REQUIRED_CONTRACT}; normalization={REQUIRED_NORMALIZATION}\n"
             )
             base._run_command(
                 [
@@ -207,13 +232,7 @@ def run_scan(reason: str = "scheduled") -> bool:
     return success
 
 
-# The scheduler loop and operator endpoint resolve this module global at call
-# time, so replacing it before the FastAPI lifespan starts selects the strict
-# pipeline without mutating copied source files inside the image.
 base.run_scan = run_scan
-
-# Expose the selected runtime in health responses without changing the public
-# route structure.
 _original_health = base.health
 
 
@@ -223,6 +242,7 @@ def health() -> dict[str, Any]:
         worker_script=WORKER_SCRIPT,
         merger_script=MERGER_SCRIPT,
         required_contract=REQUIRED_CONTRACT,
+        required_normalization_contract=REQUIRED_NORMALIZATION,
     )
     return payload
 
