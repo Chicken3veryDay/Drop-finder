@@ -1,0 +1,96 @@
+name: Finalize DropFinder OS v9 Import
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bootstrap-retry.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-source-import
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect completed import
+        id: current
+        shell: bash
+        run: |
+          if test -f app/__init__.py && grep -q '9\.0\.0' app/__init__.py && test -f cloud/index.html; then
+            echo 'complete=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'complete=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download authenticated source archive
+        if: steps.current.outputs.complete != 'true'
+        env:
+          SOURCE_URL: https://dropfinder-v9-import.serveo.net/dropfinder_core_source.tar.xz
+          SOURCE_SHA256: 7cf47ed02e045ffd58b10a221a673d35a8155c98b3ca034bcc2a54de375953e2
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 8 --retry-all-errors \
+            --connect-timeout 20 --max-time 360 \
+            "$SOURCE_URL" -o /tmp/dropfinder-source.tar.xz
+          printf '%s  %s\n' "$SOURCE_SHA256" /tmp/dropfinder-source.tar.xz | sha256sum --check --strict
+
+      - name: Replace bootstrap tree with verified source
+        if: steps.current.outputs.complete != 'true'
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/dropfinder-import
+          mkdir -p /tmp/dropfinder-import
+          tar -xJf /tmp/dropfinder-source.tar.xz -C /tmp/dropfinder-import
+          source_root=/tmp/dropfinder-import
+          shopt -s nullglob dotglob
+          entries=(/tmp/dropfinder-import/*)
+          if [ "${#entries[@]}" -eq 1 ] && [ -d "${entries[0]}" ]; then
+            source_root="${entries[0]}"
+          fi
+          test -f "$source_root/pyproject.toml"
+          test -f "$source_root/app/__init__.py"
+          test -f "$source_root/.github/workflows/cloud-pages.yml"
+          test -f "$source_root/cloud/index.html"
+          rsync -a --delete --exclude='.git/' "$source_root/" "$GITHUB_WORKSPACE/"
+
+      - name: Remove retry workflow after completed import
+        if: steps.current.outputs.complete == 'true'
+        run: rm -f .github/workflows/bootstrap-retry.yml
+
+      - name: Validate final tree
+        run: |
+          set -euo pipefail
+          python -m compileall -q app cli.py scripts
+          python - <<'PY'
+          from pathlib import Path
+          import tomllib
+          project = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))
+          assert project['project']['version'] == '9.0.0'
+          assert Path('.github/workflows/cloud-pages.yml').is_file()
+          assert Path('cloud/index.html').is_file()
+          print('DropFinder OS v9.0 source contract validated')
+          PY
+
+      - name: Commit final source state
+        run: |
+          set -euo pipefail
+          git config user.name 'DropFinder Release Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add --all
+          if git diff --cached --quiet; then
+            echo 'No source changes required.'
+            exit 0
+          fi
+          git commit -m 'Finalize complete DropFinder OS v9.0 source import'
+          git push origin HEAD:main
