@@ -37,8 +37,10 @@ jobs:
             scripts/autonomous_worker_v5.py \
             scripts/autonomous_worker_v6.py \
             scripts/autonomous_merge.py \
+            scripts/catalog_normalization.py \
             scripts/autonomous_merge_complete.py \
             scripts/catalog_completeness_audit.py
+          python scripts/catalog_normalization.py --self-test
           python scripts/autonomous_worker_v6.py --self-test
           python scripts/autonomous_merge_complete.py --self-test
       - name: Run complete live catalog canary
@@ -64,10 +66,14 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json
+          import sys
           import urllib.parse
           from collections import Counter, defaultdict
           from datetime import datetime, timezone
           from pathlib import Path
+
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from catalog_normalization import NORMALIZATION_CONTRACT, normalization_failures
 
           root = Path('.canary-complete')
           catalog = json.loads((root / 'output/catalog.json').read_text())
@@ -92,7 +98,10 @@ jobs:
               return not any(marker in path for marker in listing_markers) and any(marker in path for marker in product_markers)
 
           field_failures = []
+          normalization_failure_counts = Counter()
+          raw_to_display_examples = []
           for row in products:
+              failures = []
               required = {
                   'comparison_complete': row.get('comparison_complete') is True,
                   'price': isinstance(row.get('price'), (int, float)) and row.get('price') > 0,
@@ -102,16 +111,40 @@ jobs:
                   'availability': row.get('availability') in {'in_stock', 'out_of_stock'},
                   'image': str(row.get('image') or '').startswith(('http://', 'https://')),
                   'direct_product_url': direct_url(row.get('url')),
+                  'normalization_contract': row.get('normalization_contract') == NORMALIZATION_CONTRACT,
               }
-              if not all(required.values()):
-                  field_failures.append({'id': row.get('id'), 'failed': [key for key, value in required.items() if not value]})
+              failures.extend(key for key, value in required.items() if not value)
+              normalized_failures = normalization_failures(row)
+              failures.extend(normalized_failures)
+              normalization_failure_counts.update(normalized_failures)
+              if failures:
+                  field_failures.append({'id': row.get('id'), 'source_id': row.get('source_id'), 'name': row.get('name'), 'raw_name': row.get('raw_name'), 'failed': sorted(set(failures))})
+              if len(raw_to_display_examples) < 60:
+                  raw_to_display_examples.append({
+                      'source_id': row.get('source_id'),
+                      'raw_name': row.get('raw_name'),
+                      'display_name': row.get('display_name'),
+                      'package_label': row.get('package_label'),
+                      'flower_form': row.get('flower_form'),
+                      'cultivation': row.get('cultivation'),
+                  })
+          metadata_checks = {
+              'catalog_normalization_contract': catalog.get('normalization_contract') == NORMALIZATION_CONTRACT,
+              'status_normalization_contract': status.get('normalization_contract') == NORMALIZATION_CONTRACT,
+              'runtime_normalization_contract': runtime.get('normalization_contract') == NORMALIZATION_CONTRACT,
+              'final_normalizer_healthy': status.get('services', {}).get('final_normalizer') == 'healthy',
+          }
+          failed_metadata = [key for key, value in metadata_checks.items() if not value]
           report = {
-              'schema_version': 'dropfinder-complete-catalog-canary-v3',
+              'schema_version': 'dropfinder-complete-catalog-canary-v4',
               'worker': 'autonomous_worker_v6',
               'merger': 'autonomous_merge_complete',
               'canary_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-              'status': 'healthy' if not field_failures and products else 'empty' if not products else 'invalid',
+              'status': 'healthy' if not field_failures and not failed_metadata and products else 'empty' if not products else 'invalid',
               'comparison_contract': catalog.get('comparison_contract'),
+              'normalization_contract': catalog.get('normalization_contract'),
+              'metadata_checks': metadata_checks,
+              'failed_metadata_checks': failed_metadata,
               'candidate_sources': status.get('candidate_sources'),
               'active_sources': status.get('enabled_sources'),
               'quarantined_sources': quarantine.get('count'),
@@ -124,7 +157,9 @@ jobs:
                   for source, reasons in sorted(rejected_by_source.items())
               },
               'field_failure_count': len(field_failures),
-              'field_failure_examples': field_failures[:50],
+              'field_failure_examples': field_failures[:100],
+              'normalization_failure_counts': dict(sorted(normalization_failure_counts.items())),
+              'raw_to_display_examples': raw_to_display_examples,
               'completeness_audit': {
                   'complete_product_count': completeness.get('complete_product_count'),
                   'incomplete_product_count': completeness.get('incomplete_product_count'),
@@ -157,7 +192,10 @@ jobs:
               'complete_products': report['complete_products'],
               'rejected_products': report['rejected_products'],
               'field_failure_count': report['field_failure_count'],
+              'failed_metadata_checks': report['failed_metadata_checks'],
           }, indent=2))
+          if report['status'] != 'healthy':
+              raise SystemExit('complete catalog normalization canary failed')
           PY
       - name: Record canary evidence
         if: always()
@@ -172,7 +210,7 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add deployment/complete-catalog-canary.json
             if ! git diff --cached --quiet; then
-              git commit -m "audit: record complete catalog canary [skip ci]"
+              git commit -m "audit: record normalized complete catalog canary [skip ci]"
               git push origin HEAD:deploy/full-stack-hf
             fi
           fi
