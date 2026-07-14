@@ -1,0 +1,49 @@
+name: Observe Hugging Face deployment trigger
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/hf-deploy-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - name: Record accepted trigger
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          payload = {
+              "schema_version": "dropfinder-hf-trigger-observer-v1",
+              "status": "accepted",
+              "observed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              "run_id": os.environ["RUN_ID"],
+              "run_attempt": os.environ["RUN_ATTEMPT"],
+              "head_sha": os.environ["HEAD_SHA"],
+          }
+          Path("deployment/hf-trigger-observed.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name "DropFinder Trigger Observer"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/hf-trigger-observed.json
+          git commit -m "deploy: record accepted Hugging Face trigger [skip ci]"
+          git pull --rebase origin deploy/full-stack-hf
+          git push origin HEAD:deploy/full-stack-hf
