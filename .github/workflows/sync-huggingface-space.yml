@@ -17,7 +17,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,10 +64,25 @@ jobs:
             scripts/autonomous_merge.py \
             /tmp/dropfinder-space/scripts/
           cp -a cloud_pages /tmp/dropfinder-space/web
+          cp deploy/huggingface-space/operator.js /tmp/dropfinder-space/web/operator.js
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/dropfinder-space/web/index.html')
+          text = path.read_text(encoding='utf-8')
+          marker = '<script src="operator.js"></script>'
+          if marker not in text:
+              if '</body>' not in text:
+                  raise SystemExit('web index is missing </body>')
+              text = text.replace('</body>', marker + '\n</body>', 1)
+              path.write_text(text, encoding='utf-8')
+          PY
           find /tmp/dropfinder-space -type f -name '*.pyc' -delete
           find /tmp/dropfinder-space -type d -name __pycache__ -prune -exec rm -rf {} +
           test -s /tmp/dropfinder-space/web/data/catalog.json
           test -s /tmp/dropfinder-space/web/data/status.json
+          test -s /tmp/dropfinder-space/web/operator.js
+          grep -q 'operator.js' /tmp/dropfinder-space/web/index.html
       - name: Create private state repository and deploy Docker Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -116,7 +131,7 @@ jobs:
           variables = {
               "HF_STATE_REPO": state_repo,
               "HF_STATE_PATH": "dropfinder/state-v1.tar.gz",
-              "DROPFINDER_BACKUP_INTERVAL_SECONDS": "3600",
+              "DROPFINDER_BACKUP_INTERVAL_SECONDS": "1800",
               "DROPFINDER_SCAN_INTERVAL_SECONDS": "10800",
               "DROPFINDER_SCAN_STALE_AFTER_SECONDS": "14400",
               "DROPFINDER_SCAN_WORKERS": "3",
@@ -136,7 +151,7 @@ jobs:
 
           terminal_failures = {"BUILD_ERROR", "RUNTIME_ERROR", "CONFIG_ERROR"}
           stage = "UNKNOWN"
-          for _ in range(90):
+          for _ in range(120):
               runtime = api.get_space_runtime(repo_id)
               stage = str(getattr(runtime, "stage", "UNKNOWN")).upper()
               print(f"Space stage: {stage}", flush=True)
@@ -150,14 +165,22 @@ jobs:
 
           app_host = f"{namespace}-{space_name}".lower().replace("_", "-").replace(".", "-")
           app_url = f"https://{app_host}.hf.space"
+
+          def fetch_json(path, *, method="GET", headers=None):
+              request = urllib.request.Request(
+                  app_url + path,
+                  method=method,
+                  headers=headers or {},
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
           health = None
           ready = None
-          for _ in range(30):
+          for _ in range(45):
               try:
-                  with urllib.request.urlopen(app_url + "/health", timeout=20) as response:
-                      health = json.loads(response.read().decode("utf-8"))
-                  with urllib.request.urlopen(app_url + "/ready", timeout=20) as response:
-                      ready = json.loads(response.read().decode("utf-8"))
+                  health = fetch_json("/health")
+                  ready = fetch_json("/ready")
                   if health.get("status") == "healthy" and ready.get("ready") is True:
                       break
               except (OSError, ValueError, urllib.error.URLError) as exc:
@@ -165,6 +188,46 @@ jobs:
               time.sleep(10)
           else:
               raise SystemExit("Space reached RUNNING but health/readiness verification failed")
+
+          initial_state = fetch_json("/api/scan-state")
+          initial_count = int(initial_state.get("scan_count") or 0)
+          trigger = fetch_json(
+              "/api/scan",
+              method="POST",
+              headers={"Authorization": f"Bearer {operator_token}"},
+          )
+          print("Scan trigger:", json.dumps(trigger, sort_keys=True), flush=True)
+
+          scan_state = initial_state
+          saw_new_scan = False
+          for _ in range(100):
+              scan_state = fetch_json("/api/scan-state")
+              current_count = int(scan_state.get("scan_count") or 0)
+              saw_new_scan = saw_new_scan or current_count > initial_count or bool(scan_state.get("running"))
+              print("Scan state:", json.dumps(scan_state, sort_keys=True), flush=True)
+              if (
+                  saw_new_scan
+                  and not scan_state.get("running")
+                  and scan_state.get("last_success_at")
+                  and not scan_state.get("last_error")
+              ):
+                  break
+              time.sleep(15)
+          else:
+              raise SystemExit("Hosted scan did not complete successfully")
+
+          health = fetch_json("/health")
+          ready = fetch_json("/ready")
+          catalog = fetch_json("/api/catalog")
+          status_payload = fetch_json("/api/status")
+          if health.get("status") != "healthy" or ready.get("ready") is not True:
+              raise SystemExit("post-scan health verification failed")
+          if catalog.get("product_count") != len(catalog.get("products") or []):
+              raise SystemExit("hosted catalog count invariant failed")
+          if status_payload.get("degraded_sources") != 0:
+              raise SystemExit("hosted source health invariant failed")
+          if status_payload.get("mode") != "huggingface_autonomous_service":
+              raise SystemExit("hosted runtime mode was not applied")
 
           receipt = {
               "schema_version": "dropfinder-huggingface-deployment-v1",
@@ -179,6 +242,10 @@ jobs:
               "runtime_stage": stage,
               "health": health,
               "ready": ready,
+              "scan": scan_state,
+              "product_count": catalog.get("product_count"),
+              "healthy_sources": status_payload.get("healthy_sources"),
+              "degraded_sources": status_payload.get("degraded_sources"),
               "requires_user_pc": False,
               "hosting_account_count": 1,
           }
