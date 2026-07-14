@@ -42,14 +42,17 @@ jobs:
             scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py \
             scripts/autonomous_worker_v5.py \
-            scripts/autonomous_merge.py
+            scripts/autonomous_worker_v6.py \
+            scripts/autonomous_merge.py \
+            scripts/autonomous_merge_complete.py
           python scripts/cloud_scan_v2.py --self-test
-          python scripts/autonomous_worker_v5.py --self-test
-          python scripts/autonomous_merge.py --self-test
+          python scripts/autonomous_worker_v6.py --self-test
+          python scripts/autonomous_merge_complete.py --self-test
           test -s deploy/render/Dockerfile
           grep -q 'plan.*free' deploy/render/render_deploy.py
           grep -q 'render_autonomous_service' deploy/render/Dockerfile
-          grep -q 'autonomous_worker_v5.py' deploy/render/Dockerfile
+          grep -q 'autonomous_worker_v6.py' deploy/render/Dockerfile
+          grep -q 'autonomous_merge_complete.py' deploy/render/Dockerfile
           grep -q 'exact_price_weight_ppg_thca_stock_image_v1' deploy/render/render_complete_verifier.py
       - name: Create, deploy, scan, and verify Render service
         id: render_deploy
