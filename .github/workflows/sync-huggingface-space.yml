@@ -18,28 +18,28 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Validate deployment package
         run: |
           set -euo pipefail
-          python -m py_compile deploy/huggingface-space/r2_state.py deploy/huggingface-space/hf_supervisor.py
+          python -m py_compile \
+            deploy/huggingface-space/hf_state.py \
+            deploy/huggingface-space/hf_supervisor.py
           test -s deploy/huggingface-space/dropfinder-runtime.tar.xz.b64
           base64 -d deploy/huggingface-space/dropfinder-runtime.tar.xz.b64 | tar -tJf - >/dev/null
           grep -q '^sdk: docker$' deploy/huggingface-space/README.md
-      - name: Create or update the Docker Space
+      - name: Create state repository and deploy Docker Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
           DROPFINDER_OPERATOR_TOKEN: ${{ secrets.DROPFINDER_OPERATOR_TOKEN }}
-          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check 'huggingface_hub>=0.34,<2'
@@ -47,31 +47,57 @@ jobs:
           import os
           from huggingface_hub import HfApi
 
-          required = [
-              "HF_TOKEN", "HF_SPACE_ID", "DROPFINDER_OPERATOR_TOKEN",
-              "R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
-          ]
+          required = ["HF_TOKEN", "HF_SPACE_ID", "DROPFINDER_OPERATOR_TOKEN"]
           missing = [name for name in required if not os.environ.get(name, "").strip()]
           if missing:
               raise SystemExit("Missing deployment configuration: " + ", ".join(missing))
 
-          api = HfApi(token=os.environ["HF_TOKEN"])
-          repo_id = os.environ["HF_SPACE_ID"].strip()
-          api.create_repo(repo_id=repo_id, repo_type="space", space_sdk="docker", exist_ok=True)
+          token = os.environ["HF_TOKEN"].strip()
+          repo_id = os.environ["HF_SPACE_ID"].strip().strip("/")
+          operator_token = os.environ["DROPFINDER_OPERATOR_TOKEN"].strip()
+          if "/" not in repo_id:
+              raise SystemExit("HF_SPACE_ID must use username/space-name format")
+          if len(operator_token) < 24:
+              raise SystemExit("DROPFINDER_OPERATOR_TOKEN must contain at least 24 characters")
+
+          namespace = repo_id.split("/", 1)[0]
+          state_repo = f"{namespace}/dropfinder-private-state"
+          api = HfApi(token=token)
+          api.create_repo(
+              repo_id=state_repo,
+              repo_type="dataset",
+              private=True,
+              exist_ok=True,
+          )
+          api.create_repo(
+              repo_id=repo_id,
+              repo_type="space",
+              space_sdk="docker",
+              private=False,
+              exist_ok=True,
+          )
           api.upload_folder(
               repo_id=repo_id,
               repo_type="space",
               folder_path="deploy/huggingface-space",
               path_in_repo=".",
               commit_message="Deploy DropFinder OS v9 full stack",
-              ignore_patterns=["__pycache__/**", "*.pyc"],
+              ignore_patterns=["__pycache__/**", "*.pyc", "r2_state.py"],
           )
-          for key in (
-              "DROPFINDER_OPERATOR_TOKEN", "R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID",
-              "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
-          ):
-              api.add_space_secret(repo_id=repo_id, key=key, value=os.environ[key])
+          api.add_space_secret(repo_id=repo_id, key="HF_TOKEN", value=token)
+          api.add_space_secret(
+              repo_id=repo_id,
+              key="DROPFINDER_OPERATOR_TOKEN",
+              value=operator_token,
+          )
+          api.add_space_variable(repo_id=repo_id, key="HF_STATE_REPO", value=state_repo)
+          api.add_space_variable(repo_id=repo_id, key="HF_STATE_PATH", value="dropfinder/state-v1.tar.gz")
           api.add_space_variable(repo_id=repo_id, key="DROPFINDER_WORKER_COUNT", value="1")
-          api.add_space_variable(repo_id=repo_id, key="DROPFINDER_BACKUP_INTERVAL_SECONDS", value="300")
-          print(f"Deployed https://huggingface.co/spaces/{repo_id}")
+          api.add_space_variable(
+              repo_id=repo_id,
+              key="DROPFINDER_BACKUP_INTERVAL_SECONDS",
+              value="1800",
+          )
+          print(f"Space: https://huggingface.co/spaces/{repo_id}")
+          print(f"State: https://huggingface.co/datasets/{state_repo}")
           PY
