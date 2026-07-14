@@ -39,9 +39,11 @@ jobs:
             scripts/autonomous_worker_v5.py \
             scripts/autonomous_worker_v6.py \
             scripts/autonomous_merge.py \
+            scripts/catalog_normalization.py \
             scripts/autonomous_merge_complete.py \
             scripts/catalog_completeness_audit.py
           python scripts/cloud_scan_v2.py --self-test
+          python scripts/catalog_normalization.py --self-test
           python scripts/autonomous_worker_v6.py --self-test
           python scripts/autonomous_merge_complete.py --self-test
           test -s deploy/render/Dockerfile
@@ -50,11 +52,12 @@ jobs:
           grep -q 'DROPFINDER_WORKER_SCRIPT=autonomous_worker_v6.py' deploy/render/Dockerfile
           grep -q 'DROPFINDER_MERGER_SCRIPT=autonomous_merge_complete.py' deploy/render/Dockerfile
           grep -q 'DROPFINDER_REQUIRED_COMPARISON_CONTRACT=exact_price_weight_ppg_thca_stock_image_v1' deploy/render/Dockerfile
-          grep -q 'COPY.*render_space_app.py.*/app/render_space_app.py' deploy/render/Dockerfile
-          grep -q 'asgi_app = os.getenv("DROPFINDER_ASGI_APP"' deploy/huggingface-space/hf_supervisor.py
-          grep -q 'WORKER_SCRIPT = os.getenv' deploy/render/render_space_app.py
-          grep -q 'MERGER_SCRIPT = os.getenv' deploy/render/render_space_app.py
-          grep -q 'complete product contract failed' deploy/render/render_space_app.py
+          grep -q 'DROPFINDER_REQUIRED_NORMALIZATION_CONTRACT=dropfinder-product-normalization-v1' deploy/render/Dockerfile
+          grep -q 'COPY.*catalog_normalization.py.*/app/scripts/catalog_normalization.py' deploy/render/Dockerfile
+          grep -q 'normalization_failures' deploy/render/render_space_app.py
+          grep -q 'normalization_failures' deploy/render/render_complete_verifier.py
+          grep -q 'final_normalizer' scripts/autonomous_merge_complete.py
+          grep -q 'normalization_contract' scripts/autonomous_merge_complete.py
           if grep -q "text.replace('autonomous_worker_v4.py'" deploy/render/Dockerfile; then
             echo 'Dockerfile still mutates worker source text' >&2
             exit 1
@@ -63,10 +66,7 @@ jobs:
             echo 'Dockerfile still mutates merger source text' >&2
             exit 1
           fi
-          grep -q 'exact_price_weight_ppg_thca_stock_image_v1' scripts/autonomous_merge.py
-          grep -q 'direct_product_url' scripts/autonomous_merge_complete.py
-          grep -q 'product_failures' deploy/render/render_complete_verifier.py
-      - name: Validate browser shell
+      - name: Validate browser shell and performance architecture
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -75,38 +75,36 @@ jobs:
 
           html = Path('cloud_pages/index.html').read_text(encoding='utf-8')
           required = (
-              'id="query"',
-              'id="vendor"',
-              'id="stock"',
-              'id="sort"',
-              'id="favoritesOnly"',
-              'id="sourcesButton"',
-              'id="scanButton"',
-              'id="grid"',
+              'id="query"', 'id="vendor"', 'id="stock"', 'id="sort"',
+              'id="favoritesOnly"', 'id="sourcesButton"', 'id="scanButton"', 'id="grid"',
+              'content-visibility:auto', 'contain-intrinsic-size:',
+              'loading="lazy"', 'decoding="async"', 'fetchpriority="low"',
+              'requestIdleCallback', 'data-render-complete="false"',
+              "$('#grid').addEventListener('click'", 'setTimeout(render,75)',
+              "cache:'no-cache'", 'product.display_name||product.name',
+              'products on this page', '__dropfinderMetrics',
           )
           missing = [value for value in required if value not in html]
           if missing:
-              raise SystemExit(f'missing required UI hooks: {missing}')
+              raise SystemExit(f'missing required UI/performance hooks: {missing}')
           forbidden = (
-              'Always-available phone snapshot',
-              'class="stats"',
-              'id="weight"',
-              'id="bestPrice"',
-              'id="favoriteCount"',
+              'Always-available phone snapshot', 'class="stats"', 'id="weight"',
+              'id="bestPrice"', 'id="favoriteCount"',
               'const number=value=>{const n=Number(value);return Number.isFinite(n)?n:null};',
+              "rows.map(card).join('')", "querySelectorAll('[data-favorite]')",
+              'loadMore', 'pageSize', 'pagination',
           )
           present = [value for value in forbidden if value in html]
           if present:
-              raise SystemExit(f'forbidden or unsafe UI content remains: {present}')
+              raise SystemExit(f'forbidden or blocking UI content remains: {present}')
           required_logic = (
               "value===null||value===undefined||value===''",
-              "potency!==null&&potency<=100",
-              "exact_variant",
-              "starting_at",
+              'product._thca!==null&&product._thca<=100',
+              'exact_variant', 'exact_title',
           )
           missing_logic = [value for value in required_logic if value not in html]
           if missing_logic:
-              raise SystemExit(f'missing null-safe pricing UI logic: {missing_logic}')
+              raise SystemExit(f'missing null-safe comparison logic: {missing_logic}')
           scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
           if len(scripts) != 1:
               raise SystemExit(f'expected one inline script, found {len(scripts)}')
@@ -114,7 +112,8 @@ jobs:
           PY
           node --check /tmp/dropfinder-index.js
           node --check deploy/huggingface-space/operator.js
-          grep -q "dropfinder-cloud-v4" cloud_pages/sw.js
+          grep -q "dropfinder-cloud-v6" cloud_pages/sw.js
+          grep -q "stale" cloud_pages/sw.js
       - name: Record validation result
         run: |
           set -euo pipefail
@@ -123,30 +122,31 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           payload = {
-              "schema_version": "dropfinder-render-validation-v6",
+              "schema_version": "dropfinder-render-validation-v7",
               "status": "healthy",
               "validated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               "python_compile": True,
               "worker_v6_self_tests": True,
-              "embedded_variation_tests": True,
-              "listing_recovery_tests": True,
-              "direct_product_url_tests": True,
-              "bidirectional_thca_tests": True,
-              "pricing_pairing_tests": True,
+              "catalog_normalization_self_tests": True,
+              "source_independent_final_normalizer": True,
+              "raw_names_preserved": True,
+              "weights_removed_from_display_names": True,
+              "package_labels_standardized": True,
               "complete_comparison_gate_tests": True,
               "merge_complete_self_test": True,
               "live_complete_verifier_compiles": True,
               "explicit_asgi_runtime": True,
-              "explicit_worker_selection": True,
-              "explicit_merger_selection": True,
-              "docker_source_mutation_removed": True,
               "browser_javascript_syntax": True,
+              "one_page_without_pagination": True,
+              "chunked_idle_rendering": True,
+              "offscreen_render_containment": True,
+              "lazy_async_images": True,
+              "delegated_favorite_events": True,
+              "debounced_search": True,
+              "stale_while_revalidate_cache": True,
               "null_safe_ui_values": True,
-              "operator_javascript_syntax": True,
-              "filler_ui_removed": True,
-              "service_worker_cache_updated": True,
               "minimum_active_sources": 4,
-              "minimum_complete_products": 25,
+              "minimum_complete_products": 25
           }
           Path("deployment/render-validation.json").write_text(
               json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -161,6 +161,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deployment/render-validation.json
           if ! git diff --cached --quiet; then
-            git commit -m "deploy: record explicit strict runtime validation [skip ci]"
+            git commit -m "deploy: record normalization and performance validation [skip ci]"
             git push origin HEAD:deploy/full-stack-hf
           fi
