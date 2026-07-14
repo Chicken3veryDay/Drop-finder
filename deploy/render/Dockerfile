@@ -12,6 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DROPFINDER_WORKER_SCRIPT=autonomous_worker_v6.py \
     DROPFINDER_MERGER_SCRIPT=autonomous_merge_complete.py \
     DROPFINDER_REQUIRED_COMPARISON_CONTRACT=exact_price_weight_ppg_thca_stock_image_v1 \
+    DROPFINDER_REQUIRED_NORMALIZATION_CONTRACT=dropfinder-product-normalization-v1 \
     DROPFINDER_SCAN_INTERVAL_SECONDS=10800 \
     DROPFINDER_SCAN_STALE_AFTER_SECONDS=14400 \
     DROPFINDER_SCAN_WORKERS=2 \
@@ -38,6 +39,7 @@ COPY --chown=user:user scripts/autonomous_worker_v4.py /app/scripts/autonomous_w
 COPY --chown=user:user scripts/autonomous_worker_v5.py /app/scripts/autonomous_worker_v5.py
 COPY --chown=user:user scripts/autonomous_worker_v6.py /app/scripts/autonomous_worker_v6.py
 COPY --chown=user:user scripts/autonomous_merge.py /app/scripts/autonomous_merge.py
+COPY --chown=user:user scripts/catalog_normalization.py /app/scripts/catalog_normalization.py
 COPY --chown=user:user scripts/autonomous_merge_complete.py /app/scripts/autonomous_merge_complete.py
 COPY --chown=user:user cloud_pages/ /app/web/
 COPY --chown=user:user deploy/huggingface-space/operator.js /app/web/operator.js
@@ -63,6 +65,7 @@ RUN mkdir -p /app/runtime/data /app/runtime/logs /app/runtime/runs \
        /app/hf_state.py \
        /app/hf_supervisor.py \
        /app/scripts/*.py \
+    && python /app/scripts/catalog_normalization.py --self-test \
     && python /app/scripts/autonomous_worker_v6.py --self-test \
     && python /app/scripts/autonomous_merge_complete.py --self-test
 
