@@ -1,0 +1,110 @@
+name: Diagnose DropFinder browser shell
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/ui-validation-diagnostic-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - name: Run and record every browser-shell check
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import re
+          import subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          report = {
+              'schema_version': 'dropfinder-ui-validation-diagnostic-v1',
+              'checked_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'checks': {},
+          }
+          html = Path('cloud_pages/index.html').read_text(encoding='utf-8')
+          required = (
+              'id="query"', 'id="vendor"', 'id="stock"', 'id="sort"',
+              'id="favoritesOnly"', 'id="sourcesButton"', 'id="scanButton"', 'id="grid"',
+          )
+          forbidden = (
+              'Always-available phone snapshot', 'class="stats"', 'id="weight"',
+              'id="bestPrice"', 'id="favoriteCount"',
+              'Number(value);return Number.isFinite(n)?n:null',
+          )
+          required_logic = (
+              "value===null||value===undefined||value===''",
+              'potency!==null&&potency<=100',
+              'exact_variant',
+              'starting_at',
+          )
+          report['checks']['required_hooks'] = {
+              'passed': all(value in html for value in required),
+              'missing': [value for value in required if value not in html],
+          }
+          report['checks']['forbidden_content'] = {
+              'passed': all(value not in html for value in forbidden),
+              'present': [value for value in forbidden if value in html],
+          }
+          report['checks']['required_logic'] = {
+              'passed': all(value in html for value in required_logic),
+              'missing': [value for value in required_logic if value not in html],
+          }
+          scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
+          report['checks']['inline_script_count'] = {
+              'passed': len(scripts) == 1,
+              'count': len(scripts),
+          }
+          if scripts:
+              Path('/tmp/dropfinder-index.js').write_text(scripts[0], encoding='utf-8')
+              process = subprocess.run(['node', '--check', '/tmp/dropfinder-index.js'], text=True, capture_output=True)
+              report['checks']['inline_javascript_syntax'] = {
+                  'passed': process.returncode == 0,
+                  'returncode': process.returncode,
+                  'stdout': process.stdout[-4000:],
+                  'stderr': process.stderr[-4000:],
+              }
+          else:
+              report['checks']['inline_javascript_syntax'] = {'passed': False, 'error': 'no inline script'}
+          operator = subprocess.run(['node', '--check', 'deploy/huggingface-space/operator.js'], text=True, capture_output=True)
+          report['checks']['operator_javascript_syntax'] = {
+              'passed': operator.returncode == 0,
+              'returncode': operator.returncode,
+              'stdout': operator.stdout[-4000:],
+              'stderr': operator.stderr[-4000:],
+          }
+          sw = Path('cloud_pages/sw.js').read_text(encoding='utf-8')
+          report['checks']['service_worker_cache'] = {
+              'passed': 'dropfinder-cloud-v4' in sw,
+              'cache_line': sw.splitlines()[0] if sw.splitlines() else '',
+          }
+          report['status'] = 'healthy' if all(row.get('passed') for row in report['checks'].values()) else 'failed'
+          Path('deployment/ui-validation-diagnostic.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+      - name: Record diagnostic result
+        run: |
+          set -euo pipefail
+          cp deployment/ui-validation-diagnostic.json /tmp/ui-validation-diagnostic.json
+          git fetch origin deploy/full-stack-hf
+          git reset --hard origin/deploy/full-stack-hf
+          cp /tmp/ui-validation-diagnostic.json deployment/ui-validation-diagnostic.json
+          git config user.name "DropFinder UI Diagnostic"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/ui-validation-diagnostic.json
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: record browser-shell diagnostic [skip ci]"
+            git push origin HEAD:deploy/full-stack-hf
+          fi
