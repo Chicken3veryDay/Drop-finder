@@ -24,11 +24,10 @@ def _require_secure_configuration() -> None:
 def main() -> int:
     _require_secure_configuration()
     os.makedirs("/app/runtime", exist_ok=True)
-    os.makedirs("/app/logs", exist_ok=True)
     restore()
 
     stop = threading.Event()
-    interval = max(300, int(os.getenv("DROPFINDER_BACKUP_INTERVAL_SECONDS", "1800")))
+    interval = max(900, int(os.getenv("DROPFINDER_BACKUP_INTERVAL_SECONDS", "3600")))
 
     def backup_loop() -> None:
         while not stop.wait(interval):
@@ -39,7 +38,22 @@ def main() -> int:
 
     thread = threading.Thread(target=backup_loop, name="hf-state-backup", daemon=True)
     thread.start()
-    child = subprocess.Popen(["/app/run.sh"], env=os.environ.copy())
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "space_app:app",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            os.getenv("PORT", "7860"),
+            "--proxy-headers",
+            "--forwarded-allow-ips=*",
+        ],
+        cwd="/app",
+        env=os.environ.copy(),
+    )
 
     def shutdown(signum, _frame) -> None:
         print(f"Received signal {signum}; stopping DropFinder.", flush=True)
