@@ -10,6 +10,7 @@ on:
       - "scripts/cloud_scan.py"
       - "scripts/cloud_scan_v2.py"
       - "scripts/autonomous_worker.py"
+      - "scripts/autonomous_worker_v2.py"
       - "scripts/autonomous_merge.py"
       - "cloud_pages/index.html"
       - "cloud_pages/manifest.webmanifest"
@@ -46,14 +47,15 @@ jobs:
             scripts/cloud_scan.py \
             scripts/cloud_scan_v2.py \
             scripts/autonomous_worker.py \
+            scripts/autonomous_worker_v2.py \
             scripts/autonomous_merge.py
           python scripts/cloud_scan_v2.py --self-test
-          python scripts/autonomous_worker.py --self-test
-      - name: Retrieve and classify storefront data
+          python scripts/autonomous_worker_v2.py --self-test
+      - name: Retrieve, retry, verify, and classify storefront data
         run: |
           set -euo pipefail
           mkdir -p "scan-output/${{ matrix.shard }}"
-          python scripts/autonomous_worker.py \
+          python scripts/autonomous_worker_v2.py \
             --shard "${{ matrix.shard }}" \
             --shards 6 \
             --workers 3 \
@@ -88,7 +90,7 @@ jobs:
           set -euo pipefail
           rm -rf /tmp/dropfinder-autonomous-merge-test
           python scripts/autonomous_merge.py --self-test
-      - name: Build zero-degraded production snapshot
+      - name: Build zero-degraded strict production snapshot
         run: |
           set -euo pipefail
           python scripts/autonomous_merge.py \
@@ -103,12 +105,20 @@ jobs:
           status=json.loads(Path('cloud_pages/data/status.json').read_text())
           runtime=json.loads(Path('cloud_pages/data/runtime.json').read_text())
           quarantine=json.loads(Path('cloud_pages/data/quarantine.json').read_text())
+          rejections=json.loads(Path('cloud_pages/data/rejections.json').read_text())
           assert catalog['product_count'] == len(catalog['products'])
           assert status['degraded_sources'] == 0
           assert status['healthy_sources'] == status['enabled_sources']
           assert runtime['zero_degraded_active_services'] is True
+          assert all(value == 'healthy' for value in status['services'].values())
           assert all(source['status'] == 'healthy' for source in status['sources'])
           assert quarantine['count'] == status['quarantined_sources']
+          assert rejections['count'] == status['rejected_products']
+          assert all(
+              product.get('classification_evidence', {}).get('explicit_thca')
+              and product.get('classification_evidence', {}).get('explicit_flower')
+              for product in catalog['products']
+          )
           print(json.dumps(runtime, indent=2))
           PY
       - name: Commit runtime state to main
@@ -134,6 +144,7 @@ jobs:
           test -s /tmp/dropfinder-site/data/catalog.json
           test -s /tmp/dropfinder-site/data/status.json
           test -s /tmp/dropfinder-site/data/runtime.json
+          test -s /tmp/dropfinder-site/data/rejections.json
           grep -q '"degraded_sources": 0' /tmp/dropfinder-site/data/status.json
 
           git config user.name "DropFinder Autonomous Publisher"
@@ -151,12 +162,20 @@ jobs:
           git fetch origin gh-pages
           git show origin/gh-pages:data/status.json >/tmp/published-status.json
           git show origin/gh-pages:data/runtime.json >/tmp/published-runtime.json
+          git show origin/gh-pages:data/catalog.json >/tmp/published-catalog.json
           python - <<'PY'
           import json
           status=json.load(open('/tmp/published-status.json'))
           runtime=json.load(open('/tmp/published-runtime.json'))
+          catalog=json.load(open('/tmp/published-catalog.json'))
           assert status['degraded_sources'] == 0
           assert status['healthy_sources'] == status['enabled_sources']
           assert runtime['zero_degraded_active_services'] is True
+          assert catalog['product_count'] == len(catalog['products'])
+          assert all(
+              product.get('classification_evidence', {}).get('explicit_thca')
+              and product.get('classification_evidence', {}).get('explicit_flower')
+              for product in catalog['products']
+          )
           print(f"Published {status['product_count']} products from {status['healthy_sources']} active healthy sources; {status['quarantined_sources']} candidates quarantined")
           PY
