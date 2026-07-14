@@ -1,0 +1,77 @@
+name: Deploy full DropFinder to Hugging Face
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deploy/huggingface-space/**"
+      - ".github/workflows/sync-huggingface-space.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dropfinder-huggingface-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate deployment package
+        run: |
+          set -euo pipefail
+          python -m py_compile deploy/huggingface-space/r2_state.py deploy/huggingface-space/hf_supervisor.py
+          test -s deploy/huggingface-space/dropfinder-runtime.tar.xz.b64
+          base64 -d deploy/huggingface-space/dropfinder-runtime.tar.xz.b64 | tar -tJf - >/dev/null
+          grep -q '^sdk: docker$' deploy/huggingface-space/README.md
+      - name: Create or update the Docker Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          DROPFINDER_OPERATOR_TOKEN: ${{ secrets.DROPFINDER_OPERATOR_TOKEN }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'huggingface_hub>=0.34,<2'
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          required = [
+              "HF_TOKEN", "HF_SPACE_ID", "DROPFINDER_OPERATOR_TOKEN",
+              "R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+          ]
+          missing = [name for name in required if not os.environ.get(name, "").strip()]
+          if missing:
+              raise SystemExit("Missing deployment configuration: " + ", ".join(missing))
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          repo_id = os.environ["HF_SPACE_ID"].strip()
+          api.create_repo(repo_id=repo_id, repo_type="space", space_sdk="docker", exist_ok=True)
+          api.upload_folder(
+              repo_id=repo_id,
+              repo_type="space",
+              folder_path="deploy/huggingface-space",
+              path_in_repo=".",
+              commit_message="Deploy DropFinder OS v9 full stack",
+              ignore_patterns=["__pycache__/**", "*.pyc"],
+          )
+          for key in (
+              "DROPFINDER_OPERATOR_TOKEN", "R2_ENDPOINT_URL", "R2_ACCESS_KEY_ID",
+              "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+          ):
+              api.add_space_secret(repo_id=repo_id, key=key, value=os.environ[key])
+          api.add_space_variable(repo_id=repo_id, key="DROPFINDER_WORKER_COUNT", value="1")
+          api.add_space_variable(repo_id=repo_id, key="DROPFINDER_BACKUP_INTERVAL_SECONDS", value="300")
+          print(f"Deployed https://huggingface.co/spaces/{repo_id}")
+          PY
