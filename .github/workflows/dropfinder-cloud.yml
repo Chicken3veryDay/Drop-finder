@@ -58,11 +58,11 @@ jobs:
           retention-days: 2
 
   publish:
-    name: Merge and publish phone dashboard
+    name: Merge, publish, and verify phone dashboard
     needs: scan
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -114,3 +114,52 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify public endpoint
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          : "${PAGE_URL:?Pages did not return a deployment URL}"
+          code=""
+          for attempt in $(seq 1 12); do
+            code="$(curl -L -sS -o /tmp/dropfinder-page.html -w '%{http_code}' \
+              --connect-timeout 10 --max-time 30 "$PAGE_URL" || true)"
+            if [ "$code" = "200" ] && grep -q "DropFinder Cloud" /tmp/dropfinder-page.html; then
+              break
+            fi
+            echo "Public endpoint not ready yet (attempt $attempt, HTTP ${code:-none})"
+            sleep 10
+          done
+          test "$code" = "200"
+          grep -q "DropFinder Cloud" /tmp/dropfinder-page.html
+          mkdir -p deployment
+          PAGE_URL="$PAGE_URL" HTTP_CODE="$code" GIT_SHA="$GITHUB_SHA" python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          catalog = json.loads(Path('cloud_pages/data/catalog.json').read_text())
+          status = json.loads(Path('cloud_pages/data/status.json').read_text())
+          receipt = {
+              'schema_version': 'dropfinder-pages-receipt-v1',
+              'verified_at': datetime.now(timezone.utc).isoformat(),
+              'url': os.environ['PAGE_URL'],
+              'http_status': int(os.environ['HTTP_CODE']),
+              'content_marker': 'DropFinder Cloud',
+              'workflow_commit': os.environ['GIT_SHA'],
+              'product_count': catalog['product_count'],
+              'healthy_sources': status['healthy_sources'],
+              'enabled_sources': status['enabled_sources'],
+          }
+          Path('deployment/pages-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          print(json.dumps(receipt, indent=2))
+          PY
+      - name: Persist deployment receipt
+        run: |
+          git config user.name "DropFinder Cloud Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git pull --rebase origin main
+          git add deployment/pages-receipt.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Record verified public DropFinder deployment [skip ci]"
+            git push origin HEAD:main
+          fi
