@@ -86,7 +86,6 @@ jobs:
       - name: Create private state repository and deploy Docker Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
           DROPFINDER_OPERATOR_TOKEN: ${{ secrets.DROPFINDER_OPERATOR_TOKEN }}
         run: |
           set -euo pipefail
@@ -102,22 +101,25 @@ jobs:
 
           from huggingface_hub import HfApi
 
-          required = ["HF_TOKEN", "HF_SPACE_ID", "DROPFINDER_OPERATOR_TOKEN"]
+          required = ["HF_TOKEN", "DROPFINDER_OPERATOR_TOKEN"]
           missing = [name for name in required if not os.environ.get(name, "").strip()]
           if missing:
               raise SystemExit("Missing deployment configuration: " + ", ".join(missing))
 
           token = os.environ["HF_TOKEN"].strip()
-          repo_id = os.environ["HF_SPACE_ID"].strip().strip("/")
           operator_token = os.environ["DROPFINDER_OPERATOR_TOKEN"].strip()
-          if repo_id.count("/") != 1:
-              raise SystemExit("HF_SPACE_ID must use username/space-name format")
           if len(operator_token) < 24:
               raise SystemExit("DROPFINDER_OPERATOR_TOKEN must contain at least 24 characters")
 
-          namespace, space_name = repo_id.split("/", 1)
-          state_repo = f"{namespace}/dropfinder-private-state"
           api = HfApi(token=token)
+          identity = api.whoami()
+          namespace = str(identity.get("name") or "").strip()
+          if not namespace:
+              raise SystemExit("The Hugging Face token did not resolve to a user account")
+          space_name = "dropfinder-os"
+          repo_id = f"{namespace}/{space_name}"
+          state_repo = f"{namespace}/dropfinder-private-state"
+
           api.create_repo(repo_id=state_repo, repo_type="dataset", private=True, exist_ok=True)
           api.create_repo(
               repo_id=repo_id,
