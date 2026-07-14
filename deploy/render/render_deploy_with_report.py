@@ -7,6 +7,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+import render_complete_verifier
 import render_deploy
 
 
@@ -38,18 +39,20 @@ def main() -> int:
     error_path = Path("deployment/render-deployment-error.json")
     try:
         apply_free_tier_compatibility()
+        render_complete_verifier.apply()
         code = render_deploy.main()
         if error_path.exists():
             error_path.unlink()
         return code
     except Exception as exc:
         report = {
-            "schema_version": "dropfinder-render-deployment-error-v1",
+            "schema_version": "dropfinder-render-deployment-error-v2",
             "status": "failed",
             "failed_at": utc_now(),
             "error_type": type(exc).__name__,
             "error": redact(str(exc))[:8000],
             "traceback": redact(traceback.format_exc())[-12000:],
+            "complete_data_verifier_enabled": True,
             "render_key_present": bool(os.getenv("RENDER_API_KEY", "").strip()),
             "hf_token_present": bool(os.getenv("HF_TOKEN", "").strip()),
             "operator_token_present": bool(os.getenv("DROPFINDER_OPERATOR_TOKEN", "").strip()),
