@@ -1,0 +1,68 @@
+name: DropFinder CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dropfinder-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-and-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install application and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+      - name: Compile
+        run: python -m compileall -q app scripts cli.py
+      - name: Ruff
+        run: ruff check app scripts tests cli.py
+      - name: Mypy
+        run: mypy app scripts cli.py
+      - name: Deterministic profile and API checks
+        run: |
+          python scripts/build_source_profiles.py --check
+          python scripts/check_api_auth.py
+      - name: Core test matrix
+        run: python scripts/run_test_matrix.py --mode core --timeout 180 --report core-test-report.json
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-test-report
+          path: core-test-report.json
+          if-no-files-found: ignore
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install browser test environment
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          python -m playwright install --with-deps chromium
+      - name: Chromium E2E
+        run: pytest -q tests/browser
