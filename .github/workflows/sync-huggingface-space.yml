@@ -5,8 +5,7 @@ on:
   push:
     branches: [deploy/full-stack-hf]
     paths:
-      - "deploy/huggingface-space/**"
-      - ".github/workflows/sync-huggingface-space.yml"
+      - "deployment/hf-deploy-request.txt"
 
 permissions:
   contents: read
@@ -82,7 +81,7 @@ jobs:
               folder_path="deploy/huggingface-space",
               path_in_repo=".",
               commit_message="Deploy DropFinder OS v9 full stack",
-              ignore_patterns=["__pycache__/**", "*.pyc", "r2_state.py"],
+              ignore_patterns=["__pycache__/**", "*.pyc"],
           )
           api.add_space_secret(repo_id=repo_id, key="HF_TOKEN", value=token)
           api.add_space_secret(
