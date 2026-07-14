@@ -8,7 +8,7 @@ on:
       - "deployment/hf-deploy-request.txt"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: dropfinder-huggingface-deploy
@@ -17,24 +17,58 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           ref: deploy/full-stack-hf
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate deployment package
+      - name: Validate reviewed workers and hosting control plane
         run: |
           set -euo pipefail
           python -m py_compile \
+            deploy/huggingface-space/space_app.py \
             deploy/huggingface-space/hf_state.py \
-            deploy/huggingface-space/hf_supervisor.py
-          test -s deploy/huggingface-space/dropfinder-runtime.tar.xz.b64
-          base64 -d deploy/huggingface-space/dropfinder-runtime.tar.xz.b64 | tar -tJf - >/dev/null
+            deploy/huggingface-space/hf_supervisor.py \
+            scripts/cloud_scan.py \
+            scripts/cloud_scan_v2.py \
+            scripts/autonomous_worker.py \
+            scripts/autonomous_worker_v2.py \
+            scripts/autonomous_worker_v4.py \
+            scripts/autonomous_merge.py
+          python scripts/cloud_scan_v2.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_merge.py --self-test
           grep -q '^sdk: docker$' deploy/huggingface-space/README.md
-      - name: Create state repository and deploy Docker Space
+      - name: Assemble immutable Space source tree
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/dropfinder-space
+          mkdir -p /tmp/dropfinder-space/scripts
+          cp \
+            deploy/huggingface-space/Dockerfile \
+            deploy/huggingface-space/README.md \
+            deploy/huggingface-space/space_app.py \
+            deploy/huggingface-space/hf_state.py \
+            deploy/huggingface-space/hf_supervisor.py \
+            /tmp/dropfinder-space/
+          cp \
+            scripts/cloud_scan.py \
+            scripts/cloud_scan_v2.py \
+            scripts/autonomous_worker.py \
+            scripts/autonomous_worker_v2.py \
+            scripts/autonomous_worker_v4.py \
+            scripts/autonomous_merge.py \
+            /tmp/dropfinder-space/scripts/
+          cp -a cloud_pages /tmp/dropfinder-space/web
+          find /tmp/dropfinder-space -type f -name '*.pyc' -delete
+          find /tmp/dropfinder-space -type d -name __pycache__ -prune -exec rm -rf {} +
+          test -s /tmp/dropfinder-space/web/data/catalog.json
+          test -s /tmp/dropfinder-space/web/data/status.json
+      - name: Create private state repository and deploy Docker Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
@@ -43,7 +77,14 @@ jobs:
           set -euo pipefail
           python -m pip install --disable-pip-version-check 'huggingface_hub>=0.34,<2'
           python - <<'PY'
+          import json
           import os
+          import time
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
           from huggingface_hub import HfApi
 
           required = ["HF_TOKEN", "HF_SPACE_ID", "DROPFINDER_OPERATOR_TOKEN"]
@@ -54,20 +95,15 @@ jobs:
           token = os.environ["HF_TOKEN"].strip()
           repo_id = os.environ["HF_SPACE_ID"].strip().strip("/")
           operator_token = os.environ["DROPFINDER_OPERATOR_TOKEN"].strip()
-          if "/" not in repo_id:
+          if repo_id.count("/") != 1:
               raise SystemExit("HF_SPACE_ID must use username/space-name format")
           if len(operator_token) < 24:
               raise SystemExit("DROPFINDER_OPERATOR_TOKEN must contain at least 24 characters")
 
-          namespace = repo_id.split("/", 1)[0]
+          namespace, space_name = repo_id.split("/", 1)
           state_repo = f"{namespace}/dropfinder-private-state"
           api = HfApi(token=token)
-          api.create_repo(
-              repo_id=state_repo,
-              repo_type="dataset",
-              private=True,
-              exist_ok=True,
-          )
+          api.create_repo(repo_id=state_repo, repo_type="dataset", private=True, exist_ok=True)
           api.create_repo(
               repo_id=repo_id,
               repo_type="space",
@@ -75,28 +111,91 @@ jobs:
               private=False,
               exist_ok=True,
           )
-          api.upload_folder(
+          api.add_space_secret(repo_id=repo_id, key="HF_TOKEN", value=token)
+          api.add_space_secret(repo_id=repo_id, key="DROPFINDER_OPERATOR_TOKEN", value=operator_token)
+          variables = {
+              "HF_STATE_REPO": state_repo,
+              "HF_STATE_PATH": "dropfinder/state-v1.tar.gz",
+              "DROPFINDER_BACKUP_INTERVAL_SECONDS": "3600",
+              "DROPFINDER_SCAN_INTERVAL_SECONDS": "10800",
+              "DROPFINDER_SCAN_STALE_AFTER_SECONDS": "14400",
+              "DROPFINDER_SCAN_WORKERS": "3",
+              "DROPFINDER_MIN_ACTIVE_SOURCES": "5",
+              "DROPFINDER_MIN_PRODUCTS": "25",
+          }
+          for key, value in variables.items():
+              api.add_space_variable(repo_id=repo_id, key=key, value=value)
+          commit = api.upload_folder(
               repo_id=repo_id,
               repo_type="space",
-              folder_path="deploy/huggingface-space",
+              folder_path="/tmp/dropfinder-space",
               path_in_repo=".",
-              commit_message="Deploy DropFinder OS v9 full stack",
+              commit_message="Deploy autonomous DropFinder OS v9 service",
               ignore_patterns=["__pycache__/**", "*.pyc"],
           )
-          api.add_space_secret(repo_id=repo_id, key="HF_TOKEN", value=token)
-          api.add_space_secret(
-              repo_id=repo_id,
-              key="DROPFINDER_OPERATOR_TOKEN",
-              value=operator_token,
+
+          terminal_failures = {"BUILD_ERROR", "RUNTIME_ERROR", "CONFIG_ERROR"}
+          stage = "UNKNOWN"
+          for _ in range(90):
+              runtime = api.get_space_runtime(repo_id)
+              stage = str(getattr(runtime, "stage", "UNKNOWN")).upper()
+              print(f"Space stage: {stage}", flush=True)
+              if "RUNNING" in stage:
+                  break
+              if any(failure in stage for failure in terminal_failures):
+                  raise SystemExit(f"Hugging Face build failed in stage {stage}")
+              time.sleep(10)
+          else:
+              raise SystemExit(f"Space did not reach RUNNING; final stage={stage}")
+
+          app_host = f"{namespace}-{space_name}".lower().replace("_", "-").replace(".", "-")
+          app_url = f"https://{app_host}.hf.space"
+          health = None
+          ready = None
+          for _ in range(30):
+              try:
+                  with urllib.request.urlopen(app_url + "/health", timeout=20) as response:
+                      health = json.loads(response.read().decode("utf-8"))
+                  with urllib.request.urlopen(app_url + "/ready", timeout=20) as response:
+                      ready = json.loads(response.read().decode("utf-8"))
+                  if health.get("status") == "healthy" and ready.get("ready") is True:
+                      break
+              except (OSError, ValueError, urllib.error.URLError) as exc:
+                  print(f"Health verification retry: {exc}", flush=True)
+              time.sleep(10)
+          else:
+              raise SystemExit("Space reached RUNNING but health/readiness verification failed")
+
+          receipt = {
+              "schema_version": "dropfinder-huggingface-deployment-v1",
+              "status": "healthy",
+              "verified_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              "space_id": repo_id,
+              "space_url": f"https://huggingface.co/spaces/{repo_id}",
+              "app_url": app_url,
+              "state_repository": state_repo,
+              "state_repository_private": True,
+              "space_commit": str(commit),
+              "runtime_stage": stage,
+              "health": health,
+              "ready": ready,
+              "requires_user_pc": False,
+              "hosting_account_count": 1,
+          }
+          Path("deployment/huggingface-deployment.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
           )
-          api.add_space_variable(repo_id=repo_id, key="HF_STATE_REPO", value=state_repo)
-          api.add_space_variable(repo_id=repo_id, key="HF_STATE_PATH", value="dropfinder/state-v1.tar.gz")
-          api.add_space_variable(repo_id=repo_id, key="DROPFINDER_WORKER_COUNT", value="1")
-          api.add_space_variable(
-              repo_id=repo_id,
-              key="DROPFINDER_BACKUP_INTERVAL_SECONDS",
-              value="1800",
-          )
-          print(f"Space: https://huggingface.co/spaces/{repo_id}")
-          print(f"State: https://huggingface.co/datasets/{state_repo}")
+          print(json.dumps(receipt, indent=2, sort_keys=True))
           PY
+      - name: Record verified deployment receipt
+        run: |
+          set -euo pipefail
+          git config user.name "DropFinder Hugging Face Deployer"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/huggingface-deployment.json
+          if ! git diff --cached --quiet; then
+            git commit -m "deploy: record verified Hugging Face service [skip ci]"
+            git pull --rebase origin deploy/full-stack-hf
+            git push origin HEAD:deploy/full-stack-hf
+          fi
