@@ -1,12 +1,12 @@
 {
-  "count": 7,
-  "generated_at": "2026-07-14T11:26:31+00:00",
+  "count": 5,
+  "generated_at": "2026-07-14T11:28:58+00:00",
   "schema_version": "dropfinder-source-quarantine-v2",
   "sources": [
     {
       "active_route": "",
       "admitted": false,
-      "duration_seconds": 0.213,
+      "duration_seconds": 7.133,
       "enabled": true,
       "name": "Arete",
       "products": 0,
@@ -19,10 +19,10 @@
       "reason_codes": [
         "no_qualifying_products"
       ],
-      "retry_attempts": 1,
+      "retry_attempts": 3,
       "route_results": [
         {
-          "duration_seconds": 0.153,
+          "duration_seconds": 0.096,
           "error": "HTTP 403",
           "http_status": 403,
           "retry_attempt": 1,
@@ -32,15 +32,27 @@
           "url": "https://arete.shop/l/national/products/category/thca-flower"
         },
         {
-          "duration_seconds": 0.06,
-          "error": "HTTPError: HTTP Error 403: Forbidden",
-          "route_id": "arete-fallback-1",
-          "source_type": "html_card_product_detail",
-          "status": "error",
+          "duration_seconds": 0.017,
+          "error": "HTTP 403",
+          "http_status": 403,
+          "retry_attempt": 2,
+          "route_id": "arete-1",
+          "source_type": "html",
+          "status": "http_error",
+          "url": "https://arete.shop/l/national/products/category/thca-flower"
+        },
+        {
+          "duration_seconds": 0.021,
+          "error": "HTTP 403",
+          "http_status": 403,
+          "retry_attempt": 3,
+          "route_id": "arete-1",
+          "source_type": "html",
+          "status": "http_error",
           "url": "https://arete.shop/l/national/products/category/thca-flower"
         }
       ],
-      "routes_attempted": 2,
+      "routes_attempted": 3,
       "source_id": "arete",
       "status": "quarantined",
       "worker": "cloud_scan_v2+product_detail_verifier"
@@ -48,7 +60,7 @@
     {
       "active_route": "",
       "admitted": false,
-      "duration_seconds": 0.2,
+      "duration_seconds": 0.27,
       "enabled": true,
       "name": "Five Leaf Wellness",
       "products": 0,
@@ -65,7 +77,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.144,
+          "duration_seconds": 0.141,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -76,7 +88,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 0.032,
+          "duration_seconds": 0.025,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -87,7 +99,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 0.024,
+          "duration_seconds": 0.104,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -105,62 +117,7 @@
     {
       "active_route": "",
       "admitted": false,
-      "duration_seconds": 7.779,
-      "enabled": true,
-      "name": "Green Unicorn Farms",
-      "products": 0,
-      "quality": {
-        "evidenced_products": 0,
-        "priced_products": 0,
-        "products": 0,
-        "url_coverage": 0
-      },
-      "reason_codes": [
-        "no_qualifying_products"
-      ],
-      "retry_attempts": 1,
-      "route_results": [
-        {
-          "content_type": "text/html",
-          "duration_seconds": 0.203,
-          "http_status": 200,
-          "products": 0,
-          "retry_attempt": 1,
-          "route_id": "green_unicorn_farms-1",
-          "source_type": "html",
-          "status": "empty",
-          "url": "https://greenunicornfarms.com/category/thca-flower/"
-        },
-        {
-          "duration_seconds": 7.534,
-          "error": "RuntimeError: transient HTTP 202",
-          "retry_attempt": 1,
-          "route_id": "green_unicorn_farms-2",
-          "source_type": "woo",
-          "status": "error",
-          "url": "https://greenunicornfarms.com/wp-json/wc/store/v1/products?per_page=100&search=thca"
-        },
-        {
-          "candidates": 0,
-          "content_type": "text/html",
-          "duration_seconds": 0.041,
-          "http_status": 200,
-          "products": 0,
-          "route_id": "green_unicorn_farms-fallback-1",
-          "source_type": "html_card_product_detail",
-          "status": "empty",
-          "url": "https://greenunicornfarms.com/category/thca-flower/"
-        }
-      ],
-      "routes_attempted": 3,
-      "source_id": "green_unicorn_farms",
-      "status": "quarantined",
-      "worker": "cloud_scan_v2+product_detail_verifier"
-    },
-    {
-      "active_route": "",
-      "admitted": false,
-      "duration_seconds": 0.192,
+      "duration_seconds": 1.107,
       "enabled": true,
       "name": "Preston Herb Co.",
       "products": 0,
@@ -177,7 +134,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 0.157,
+          "duration_seconds": 1.055,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -189,7 +146,7 @@
         {
           "candidates": 0,
           "content_type": "text/html",
-          "duration_seconds": 0.034,
+          "duration_seconds": 0.051,
           "http_status": 200,
           "products": 0,
           "route_id": "preston_herb_co-fallback-1",
@@ -206,51 +163,7 @@
     {
       "active_route": "",
       "admitted": false,
-      "duration_seconds": 27.064,
-      "enabled": true,
-      "name": "Pure Roots Botanicals",
-      "products": 0,
-      "quality": {
-        "evidenced_products": 0,
-        "priced_products": 0,
-        "products": 0,
-        "url_coverage": 0
-      },
-      "reason_codes": [
-        "no_qualifying_products"
-      ],
-      "retry_attempts": 1,
-      "route_results": [
-        {
-          "duration_seconds": 7.162,
-          "error": "HTTP 403",
-          "http_status": 403,
-          "retry_attempt": 1,
-          "route_id": "pure_roots_botanicals-1",
-          "source_type": "html",
-          "status": "http_error",
-          "url": "https://purerootsbotanicals.com/product-category/thca-flower/"
-        },
-        {
-          "duration_seconds": 19.902,
-          "error": "HTTP 403",
-          "http_status": 403,
-          "retry_attempt": 1,
-          "route_id": "pure_roots_botanicals-2",
-          "source_type": "woo",
-          "status": "http_error",
-          "url": "https://purerootsbotanicals.com/wp-json/wc/store/v1/products?per_page=100&search=flower"
-        }
-      ],
-      "routes_attempted": 2,
-      "source_id": "pure_roots_botanicals",
-      "status": "quarantined",
-      "worker": "cloud_scan_v2+product_detail_verifier"
-    },
-    {
-      "active_route": "",
-      "admitted": false,
-      "duration_seconds": 1.086,
+      "duration_seconds": 0.983,
       "enabled": true,
       "name": "Secret Nature",
       "products": 0,
@@ -267,7 +180,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.537,
+          "duration_seconds": 0.464,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -277,7 +190,7 @@
           "url": "https://secretnature.com/collections/thca-products/products.json?limit=250"
         },
         {
-          "duration_seconds": 0.153,
+          "duration_seconds": 0.179,
           "error": "HTTPError: HTTP Error 404: Not Found",
           "route_id": "secret_nature-fallback-1",
           "source_type": "html_card_product_detail",
@@ -285,7 +198,7 @@
           "url": "https://secretnature.com/collections/thca-flower"
         },
         {
-          "duration_seconds": 0.396,
+          "duration_seconds": 0.34,
           "error": "HTTPError: HTTP Error 404: Not Found",
           "route_id": "secret_nature-fallback-2",
           "source_type": "html_card_product_detail",
@@ -301,7 +214,7 @@
     {
       "active_route": "",
       "admitted": false,
-      "duration_seconds": 1.735,
+      "duration_seconds": 1.95,
       "enabled": true,
       "name": "WNC CBD",
       "products": 0,
@@ -318,7 +231,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 0.621,
+          "duration_seconds": 0.863,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -330,7 +243,7 @@
         {
           "candidates": 1,
           "content_type": "text/html",
-          "duration_seconds": 1.114,
+          "duration_seconds": 1.086,
           "http_status": 200,
           "products": 0,
           "route_id": "wnc_cbd-fallback-1",
