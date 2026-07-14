@@ -1,0 +1,74 @@
+name: Probe Shopify product detail endpoints
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/shopify-detail-probe-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - name: Probe product JSON endpoints
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          urls = {
+              'black_tie_cbd': 'https://www.blacktiecbd.net/products/archive-runtz-indoor-thca-flower.js',
+              'lucky_elk': 'https://luckyelk.com/products/banana-punch-greenhouse-thca-flower.js',
+              'stoney_branch_farms': 'https://stoneybranch.com/products/double-lemon-cherry-thca.js',
+          }
+
+          def shape(value, depth=0):
+              if depth >= 3:
+                  if isinstance(value, dict): return sorted(value)[:80]
+                  if isinstance(value, list): return f'list[{len(value)}]'
+                  return type(value).__name__
+              if isinstance(value, dict): return {str(k): shape(v, depth+1) for k, v in list(value.items())[:80]}
+              if isinstance(value, list): return [shape(v, depth+1) for v in value[:4]]
+              if isinstance(value, str): return value[:180]
+              return value
+
+          rows = []
+          for source_id, url in urls.items():
+              request = urllib.request.Request(url, headers={'User-Agent': 'DropFinder-Shopify-Detail-Probe/1.0', 'Accept': 'application/json', 'Accept-Encoding': 'identity'})
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      data = json.load(response)
+                      rows.append({'source_id': source_id, 'url': url, 'status': int(response.status), 'shape': shape(data)})
+              except urllib.error.HTTPError as exc:
+                  rows.append({'source_id': source_id, 'url': url, 'status': exc.code, 'error': f'HTTP {exc.code}'})
+              except Exception as exc:
+                  rows.append({'source_id': source_id, 'url': url, 'status': 0, 'error': f'{type(exc).__name__}: {exc}'[:500]})
+
+          report = {
+              'schema_version': 'dropfinder-shopify-detail-probe-v1',
+              'probed_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'products': rows,
+          }
+          Path('deployment/shopify-detail-probe.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          PY
+      - name: Record result
+        run: |
+          set -euo pipefail
+          git config user.name "DropFinder Shopify Probe"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/shopify-detail-probe.json
+          git commit -m "audit: record Shopify product detail schemas [skip ci]"
+          git pull --rebase origin deploy/full-stack-hf
+          git push origin HEAD:deploy/full-stack-hf
