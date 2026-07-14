@@ -23,7 +23,7 @@ RUN base64 -d /tmp/dropfinder-runtime.tar.xz.b64 > /tmp/dropfinder-runtime.tar.x
     && rm /tmp/dropfinder-runtime.tar.xz.b64 \
     && tar -xJf /tmp/dropfinder-runtime.tar.xz -C /app \
     && rm /tmp/dropfinder-runtime.tar.xz \
-    && python -m pip install --no-cache-dir -r requirements.txt 'boto3>=1.35,<2' \
+    && python -m pip install --no-cache-dir -r requirements.txt 'huggingface_hub>=0.34,<2' \
     && python -m playwright install --with-deps chromium \
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
     && mkdir -p /app/runtime /app/logs /opt/dropfinder-hosting \
@@ -31,7 +31,7 @@ RUN base64 -d /tmp/dropfinder-runtime.tar.xz.b64 > /tmp/dropfinder-runtime.tar.x
     && chmod 0755 /app/run.sh \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --chown=user:user r2_state.py hf_supervisor.py /opt/dropfinder-hosting/
+COPY --chown=user:user hf_state.py hf_supervisor.py /opt/dropfinder-hosting/
 
 USER user
 EXPOSE 7860
