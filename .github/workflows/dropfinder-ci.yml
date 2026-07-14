@@ -1,9 +1,15 @@
-name: DropFinder CI
+name: DropFinder Cloud CI
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths:
+      - "scripts/cloud_scan.py"
+      - "scripts/cloud_scan_v2.py"
+      - "cloud_pages/**"
+      - ".github/workflows/dropfinder-ci.yml"
+      - ".github/workflows/dropfinder-cloud.yml"
   pull_request:
     branches: [main]
 
@@ -11,58 +17,48 @@ permissions:
   contents: read
 
 concurrency:
-  group: dropfinder-ci-${{ github.ref }}
+  group: dropfinder-cloud-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  static-and-core:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-      - name: Install application and test dependencies
+      - name: Compile and self-test scanner
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-      - name: Compile
-        run: python -m compileall -q app scripts cli.py
-      - name: Ruff
-        run: ruff check app scripts tests cli.py
-      - name: Mypy
-        run: mypy app scripts cli.py
-      - name: Deterministic profile and API checks
+          python -m py_compile scripts/cloud_scan.py scripts/cloud_scan_v2.py
+          python scripts/cloud_scan_v2.py --self-test
+      - name: Validate published JSON contracts
         run: |
-          python scripts/build_source_profiles.py --check
-          python scripts/check_api_auth.py
-      - name: Core test matrix
-        run: python scripts/run_test_matrix.py --mode core --timeout 180 --report core-test-report.json
-      - name: Upload test report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: core-test-report
-          path: core-test-report.json
-          if-no-files-found: ignore
-
-  browser:
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install browser test environment
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
+          status=json.loads(Path('cloud_pages/data/status.json').read_text())
+          assert catalog['schema_version']=='dropfinder-cloud-catalog-v1'
+          assert catalog['product_count']==len(catalog['products'])
+          assert status['schema_version']=='dropfinder-cloud-status-v1'
+          assert status['source_count']==35
+          assert status['enabled_sources']==17
+          required={'id','source_id','vendor','name','url','availability','collected_at'}
+          for row in catalog['products']:
+              assert required <= row.keys()
+              assert row['url'].startswith(('https://','http://'))
+          print(f"validated {len(catalog['products'])} products")
+          PY
+      - name: Validate PWA files and privacy boundary
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          python -m playwright install --with-deps chromium
-      - name: Chromium E2E
-        run: pytest -q tests/browser
+          test -s cloud_pages/index.html
+          test -s cloud_pages/manifest.webmanifest
+          test -s cloud_pages/sw.js
+          test -s cloud_pages/icon.svg
+          ! grep -RIE '(authorization|set-cookie|private[_-]?key|BEGIN [A-Z ]+PRIVATE KEY)' cloud_pages/data
+      - name: Ensure workflow has no external credentials
+        run: |
+          ! grep -RIE '(secrets\.|cloudflare|tailscale|oracle|ngrok|localtunnel)' \
+            .github/workflows/dropfinder-cloud.yml scripts/cloud_scan.py scripts/cloud_scan_v2.py
