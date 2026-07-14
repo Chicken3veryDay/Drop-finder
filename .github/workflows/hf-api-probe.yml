@@ -20,10 +20,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Check Hugging Face API access
+      - name: Provision and probe Hugging Face repositories
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          DROPFINDER_OPERATOR_TOKEN: ${{ secrets.DROPFINDER_OPERATOR_TOKEN }}
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check 'huggingface_hub>=0.34,<2'
@@ -33,28 +32,70 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
 
+          token = os.getenv("HF_TOKEN", "").strip()
           report = {
-              "schema_version": "dropfinder-hf-api-probe-v1",
+              "schema_version": "dropfinder-hf-api-probe-v2",
               "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               "status": "failed",
+              "steps": [],
           }
-          token = os.getenv("HF_TOKEN", "").strip()
-          operator = os.getenv("DROPFINDER_OPERATOR_TOKEN", "").strip()
+
+          def clean(value):
+              text = str(value)
+              return text.replace(token, "[REDACTED]") if token else text
+
+          def run_step(name, operation):
+              try:
+                  result = operation()
+                  report["steps"].append({"name": name, "status": "healthy", "result": clean(result)[:500]})
+                  return result
+              except Exception as exc:
+                  report["steps"].append({
+                      "name": name,
+                      "status": "failed",
+                      "error_type": type(exc).__name__,
+                      "error": clean(exc)[:1200],
+                  })
+                  raise
+
           try:
               if not token:
                   raise RuntimeError("HF_TOKEN is missing or empty")
-              if len(operator) < 24:
-                  raise RuntimeError("DROPFINDER_OPERATOR_TOKEN is missing or invalid")
               from huggingface_hub import HfApi
-              identity = HfApi(token=token).whoami()
+              api = HfApi(token=token)
+              identity = run_step("whoami", api.whoami)
+              namespace = str(identity.get("name") or "").strip()
+              if not namespace:
+                  raise RuntimeError("Hugging Face identity did not contain a username")
+              state_repo = f"{namespace}/dropfinder-private-state"
+              space_repo = f"{namespace}/dropfinder-os"
+              report["identity"] = namespace
+              report["state_repository"] = state_repo
+              report["space_repository"] = space_repo
+              run_step(
+                  "create_private_state_repository",
+                  lambda: api.create_repo(
+                      repo_id=state_repo,
+                      repo_type="dataset",
+                      private=True,
+                      exist_ok=True,
+                  ),
+              )
+              run_step(
+                  "create_docker_space",
+                  lambda: api.create_repo(
+                      repo_id=space_repo,
+                      repo_type="space",
+                      space_sdk="docker",
+                      private=False,
+                      exist_ok=True,
+                  ),
+              )
               report["status"] = "healthy"
-              report["identity"] = str(identity.get("name") or "")
           except Exception as exc:
-              message = str(exc)
-              if token:
-                  message = message.replace(token, "[REDACTED]")
               report["error_type"] = type(exc).__name__
-              report["error"] = message
+              report["error"] = clean(exc)[:1200]
+
           Path("deployment/hf-api-probe.json").write_text(
               json.dumps(report, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
@@ -63,6 +104,6 @@ jobs:
           git config user.name "DropFinder API Probe"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deployment/hf-api-probe.json
-          git commit -m "deploy: record Hugging Face API probe [skip ci]"
+          git commit -m "deploy: record Hugging Face repository probe [skip ci]"
           git pull --rebase origin deploy/full-stack-hf
           git push origin HEAD:deploy/full-stack-hf
