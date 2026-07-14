@@ -3,40 +3,261 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#080b10">
-<meta name="description" content="DropFinder OS cloud product snapshot and source health dashboard">
+<meta name="theme-color" content="#080c13">
+<meta name="description" content="Compare verified THCA flower listings across trusted storefronts.">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<title>DropFinder Cloud</title>
+<title>DropFinder</title>
 <style>
-:root{color-scheme:dark;--bg:#070a0f;--surface:#0e141e;--surface2:#131c29;--line:#253246;--text:#eef5ff;--muted:#93a4bc;--accent:#7cb2ff;--good:#57d595;--warn:#ffc766;--bad:#ff7c8b;--shadow:0 16px 50px #0007}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 90% -20%,#193d6e55,transparent 40%),var(--bg);color:var(--text);font:15px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select{font:inherit}button{cursor:pointer}a{color:var(--accent);text-decoration:none}.top{position:sticky;top:0;z-index:20;background:#070a0fe8;backdrop-filter:blur(18px);border-bottom:1px solid var(--line);padding:calc(12px + env(safe-area-inset-top)) 14px 12px}.top-inner{max-width:1240px;margin:auto;display:flex;gap:12px;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:11px;min-width:0}.logo{width:40px;height:40px;border-radius:13px;background:linear-gradient(145deg,#78a9ff,#67e0c3);display:grid;place-items:center;color:#07101a;font-weight:900;box-shadow:0 8px 28px #4f9cff44}.title{font-weight:850;font-size:18px;letter-spacing:-.02em}.subtitle{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-actions{display:flex;gap:8px}.button{border:1px solid var(--line);background:var(--surface2);color:var(--text);padding:9px 12px;border-radius:11px;font-weight:700}.button:hover{border-color:#466185}.button.primary{background:linear-gradient(135deg,#2b70d3,#318b82);border-color:transparent}.wrap{max-width:1240px;margin:auto;padding:14px 14px calc(44px + env(safe-area-inset-bottom))}.banner{display:flex;justify-content:space-between;gap:14px;align-items:center;background:linear-gradient(135deg,#101a29,#10231f);border:1px solid #2d4b55;border-radius:16px;padding:14px 16px;margin-bottom:12px}.banner strong{display:block}.small{font-size:12px;color:var(--muted)}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:9px}.stat{background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:13px}.stat b{font-size:22px;display:block;letter-spacing:-.03em}.stat span{color:var(--muted);font-size:12px}.controls{position:sticky;top:77px;z-index:10;background:#070a0fcc;backdrop-filter:blur(16px);margin:12px -4px;padding:8px 4px}.search-row{display:grid;grid-template-columns:minmax(180px,1.7fr) repeat(4,minmax(115px,.7fr)) auto;gap:8px}.field{width:100%;border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:12px;padding:11px 12px;outline:none}.field:focus{border-color:#568ce0;box-shadow:0 0 0 3px #568ce022}.toggle{display:flex;align-items:center;gap:7px;white-space:nowrap}.toggle input{accent-color:#67b4ff}.result-bar{display:flex;align-items:center;justify-content:space-between;margin:9px 2px;color:var(--muted);font-size:12px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(292px,1fr));gap:11px}.card{display:flex;gap:12px;min-height:164px;background:linear-gradient(145deg,var(--surface),#101824);border:1px solid var(--line);border-radius:16px;padding:12px;box-shadow:0 6px 22px #0002;transition:.18s transform,.18s border-color}.card:hover{transform:translateY(-2px);border-color:#415976}.thumb{width:96px;min-width:96px;height:112px;border-radius:12px;background:#172131;object-fit:cover;border:1px solid #253246}.thumb.placeholder{display:grid;place-items:center;color:#52647d;font-weight:800}.content{min-width:0;flex:1}.name{font-weight:800;font-size:15px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.vendor{color:var(--muted);font-size:12px;margin-top:2px}.price{font-size:21px;font-weight:900;letter-spacing:-.03em;margin-top:8px}.chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.chip{border:1px solid var(--line);background:#0b111a;border-radius:999px;padding:3px 7px;color:var(--muted);font-size:11px}.chip.good{color:var(--good);border-color:#285d49}.chip.warn{color:var(--warn);border-color:#665326}.chip.bad{color:var(--bad);border-color:#6c303a}.card-actions{display:flex;justify-content:space-between;align-items:center;margin-top:10px}.open{font-weight:750;font-size:12px}.favorite{border:0;background:transparent;color:#70809a;font-size:21px;padding:0 3px}.favorite.active{color:#ffca68}.empty{grid-column:1/-1;padding:50px 18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:16px}.drawer-backdrop{position:fixed;inset:0;background:#0009;z-index:40;display:none}.drawer-backdrop.open{display:block}.drawer{position:absolute;right:0;top:0;bottom:0;width:min(540px,94vw);background:var(--bg);border-left:1px solid var(--line);padding:calc(18px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));overflow:auto;box-shadow:var(--shadow)}.drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:13px}.drawer h2{margin:0}.close{border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:10px;padding:7px 10px}.source{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:11px;margin-bottom:8px}.source-head{display:flex;justify-content:space-between;gap:10px}.status{font-weight:800;font-size:12px}.status.healthy{color:var(--good)}.status.degraded{color:var(--warn)}.status.error{color:var(--bad)}.route-error{margin-top:6px;color:var(--bad);font-size:11px;word-break:break-word}.offline{color:var(--warn)}
-@media(max-width:900px){.stats{grid-template-columns:repeat(3,1fr)}.search-row{grid-template-columns:1fr 1fr 1fr}.search-row .search{grid-column:1/-1}.controls{top:77px}}
-@media(max-width:600px){.top-actions .label{display:none}.banner{align-items:flex-start;flex-direction:column}.stats{grid-template-columns:1fr 1fr}.stats .stat:last-child{grid-column:1/-1}.search-row{grid-template-columns:1fr 1fr}.search-row .search{grid-column:1/-1}.grid{grid-template-columns:1fr}.card{min-height:154px}.thumb{width:84px;min-width:84px;height:104px}.controls{position:static}.subtitle{max-width:235px}}
+:root{
+  color-scheme:dark;
+  --bg:#080c13;
+  --panel:#0e1520;
+  --panel-2:#121b28;
+  --panel-3:#172233;
+  --line:#233149;
+  --line-strong:#344766;
+  --text:#f3f7ff;
+  --muted:#8f9fb7;
+  --subtle:#66758d;
+  --accent:#77adff;
+  --accent-strong:#9bc4ff;
+  --good:#52d79a;
+  --warn:#f5c56b;
+  --bad:#ff7f91;
+  --radius:18px;
+  --shadow:0 18px 60px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;min-height:100vh;background:radial-gradient(circle at 75% -20%,rgba(41,91,160,.24),transparent 42%),var(--bg);color:var(--text);font:15px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button,input,select{font:inherit}
+button,a{ -webkit-tap-highlight-color:transparent }
+a{color:inherit;text-decoration:none}
+button{cursor:pointer}
+.header{position:sticky;top:0;z-index:30;border-bottom:1px solid rgba(35,49,73,.86);background:rgba(8,12,19,.88);backdrop-filter:blur(20px);padding:calc(11px + env(safe-area-inset-top)) 14px 11px}
+.header-inner{max-width:1220px;margin:auto;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{display:flex;align-items:center;gap:11px;min-width:0}
+.mark{width:39px;height:39px;border-radius:13px;display:grid;place-items:center;flex:0 0 auto;background:linear-gradient(145deg,#8ab7ff,#58d5b3);color:#07111d;font-size:15px;font-weight:950;box-shadow:0 8px 28px rgba(74,145,255,.24)}
+.brand-copy{min-width:0}
+.brand-title{font-size:18px;font-weight:900;letter-spacing:-.025em}
+.brand-meta{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:58vw}
+.header-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.action{min-height:40px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2);color:var(--text);padding:9px 12px;display:inline-flex;align-items:center;justify-content:center;gap:7px;font-weight:800;font-size:13px}
+.action:hover{border-color:var(--line-strong);background:var(--panel-3)}
+.action.primary{border-color:transparent;background:linear-gradient(135deg,#3979d7,#277f77);box-shadow:0 8px 24px rgba(42,112,196,.2)}
+.action[aria-busy="true"]{opacity:.72;pointer-events:none}
+.status-dot{width:8px;height:8px;border-radius:999px;background:var(--good);box-shadow:0 0 0 4px rgba(82,215,154,.1)}
+.wrap{max-width:1220px;margin:auto;padding:16px 14px calc(44px + env(safe-area-inset-bottom))}
+.toolbar{position:sticky;top:62px;z-index:20;margin:0 -5px 14px;padding:8px 5px;background:linear-gradient(to bottom,rgba(8,12,19,.97) 70%,rgba(8,12,19,0));backdrop-filter:blur(14px)}
+.filters{display:grid;grid-template-columns:minmax(220px,1.75fr) repeat(3,minmax(130px,.66fr)) auto;gap:8px}
+.field{width:100%;min-height:44px;border:1px solid var(--line);border-radius:13px;background:var(--panel);color:var(--text);padding:10px 12px;outline:none}
+.field::placeholder{color:#6f7e94}
+.field:focus{border-color:#5287d6;box-shadow:0 0 0 3px rgba(82,135,214,.16)}
+.favorite-filter{min-width:46px;padding:9px 12px;color:var(--subtle);font-size:18px}
+.favorite-filter.active{color:#ffd06f;border-color:#6e5932;background:#211c13}
+.results-meta{min-height:29px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 2px 0;color:var(--muted);font-size:12px}
+.results-meta strong{color:var(--text);font-weight:850}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
+.card{position:relative;display:grid;grid-template-columns:112px minmax(0,1fr);gap:14px;min-height:190px;padding:14px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(145deg,var(--panel),#101925);box-shadow:0 7px 26px rgba(0,0,0,.16);transition:transform .17s ease,border-color .17s ease,box-shadow .17s ease}
+.card:hover{transform:translateY(-2px);border-color:#3b506f;box-shadow:var(--shadow)}
+.media{position:relative;width:112px;height:132px;border-radius:15px;overflow:hidden;border:1px solid #2a3850;background:linear-gradient(145deg,#182438,#111a28);display:grid;place-items:center}
+.media img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#111925}
+.image-fallback{font-weight:950;color:#536580;letter-spacing:.08em}
+.favorite{position:absolute;top:10px;right:10px;width:36px;height:36px;border:1px solid rgba(45,61,86,.9);border-radius:11px;background:rgba(9,14,22,.82);color:#7788a2;font-size:20px;line-height:1;z-index:2}
+.favorite.active{color:#ffd06f;border-color:#705c33;background:#211c13}
+.card-body{min-width:0;display:flex;flex-direction:column}
+.vendor-row{display:flex;align-items:center;gap:7px;padding-right:36px;color:var(--muted);font-size:12px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.availability-dot{width:7px;height:7px;flex:0 0 auto;border-radius:999px;background:var(--subtle)}
+.availability-dot.in_stock{background:var(--good)}
+.availability-dot.out_of_stock{background:var(--bad)}
+.name{margin:5px 38px 0 0;font-size:16px;line-height:1.28;font-weight:880;letter-spacing:-.015em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.price-row{display:flex;align-items:baseline;gap:7px;margin-top:10px;min-height:34px}
+.price-prefix{color:var(--muted);font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.055em}
+.price{font-size:26px;line-height:1;font-weight:950;letter-spacing:-.04em}
+.price.missing{font-size:15px;color:var(--muted);letter-spacing:0}
+.facts{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;min-height:25px}
+.fact{border:1px solid var(--line);background:#0a111b;border-radius:999px;padding:4px 8px;color:var(--muted);font-size:11px;line-height:1.2;white-space:nowrap}
+.fact.value{color:var(--accent-strong);border-color:#304d75;background:#0d1828;font-weight:800}
+.fact.good{color:var(--good);border-color:#275944}
+.fact.bad{color:var(--bad);border-color:#65313b}
+.card-link{margin-top:auto;padding-top:12px;display:flex;align-items:center;justify-content:space-between;color:var(--accent-strong);font-size:13px;font-weight:850}
+.card-link::after{content:'↗';font-size:17px;transition:transform .15s ease}
+.card-link:hover::after{transform:translate(2px,-2px)}
+.empty{grid-column:1/-1;padding:64px 20px;border:1px dashed var(--line);border-radius:var(--radius);text-align:center;color:var(--muted);background:rgba(14,21,32,.45)}
+.drawer-backdrop{position:fixed;inset:0;z-index:50;display:none;background:rgba(0,0,0,.68);backdrop-filter:blur(4px)}
+.drawer-backdrop.open{display:block}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:min(480px,94vw);overflow:auto;padding:calc(18px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));border-left:1px solid var(--line);background:var(--bg);box-shadow:-18px 0 70px rgba(0,0,0,.35)}
+.drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:15px}
+.drawer h2{margin:0;font-size:20px}
+.small{color:var(--muted);font-size:12px}
+.close{border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--text);padding:8px 11px}
+.source{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;padding:12px;border:1px solid var(--line);border-radius:13px;background:var(--panel)}
+.source-name{font-weight:800}
+.source-meta{color:var(--muted);font-size:11px;margin-top:2px}
+.source-status{font-size:11px;font-weight:850;text-transform:capitalize}
+.source-status.healthy{color:var(--good)}
+.source-status.quarantined,.source-status.degraded{color:var(--warn)}
+.source-status.error{color:var(--bad)}
+@media(max-width:850px){
+  .filters{grid-template-columns:1fr 1fr 1fr auto}
+  .filters .search{grid-column:1/-1}
+  .toolbar{top:62px}
+}
+@media(max-width:620px){
+  .header{padding-left:11px;padding-right:11px}
+  .header-actions .source-label{display:none}
+  .action{padding-left:10px;padding-right:10px}
+  .wrap{padding-left:10px;padding-right:10px}
+  .toolbar{position:static;margin-bottom:10px;background:transparent;backdrop-filter:none}
+  .filters{grid-template-columns:1fr 1fr auto}
+  .filters .search{grid-column:1/-1}
+  .filters #sort{grid-column:1/3}
+  .grid{grid-template-columns:1fr;gap:10px}
+  .card{grid-template-columns:94px minmax(0,1fr);gap:12px;min-height:176px;padding:12px}
+  .media{width:94px;height:116px;border-radius:14px}
+  .name{font-size:15px;margin-right:34px}
+  .price{font-size:24px}
+  .brand-meta{max-width:42vw}
+}
+@media(max-width:390px){
+  .mark{width:36px;height:36px}
+  .brand-title{font-size:17px}
+  .header-actions{gap:6px}
+  .action{min-height:38px;font-size:12px}
+  .card{grid-template-columns:82px minmax(0,1fr)}
+  .media{width:82px;height:104px}
+}
 </style>
 </head>
 <body>
-<header class="top"><div class="top-inner"><div class="brand"><div class="logo">D9</div><div><div class="title">DropFinder Cloud</div><div class="subtitle" id="updated">Loading published snapshot…</div></div></div><div class="top-actions"><button class="button" id="sourcesButton"><span class="label">Source </span>health</button><a class="button primary" href="https://github.com/Chicken3veryDay/Drop-finder/actions/workflows/dropfinder-cloud.yml" target="_blank" rel="noopener">Refresh</a></div></div></header>
+<header class="header">
+  <div class="header-inner">
+    <div class="brand">
+      <div class="mark">DF</div>
+      <div class="brand-copy">
+        <div class="brand-title">DropFinder</div>
+        <div class="brand-meta" id="updated">Loading catalog…</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="action" id="sourcesButton" type="button"><span class="status-dot"></span><span class="source-label" id="sourceLabel">Sources</span></button>
+      <a class="action primary" id="scanButton" href="https://github.com/Chicken3veryDay/Drop-finder/actions/workflows/dropfinder-cloud.yml" target="_blank" rel="noopener">Refresh</a>
+    </div>
+  </div>
+</header>
 <main class="wrap">
-<section class="banner"><div><strong>Always-available phone snapshot</strong><div class="small">GitHub Actions refreshes public storefront data every three hours. Your PC does not need to be running.</div></div><div class="small" id="networkState">Checking connection…</div></section>
-<section class="stats"><div class="stat"><b id="productCount">—</b><span>products</span></div><div class="stat"><b id="sourceCount">—</b><span>enabled sources</span></div><div class="stat"><b id="healthyCount">—</b><span>healthy sources</span></div><div class="stat"><b id="bestPrice">—</b><span>lowest price</span></div><div class="stat"><b id="favoriteCount">0</b><span>favorites</span></div></section>
-<section class="controls"><div class="search-row"><input class="field search" id="query" type="search" placeholder="Search flower, vendor, weight…" autocomplete="off"><select class="field" id="vendor"><option value="">All vendors</option></select><select class="field" id="stock"><option value="">Any stock</option><option value="in_stock">In stock</option><option value="out_of_stock">Out of stock</option></select><select class="field" id="weight"><option value="">Any weight</option><option value="3.5">3.5g+</option><option value="7">7g+</option><option value="14">14g+</option><option value="28">28g+</option></select><select class="field" id="sort"><option value="ppg">Best $/g</option><option value="price">Lowest price</option><option value="thca">Highest THCA</option><option value="name">Name</option></select><label class="toggle button"><input id="favoritesOnly" type="checkbox"> ★ only</label></div><div class="result-bar"><span id="resultCount">Loading…</span><span id="freshness"></span></div></section>
-<section class="grid" id="grid"><div class="empty">Loading published catalog…</div></section>
+  <section class="toolbar" aria-label="Product filters">
+    <div class="filters">
+      <input class="field search" id="query" type="search" placeholder="Search flower or vendor" autocomplete="off" aria-label="Search products">
+      <select class="field" id="vendor" aria-label="Vendor"><option value="">All vendors</option></select>
+      <select class="field" id="stock" aria-label="Availability"><option value="">Any stock</option><option value="in_stock">In stock</option><option value="out_of_stock">Out of stock</option></select>
+      <select class="field" id="sort" aria-label="Sort"><option value="ppg">Best verified $/g</option><option value="price">Lowest price</option><option value="name">Name A–Z</option></select>
+      <button class="action favorite-filter" id="favoritesOnly" type="button" aria-pressed="false" aria-label="Show favorites only">★</button>
+    </div>
+    <div class="results-meta"><span id="resultCount">Loading…</span><span id="freshness"></span></div>
+  </section>
+  <section class="grid" id="grid" aria-live="polite"><div class="empty">Loading catalog…</div></section>
 </main>
-<div class="drawer-backdrop" id="drawer"><aside class="drawer"><div class="drawer-head"><div><h2>Source health</h2><div class="small" id="healthSummary"></div></div><button class="close" id="closeDrawer">Close</button></div><div id="sources"></div></aside></div>
+<div class="drawer-backdrop" id="drawer">
+  <aside class="drawer" aria-label="Source health">
+    <div class="drawer-head"><div><h2>Source health</h2><div class="small" id="healthSummary"></div></div><button class="close" id="closeDrawer" type="button">Close</button></div>
+    <div id="sources"></div>
+  </aside>
+</div>
 <script>
 'use strict';
-const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state={products:[],status:{},favorites:new Set(JSON.parse(localStorage.getItem('dropfinder-favorites')||'[]'))};
-const money=n=>Number.isFinite(Number(n))?'$'+Number(n).toFixed(2):'—';
-function saveFavorites(){localStorage.setItem('dropfinder-favorites',JSON.stringify([...state.favorites]));$('#favoriteCount').textContent=state.favorites.size}
-function productText(p){return `${p.name||''} ${p.vendor||''} ${p.source_id||''} ${p.grams||''} ${p.thca||''}`.toLowerCase()}
-function filtered(){const q=$('#query').value.trim().toLowerCase(),vendor=$('#vendor').value,stock=$('#stock').value,minWeight=Number($('#weight').value||0),onlyFav=$('#favoritesOnly').checked;let rows=state.products.filter(p=>(!q||productText(p).includes(q))&&(!vendor||p.source_id===vendor)&&(!stock||p.availability===stock)&&(!minWeight||Number(p.grams||0)>=minWeight)&&(!onlyFav||state.favorites.has(p.id)));const sort=$('#sort').value,large=1e15;rows.sort((a,b)=>sort==='name'?String(a.name).localeCompare(String(b.name)):sort==='price'?(Number(a.price)||large)-(Number(b.price)||large):sort==='thca'?(Number(b.thca)||-1)-(Number(a.thca)||-1):(Number(a.price_per_gram)||large)-(Number(b.price_per_gram)||large));return rows}
-function card(p){const stale=p.stale?'<span class="chip warn">stale fallback</span>':'',stock=p.availability==='in_stock'?'good':p.availability==='out_of_stock'?'bad':'',image=p.image?`<img class="thumb" loading="lazy" src="${esc(p.image)}" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;thumb placeholder&quot;>D9</div>'">`:'<div class="thumb placeholder">D9</div>',fav=state.favorites.has(p.id);return `<article class="card">${image}<div class="content"><div class="name">${esc(p.name)}</div><div class="vendor">${esc(p.vendor||p.source_id)}</div><div class="price">${money(p.price)}</div><div class="chips">${p.price_per_gram?`<span class="chip">${money(p.price_per_gram)}/g</span>`:''}${p.grams?`<span class="chip">${esc(p.grams)}g</span>`:''}${p.thca?`<span class="chip">${esc(p.thca)}% THCA</span>`:''}<span class="chip ${stock}">${esc((p.availability||'unknown').replaceAll('_',' '))}</span>${stale}</div><div class="card-actions"><a class="open" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Open product ↗</a><button class="favorite ${fav?'active':''}" data-favorite="${esc(p.id)}" aria-label="Favorite">★</button></div></div></article>`}
-function render(){const rows=filtered();$('#resultCount').textContent=`${rows.length} of ${state.products.length} products`;$('#grid').innerHTML=rows.length?rows.map(card).join(''):'<div class="empty">No products match these filters.</div>';document.querySelectorAll('[data-favorite]').forEach(button=>button.onclick=()=>{const id=button.dataset.favorite;state.favorites.has(id)?state.favorites.delete(id):state.favorites.add(id);saveFavorites();render()})}
-function renderSources(){const sources=state.status.sources||[];$('#healthSummary').textContent=`${state.status.healthy_sources||0} healthy of ${state.status.enabled_sources||0} enabled`;$('#sources').innerHTML=sources.map(s=>{const error=(s.route_results||[]).find(r=>r.error);return `<div class="source"><div class="source-head"><div><strong>${esc(s.name)}</strong><div class="small">${esc(s.products||0)} products · ${esc(s.routes_attempted||0)} routes</div></div><div class="status ${esc(s.status)}">${esc(s.status)}</div></div>${error?`<div class="route-error">${esc(error.error)}</div>`:''}</div>`}).join('')}
-function updateOnline(){const online=navigator.onLine;$('#networkState').innerHTML=online?'<span class="good">● Online</span>':'<span class="offline">● Offline · cached snapshot</span>'}
-async function load(){try{const [catalog,status]=await Promise.all([fetch('data/catalog.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error(r.status);return r.json()}),fetch('data/status.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error(r.status);return r.json()})]);state.products=Array.isArray(catalog.products)?catalog.products:[];state.status=status||{};const vendors=[...new Map(state.products.map(p=>[p.source_id,p.vendor||p.source_id])).entries()].sort((a,b)=>a[1].localeCompare(b[1]));$('#vendor').innerHTML='<option value="">All vendors</option>'+vendors.map(([id,name])=>`<option value="${esc(id)}">${esc(name)}</option>`).join('');$('#productCount').textContent=state.products.length;$('#sourceCount').textContent=status.enabled_sources??0;$('#healthyCount').textContent=status.healthy_sources??0;const prices=state.products.map(p=>Number(p.price)).filter(n=>Number.isFinite(n)&&n>0);$('#bestPrice').textContent=prices.length?money(Math.min(...prices)):'—';$('#updated').textContent=`Published ${status.generated_at||catalog.generated_at||'unknown'} · read-only cloud mode`;const age=Date.now()-Date.parse(status.generated_at||catalog.generated_at||0);$('#freshness').textContent=Number.isFinite(age)?`${Math.max(0,Math.floor(age/3600000))}h old`:'';saveFavorites();renderSources();render()}catch(error){$('#grid').innerHTML='<div class="empty bad">The latest snapshot could not be loaded. Reload once, then use the cached copy offline.</div>';$('#updated').textContent='Snapshot load failed'}}
-['query','vendor','stock','weight','sort','favoritesOnly'].forEach(id=>$('#'+id).addEventListener(id==='query'?'input':'change',render));$('#sourcesButton').onclick=()=>$('#drawer').classList.add('open');$('#closeDrawer').onclick=()=>$('#drawer').classList.remove('open');$('#drawer').onclick=e=>{if(e.target===$('#drawer'))$('#drawer').classList.remove('open')};window.addEventListener('online',updateOnline);window.addEventListener('offline',updateOnline);updateOnline();load();if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+const $=selector=>document.querySelector(selector);
+const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const state={products:[],status:{},favorites:new Set(JSON.parse(localStorage.getItem('dropfinder-favorites')||'[]')),favoritesOnly:false};
+const number=value=>{const n=Number(value);return Number.isFinite(n)?n:null};
+const money=value=>number(value)!==null?'$'+number(value).toFixed(2):'—';
+const exactPricing=product=>['exact_variant','exact_title'].includes(product.pricing_confidence)&&number(product.price_per_gram)!==null;
+const exactWeight=product=>['variant','title'].includes(product.weight_source)&&number(product.grams)!==null;
+function relativeTime(raw){const time=Date.parse(raw||'');if(!Number.isFinite(time))return 'Update time unavailable';const seconds=Math.max(0,Math.floor((Date.now()-time)/1000));if(seconds<60)return 'Updated just now';if(seconds<3600)return `Updated ${Math.floor(seconds/60)}m ago`;if(seconds<86400)return `Updated ${Math.floor(seconds/3600)}h ago`;return `Updated ${Math.floor(seconds/86400)}d ago`}
+function saveFavorites(){localStorage.setItem('dropfinder-favorites',JSON.stringify([...state.favorites]))}
+function productText(product){return `${product.name||''} ${product.vendor||''} ${product.source_id||''} ${product.variant||''} ${product.thca||''}`.toLowerCase()}
+function filtered(){
+  const query=$('#query').value.trim().toLowerCase();
+  const vendor=$('#vendor').value;
+  const stock=$('#stock').value;
+  const sort=$('#sort').value;
+  const large=Number.MAX_SAFE_INTEGER;
+  const rows=state.products.filter(product=>(!query||productText(product).includes(query))&&(!vendor||product.source_id===vendor)&&(!stock||product.availability===stock)&&(!state.favoritesOnly||state.favorites.has(product.id)));
+  rows.sort((a,b)=>sort==='name'?String(a.name||'').localeCompare(String(b.name||'')):sort==='price'?(number(a.price)??large)-(number(b.price)??large):(exactPricing(a)?number(a.price_per_gram):large)-(exactPricing(b)?number(b.price_per_gram):large));
+  return rows;
+}
+function availability(product){
+  if(product.availability==='in_stock')return {label:'In stock',className:'in_stock'};
+  if(product.availability==='out_of_stock')return {label:'Out of stock',className:'out_of_stock'};
+  return {label:'Stock unknown',className:''};
+}
+function card(product){
+  const stock=availability(product);
+  const favorite=state.favorites.has(product.id);
+  const price=number(product.price);
+  const starting=product.price_type==='starting_at';
+  const prefix=starting?'<span class="price-prefix">From</span>':'';
+  const priceHtml=price===null?'<span class="price missing">Price unavailable</span>':`${prefix}<span class="price">${money(price)}</span>`;
+  const facts=[];
+  if(exactPricing(product))facts.push(`<span class="fact value">${money(product.price_per_gram)}/g</span>`);
+  if(exactWeight(product))facts.push(`<span class="fact">${esc(number(product.grams).toFixed(number(product.grams)%1?1:0))}g</span>`);
+  if(number(product.thca)!==null)facts.push(`<span class="fact">${esc(number(product.thca).toFixed(1).replace(/\.0$/,''))}% THCA</span>`);
+  if(product.availability!=='unknown')facts.push(`<span class="fact ${stock.className==='in_stock'?'good':stock.className==='out_of_stock'?'bad':''}">${stock.label}</span>`);
+  const image=product.image?`<img loading="lazy" src="${esc(product.image)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">`:'';
+  return `<article class="card">
+    <div class="media">${image}<span class="image-fallback">DF</span></div>
+    <button class="favorite ${favorite?'active':''}" data-favorite="${esc(product.id)}" type="button" aria-label="${favorite?'Remove from':'Add to'} favorites" aria-pressed="${favorite}">★</button>
+    <div class="card-body">
+      <div class="vendor-row"><span class="availability-dot ${stock.className}"></span>${esc(product.vendor||product.source_id||'Unknown vendor')}</div>
+      <div class="name">${esc(product.name||'Untitled product')}</div>
+      <div class="price-row">${priceHtml}</div>
+      <div class="facts">${facts.join('')}</div>
+      <a class="card-link" href="${esc(product.url)}" target="_blank" rel="noopener noreferrer">View product</a>
+    </div>
+  </article>`;
+}
+function render(){
+  const rows=filtered();
+  const comparable=rows.filter(exactPricing).length;
+  $('#resultCount').innerHTML=`<strong>${rows.length}</strong> products${comparable?` · ${comparable} with verified unit pricing`:''}`;
+  $('#grid').innerHTML=rows.length?rows.map(card).join(''):'<div class="empty">No products match these filters.</div>';
+  document.querySelectorAll('[data-favorite]').forEach(button=>button.addEventListener('click',()=>{const id=button.dataset.favorite;state.favorites.has(id)?state.favorites.delete(id):state.favorites.add(id);saveFavorites();render()}));
+}
+function renderSources(){
+  const sources=state.status.sources||[];
+  $('#healthSummary').textContent=`${state.status.healthy_sources||0} healthy · ${state.status.quarantined_sources||0} quarantined`;
+  $('#sourceLabel').textContent=`${state.status.healthy_sources||0} sources`;
+  $('#sources').innerHTML=sources.map(source=>`<div class="source"><div><div class="source-name">${esc(source.name||source.source_id)}</div><div class="source-meta">${esc(source.products||0)} products</div></div><div class="source-status ${esc(source.status||'')}">${esc(source.status||'unknown')}</div></div>`).join('')||'<div class="empty">No source status is available.</div>';
+}
+async function load(){
+  try{
+    const [catalog,status]=await Promise.all([
+      fetch('data/catalog.json',{cache:'no-store'}).then(response=>{if(!response.ok)throw Error(response.status);return response.json()}),
+      fetch('data/status.json',{cache:'no-store'}).then(response=>{if(!response.ok)throw Error(response.status);return response.json()})
+    ]);
+    state.products=Array.isArray(catalog.products)?catalog.products:[];
+    state.status=status||{};
+    const vendors=[...new Map(state.products.map(product=>[product.source_id,product.vendor||product.source_id])).entries()].sort((a,b)=>String(a[1]).localeCompare(String(b[1])));
+    $('#vendor').innerHTML='<option value="">All vendors</option>'+vendors.map(([id,name])=>`<option value="${esc(id)}">${esc(name)}</option>`).join('');
+    const generated=status.generated_at||catalog.generated_at;
+    $('#updated').textContent=`${state.products.length} verified listings · ${relativeTime(generated)}`;
+    $('#freshness').textContent=relativeTime(generated);
+    renderSources();
+    render();
+  }catch(error){
+    $('#grid').innerHTML='<div class="empty">The catalog could not be loaded. Reload after the service wakes.</div>';
+    $('#updated').textContent='Catalog unavailable';
+  }
+}
+['query','vendor','stock','sort'].forEach(id=>$('#'+id).addEventListener(id==='query'?'input':'change',render));
+$('#favoritesOnly').addEventListener('click',event=>{state.favoritesOnly=!state.favoritesOnly;event.currentTarget.classList.toggle('active',state.favoritesOnly);event.currentTarget.setAttribute('aria-pressed',String(state.favoritesOnly));render()});
+$('#sourcesButton').addEventListener('click',()=>$('#drawer').classList.add('open'));
+$('#closeDrawer').addEventListener('click',()=>$('#drawer').classList.remove('open'));
+$('#drawer').addEventListener('click',event=>{if(event.target===$('#drawer'))$('#drawer').classList.remove('open')});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')$('#drawer').classList.remove('open')});
+load();
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
 </body>
 </html>
