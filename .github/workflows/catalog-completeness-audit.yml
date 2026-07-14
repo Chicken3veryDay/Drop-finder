@@ -1,0 +1,46 @@
+name: Audit DropFinder catalog completeness
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/catalog-completeness-audit-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-catalog-completeness-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Audit live catalog and product pages
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/catalog_completeness_audit.py
+          python scripts/catalog_completeness_audit.py \
+            --inspect-pages \
+            --max-pages 220 \
+            --output deployment/catalog-completeness-audit.json
+      - name: Record completeness report
+        run: |
+          set -euo pipefail
+          git config user.name "DropFinder Completeness Auditor"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/catalog-completeness-audit.json
+          if ! git diff --cached --quiet; then
+            git commit -m "audit: record catalog completeness and page recoverability [skip ci]"
+            git pull --rebase origin deploy/full-stack-hf
+            git push origin HEAD:deploy/full-stack-hf
+          fi
