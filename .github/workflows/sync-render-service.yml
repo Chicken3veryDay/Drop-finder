@@ -1,0 +1,70 @@
+name: Deploy full DropFinder to Render
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/render-deploy-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-render-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate Render deployment package
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            deploy/render/render_deploy.py \
+            deploy/huggingface-space/space_app.py \
+            deploy/huggingface-space/hf_state.py \
+            deploy/huggingface-space/hf_supervisor.py \
+            scripts/cloud_scan.py \
+            scripts/cloud_scan_v2.py \
+            scripts/autonomous_worker.py \
+            scripts/autonomous_worker_v2.py \
+            scripts/autonomous_worker_v4.py \
+            scripts/autonomous_merge.py
+          python scripts/cloud_scan_v2.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_merge.py --self-test
+          test -s deploy/render/Dockerfile
+          grep -q 'plan.*free' deploy/render/render_deploy.py
+          grep -q 'render_autonomous_service' deploy/render/Dockerfile
+      - name: Create, deploy, scan, and verify Render service
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_STATE_REPO: Cgptmichaccount/dropfinder-private-state
+          DROPFINDER_OPERATOR_TOKEN: ${{ secrets.DROPFINDER_OPERATOR_TOKEN }}
+          DROPFINDER_DEPLOYMENT_RECEIPT: deployment/render-deployment.json
+        run: |
+          set -euo pipefail
+          python deploy/render/render_deploy.py
+      - name: Record verified Render deployment receipt
+        run: |
+          set -euo pipefail
+          test -s deployment/render-deployment.json
+          git config user.name "DropFinder Render Deployer"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/render-deployment.json
+          if ! git diff --cached --quiet; then
+            git commit -m "deploy: record verified Render service [skip ci]"
+            git pull --rebase origin deploy/full-stack-hf
+            git push origin HEAD:deploy/full-stack-hf
+          fi
