@@ -1,0 +1,103 @@
+name: Probe live Render service
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/render-service-probe-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - name: Query Render service and public health
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          token = os.environ.get('RENDER_API_KEY', '').strip()
+          if not token:
+              raise SystemExit('RENDER_API_KEY is missing')
+
+          def api(path):
+              request = urllib.request.Request(
+                  'https://api.render.com/v1' + path,
+                  headers={
+                      'Accept': 'application/json',
+                      'Authorization': f'Bearer {token}',
+                      'User-Agent': 'DropFinder-Render-Service-Probe/1.0',
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          owners = api('/owners?limit=20') or []
+          owner_rows = [row.get('owner', row) for row in owners if isinstance(row, dict)]
+          if not owner_rows:
+              raise SystemExit('No Render workspace is accessible')
+          owner_id = str(owner_rows[0].get('id') or '')
+          query = urllib.parse.urlencode({'name': 'dropfinder-os', 'ownerId': owner_id, 'limit': 20})
+          rows = api('/services?' + query) or []
+          services = [row.get('service', row) for row in rows if isinstance(row, dict)]
+          matches = [row for row in services if row.get('name') == 'dropfinder-os']
+          if not matches:
+              raise SystemExit('dropfinder-os Render service was not found')
+          service = matches[0]
+          details = service.get('serviceDetails') if isinstance(service.get('serviceDetails'), dict) else {}
+          app_url = str(details.get('url') or service.get('url') or '').rstrip('/')
+          if not app_url and service.get('slug'):
+              app_url = f"https://{service['slug']}.onrender.com"
+
+          def public_json(path):
+              request = urllib.request.Request(
+                  app_url + path,
+                  headers={'User-Agent': 'DropFinder-Public-Health-Probe/1.0'},
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+
+          report = {
+              'schema_version': 'dropfinder-render-service-probe-v1',
+              'checked_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'service_id': service.get('id'),
+              'service_name': service.get('name'),
+              'service_url': app_url,
+              'service_type': service.get('type'),
+              'suspended': service.get('suspended'),
+              'dashboard_url': service.get('dashboardUrl'),
+          }
+          try:
+              report['health'] = public_json('/health')
+              report['ready'] = public_json('/ready')
+              report['status'] = 'healthy' if report['health'].get('status') == 'healthy' and report['ready'].get('ready') is True else 'unhealthy'
+          except Exception as exc:
+              report['status'] = 'warming_or_unhealthy'
+              report['public_error_type'] = type(exc).__name__
+              report['public_error'] = str(exc)[:1000]
+
+          Path('deployment/render-service-probe.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          git config user.name "DropFinder Render Service Probe"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/render-service-probe.json
+          git commit -m "deploy: record live Render service probe [skip ci]"
+          git pull --rebase origin deploy/full-stack-hf
+          git push origin HEAD:deploy/full-stack-hf
