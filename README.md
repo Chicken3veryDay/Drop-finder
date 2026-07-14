@@ -1,37 +1,37 @@
 # DropFinder OS v9.0
 
-DropFinder is a THCA flower-only product intelligence system with strict product classification, normalized catalog data, source health monitoring, drift detection, evidence-backed certification, and self-healing extraction controls.
+DropFinder is a THCA flower-only product intelligence system with strict classification, normalized catalog data, source-health monitoring, drift detection, evidence-backed certification, and self-healing extraction controls.
 
-## Phone app
+## Phone deployment
 
-The credential-free cloud dashboard is available at:
+The credential-free cloud dashboard is published at:
 
-**https://chicken3veryday.github.io/Drop-finder/**
+**https://raw.githack.com/Chicken3veryDay/Drop-finder/main/index.html**
 
-Open it in Safari or Chrome and add it to the phone home screen. GitHub Pages keeps the dashboard available without a PC running. GitHub Actions performs bounded public-storefront scans every six hours and republishes the normalized snapshot.
+Open that URL in Safari or Chrome. On iPhone, use **Share → Add to Home Screen** to install it like an app.
 
-Current cloud mode is intentionally read-only. GitHub Pages cannot run the persistent FastAPI, worker, scheduler, encrypted evidence, or queue services; those remain part of the full v9 application for server deployment.
+This deployment is served from the public `main` branch through a repository CDN. It does not require a computer, VM, payment method, cloud credentials, SSH key, domain, or personal access token from the user. Changes committed to `index.html`, `cloud_site/`, or `cloud_site/data/status.json` are reflected by the deployment.
 
-## Cloud privacy boundary
+The deployment record is stored at `deployment/cdn.json`.
 
-The Pages publisher includes only normalized public catalog fields and aggregate source health. It does not publish raw responses, cookies, request headers, authorization data, SQLite databases, queue records, runtime keys, or evidence bodies.
+## What cloud mode provides
 
-## Repository automation
+Cloud mode is a continuously hosted, read-only reliability dashboard. It currently publishes the 35-source inventory, enabled state, certification state, and bounded source-health snapshot.
 
-- `.github/workflows/dropfinder-cloud.yml` scans and deploys the phone dashboard.
-- `scripts/cloud_scan.py` is the dependency-free bounded cloud scanner.
-- `cloud_pages/` is the installable offline-capable phone dashboard.
-- Changes to the scanner or dashboard trigger a fresh deployment.
-- Scheduled scans run every six hours.
+It intentionally does not expose raw response bodies, cookies, request headers, authorization data, SQLite databases, queue records, runtime keys, evidence bodies, or operator logs.
 
-## Accuracy rules
+Transport reachability is not treated as live source certification, and uncertified sources remain fail-closed.
 
-The cloud scanner accepts only records with flower and THCA evidence and rejects pre-rolls, vapes, edibles, concentrates, seeds, accessories, topicals, and other nonflower forms. Failed sources are shown as degraded instead of being treated as empty truth. A cloud health result is not equivalent to full v9 live-source certification.
+## Full application boundary
 
-## Local full application
+A static CDN cannot run the persistent FastAPI service, worker pool, scheduler, encrypted evidence store, queue, browser processes, or SQLite writer. Those are part of the complete DropFinder v9 application package and require an actual Python host. The credential-free deployment therefore provides phone access to the cloud dashboard rather than pretending a static site is a permanent Python server.
 
-The complete v9 application supports the FastAPI web service, workers, scheduler, durable queue, evidence encryption, adapter versioning, route canaries, drift incidents, certification, shadow promotion, and automatic rollback. See `docs/` for architecture, security, operations, and certification details.
+The repository contains the cloud deployment, deployment workflows prepared for GitHub Pages, and source-package bootstrap material. GitHub Actions did not execute connector-created workflows in this repository, so the verified deployment path is the repository CDN URL above; the Pages workflow remains available for later activation.
 
 ## Future updates
 
-The connected GitHub integration can inspect and update this repository directly. Normal changes should be developed on a branch, validated, merged to `main`, and then republished automatically by GitHub Actions.
+The ChatGPT GitHub integration has administrator-level write access to this repository. Future changes can be made through branches or direct commits, reviewed through GitHub, and published by updating the cloud files on `main`. No new connection details are required.
+
+## Repository
+
+`Chicken3veryDay/Drop-finder`
