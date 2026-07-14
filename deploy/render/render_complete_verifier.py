@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import urllib.parse
 from typing import Any
 
 import render_deploy
@@ -8,6 +9,21 @@ import render_deploy
 CONTRACT = "exact_price_weight_ppg_thca_stock_image_v1"
 EXACT_PRICING = {"exact_variant", "exact_title"}
 KNOWN_STOCK = {"in_stock", "out_of_stock"}
+PRODUCT_MARKERS = (
+    "/product/",
+    "/products/",
+    "/product-page/",
+    "/l/national/product/",
+    "/cbd-hemp-flower/",
+    "/hemp-products/",
+)
+LISTING_MARKERS = (
+    "/product-category/",
+    "/product-tag/",
+    "/collections/",
+    "/category/",
+    "/categories/",
+)
 _original_verify_catalog = render_deploy.verify_catalog
 
 
@@ -19,6 +35,19 @@ def positive(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) and number > 0 else None
+
+
+def direct_product_url(value: object) -> bool:
+    try:
+        parsed = urllib.parse.urlsplit(str(value or ""))
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    path = urllib.parse.unquote(parsed.path).lower()
+    if any(marker in path for marker in LISTING_MARKERS):
+        return False
+    return any(marker in path for marker in PRODUCT_MARKERS)
 
 
 def product_failures(product: dict[str, Any]) -> list[str]:
@@ -51,8 +80,8 @@ def product_failures(product: dict[str, Any]) -> list[str]:
         failures.append("availability")
     if not str(product.get("image") or "").startswith(("http://", "https://")):
         failures.append("image")
-    if not str(product.get("url") or "").startswith(("http://", "https://")):
-        failures.append("url")
+    if not direct_product_url(product.get("url")):
+        failures.append("direct_product_url")
     return failures
 
 
@@ -88,6 +117,7 @@ def verify_catalog(app_url: str) -> dict[str, Any]:
         "contract": CONTRACT,
         "complete_products": len(products),
         "field_failure_count": 0,
+        "direct_product_url_failures": 0,
         "sources": source_status.get("healthy_sources"),
     }
     return verified
