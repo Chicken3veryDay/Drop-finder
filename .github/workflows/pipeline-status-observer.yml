@@ -34,13 +34,13 @@ jobs:
 
           names = {
               'Canary complete DropFinder catalog',
-              'Audit DropFinder catalog completeness',
-              'Probe DropFinder commerce schemas',
-              'Probe Shopify product detail endpoints',
-              'Probe DropFinder potency provenance',
+              'Benchmark DropFinder one-page performance',
+              'Apply DropFinder normalization and UI patch',
               'Validate DropFinder Render package',
               'Deploy full DropFinder to Render',
+              'Verify complete live DropFinder release',
               'Probe live Render service',
+              'Observe Render rollout status',
           }
           query = urllib.parse.urlencode({'branch': 'deploy/full-stack-hf', 'per_page': 100})
           request = urllib.request.Request(
@@ -48,7 +48,7 @@ jobs:
               headers={
                   'Accept': 'application/vnd.github+json',
                   'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
-                  'User-Agent': 'DropFinder-Pipeline-Observer/2.0',
+                  'User-Agent': 'DropFinder-Pipeline-Observer/3.0',
                   'X-GitHub-Api-Version': '2022-11-28',
               },
           )
@@ -70,9 +70,9 @@ jobs:
                   'run_attempt': row.get('run_attempt'),
               })
           payload = {
-              'schema_version': 'dropfinder-pipeline-status-v2',
+              'schema_version': 'dropfinder-pipeline-status-v3',
               'captured_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-              'runs': runs[:50],
+              'runs': runs[:70],
           }
           Path('deployment/pipeline-status.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
           PY
@@ -80,13 +80,24 @@ jobs:
         run: |
           set -euo pipefail
           cp deployment/pipeline-status.json /tmp/pipeline-status.json
-          git fetch origin deploy/full-stack-hf
-          git reset --hard origin/deploy/full-stack-hf
-          cp /tmp/pipeline-status.json deployment/pipeline-status.json
           git config user.name "DropFinder Pipeline Observer"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deployment/pipeline-status.json
-          if ! git diff --cached --quiet; then
+          recorded=false
+          for attempt in 1 2 3 4 5; do
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/pipeline-status.json deployment/pipeline-status.json
+            git add deployment/pipeline-status.json
+            if git diff --cached --quiet; then
+              recorded=true
+              break
+            fi
             git commit -m "ci: record pipeline status [skip ci]"
-            git push origin HEAD:deploy/full-stack-hf
-          fi
+            if git push origin HEAD:deploy/full-stack-hf; then
+              recorded=true
+              break
+            fi
+            git reset --hard HEAD~1
+            sleep $((attempt * 2))
+          done
+          test "$recorded" = true
