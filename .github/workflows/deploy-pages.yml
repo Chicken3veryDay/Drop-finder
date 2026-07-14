@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "cloud_site/**"
+      - "cloud_pages/**"
       - ".github/workflows/deploy-pages.yml"
   issues:
     types: [opened]
@@ -27,12 +27,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
@@ -41,43 +42,75 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s cloud_site/index.html
-          test -s cloud_site/data/status.json
-          python -m json.tool cloud_site/data/status.json >/dev/null
-          python -m json.tool cloud_site/manifest.webmanifest >/dev/null
-          grep -q "DropFinder OS 9.0" cloud_site/index.html
+          test -s cloud_pages/index.html
+          test -s cloud_pages/data/catalog.json
+          test -s cloud_pages/data/status.json
+          python -m json.tool cloud_pages/data/catalog.json >/dev/null
+          python -m json.tool cloud_pages/data/status.json >/dev/null
+          python -m json.tool cloud_pages/manifest.webmanifest >/dev/null
+          grep -q "DropFinder Cloud" cloud_pages/index.html
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          catalog = json.loads(Path('cloud_pages/data/catalog.json').read_text())
+          status = json.loads(Path('cloud_pages/data/status.json').read_text())
+          assert catalog['product_count'] == len(catalog['products'])
+          assert status['source_count'] == 35
+          assert status['enabled_sources'] == 17
+          print(f"Validated {catalog['product_count']} products")
+          PY
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: cloud_site
+          path: cloud_pages
       - name: Deploy Pages
         id: deployment
         uses: actions/deploy-pages@v4
-      - name: Record verified deployment
+      - name: Verify public endpoint and record receipt
         shell: bash
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
           DEPLOYED_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          test -n "$PAGE_URL"
+          : "${PAGE_URL:?Pages did not return a deployment URL}"
+          code=""
+          for attempt in $(seq 1 12); do
+            code="$(curl -L -sS -o /tmp/dropfinder-page.html -w '%{http_code}' \
+              --connect-timeout 10 --max-time 30 "$PAGE_URL" || true)"
+            if [ "$code" = "200" ] && grep -q "DropFinder Cloud" /tmp/dropfinder-page.html; then
+              break
+            fi
+            echo "Endpoint not ready (attempt $attempt, HTTP ${code:-none})"
+            sleep 10
+          done
+          test "$code" = "200"
+          grep -q "DropFinder Cloud" /tmp/dropfinder-page.html
           mkdir -p deployment
-          python - <<'PY'
+          PAGE_URL="$PAGE_URL" HTTP_CODE="$code" DEPLOYED_SHA="$DEPLOYED_SHA" python - <<'PY'
           import json, os
           from datetime import datetime, timezone
+          from pathlib import Path
+          catalog = json.loads(Path('cloud_pages/data/catalog.json').read_text())
+          status = json.loads(Path('cloud_pages/data/status.json').read_text())
           payload = {
-              "schema_version": "dropfinder-pages-deployment-v1",
-              "status": "live",
-              "page_url": os.environ["PAGE_URL"],
-              "deployed_sha": os.environ["DEPLOYED_SHA"],
-              "verified_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'schema_version': 'dropfinder-pages-deployment-v2',
+              'status': 'live',
+              'page_url': os.environ['PAGE_URL'],
+              'http_status': int(os.environ['HTTP_CODE']),
+              'content_marker': 'DropFinder Cloud',
+              'deployed_sha': os.environ['DEPLOYED_SHA'],
+              'verified_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'product_count': catalog['product_count'],
+              'healthy_sources': status['healthy_sources'],
+              'enabled_sources': status['enabled_sources'],
           }
-          with open("deployment/pages.json", "w", encoding="utf-8") as handle:
-              json.dump(payload, handle, indent=2, sort_keys=True)
-              handle.write("\n")
+          Path('deployment/pages.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(payload, indent=2, sort_keys=True))
           PY
           git config user.name "dropfinder-deploy-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
           git add deployment/pages.json
           git diff --cached --quiet || git commit -m "chore: record verified Pages deployment [skip ci]"
           git push origin HEAD:main
@@ -86,4 +119,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_URL: ${{ github.event.issue.html_url }}
-        run: gh issue close "$ISSUE_URL" --comment "Deployment completed: ${{ steps.deployment.outputs.page_url }}"
+        run: gh issue close "$ISSUE_URL" --comment "Deployment verified: ${{ steps.deployment.outputs.page_url }}"
