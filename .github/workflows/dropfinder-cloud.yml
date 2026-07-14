@@ -9,7 +9,7 @@ on:
       - ".github/workflows/dropfinder-cloud.yml"
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -40,3 +42,28 @@ jobs:
       - name: Deploy dashboard
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Record verified deployment
+        if: success()
+        run: |
+          set -euo pipefail
+          mkdir -p deployment-status
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          payload = {
+              "status": "deployed",
+              "source_commit": os.environ["GITHUB_SHA"],
+              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
+              "deployed_at": datetime.now(timezone.utc).isoformat(),
+              "page_url": "${{ steps.deployment.outputs.page_url }}",
+          }
+          with open("deployment-status/pages-success.json", "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, indent=2)
+              handle.write("\n")
+          PY
+          git config user.name "DropFinder Pages Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add deployment-status/pages-success.json
+          git commit -m "Record verified GitHub Pages deployment"
+          git push origin HEAD:main
