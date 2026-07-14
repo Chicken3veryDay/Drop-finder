@@ -33,13 +33,17 @@ jobs:
             scripts/autonomous_worker.py \
             scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py \
-            scripts/autonomous_merge.py
+            scripts/autonomous_worker_v5.py \
+            scripts/autonomous_merge.py \
+            scripts/catalog_completeness_audit.py
           python scripts/cloud_scan_v2.py --self-test
-          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_worker_v5.py --self-test
           python scripts/autonomous_merge.py --self-test
           test -s deploy/render/Dockerfile
           grep -q 'plan.*free' deploy/render/render_deploy.py
           grep -q 'render_autonomous_service' deploy/render/Dockerfile
+          grep -q 'autonomous_worker_v5.py' deploy/render/Dockerfile
+          grep -q 'exact_price_weight_ppg_thca_stock_image_v1' scripts/autonomous_merge.py
       - name: Validate browser shell
         run: |
           set -euo pipefail
@@ -67,10 +71,20 @@ jobs:
               'id="weight"',
               'id="bestPrice"',
               'id="favoriteCount"',
+              'Number(value);return Number.isFinite(n)?n:null',
           )
           present = [value for value in forbidden if value in html]
           if present:
-              raise SystemExit(f'filler UI remains: {present}')
+              raise SystemExit(f'forbidden or unsafe UI content remains: {present}')
+          required_logic = (
+              "value===null||value===undefined||value===''",
+              "potency!==null&&potency<=100",
+              "exact_variant",
+              "starting_at",
+          )
+          missing_logic = [value for value in required_logic if value not in html]
+          if missing_logic:
+              raise SystemExit(f'missing null-safe pricing UI logic: {missing_logic}')
           scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
           if len(scripts) != 1:
               raise SystemExit(f'expected one inline script, found {len(scripts)}')
@@ -78,9 +92,7 @@ jobs:
           PY
           node --check /tmp/dropfinder-index.js
           node --check deploy/huggingface-space/operator.js
-          grep -q "dropfinder-cloud-v3" cloud_pages/sw.js
-          grep -q "exact_variant" cloud_pages/index.html
-          grep -q "starting_at" cloud_pages/index.html
+          grep -q "dropfinder-cloud-v4" cloud_pages/sw.js
       - name: Record validation result
         run: |
           set -euo pipefail
@@ -89,27 +101,36 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           payload = {
-              "schema_version": "dropfinder-render-validation-v2",
+              "schema_version": "dropfinder-render-validation-v3",
               "status": "healthy",
               "validated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               "python_compile": True,
-              "worker_self_tests": True,
+              "worker_v5_self_tests": True,
+              "embedded_variation_tests": True,
+              "bidirectional_thca_tests": True,
               "pricing_pairing_tests": True,
+              "complete_comparison_gate_tests": True,
               "merge_self_test": True,
               "browser_javascript_syntax": True,
+              "null_safe_ui_values": True,
               "operator_javascript_syntax": True,
               "filler_ui_removed": True,
               "service_worker_cache_updated": True,
-              "dockerfile_present": True,
+              "dockerfile_uses_v5": True,
           }
           Path("deployment/render-validation.json").write_text(
               json.dumps(payload, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           PY
+          cp deployment/render-validation.json /tmp/render-validation.json
+          git fetch origin deploy/full-stack-hf
+          git reset --hard origin/deploy/full-stack-hf
+          cp /tmp/render-validation.json deployment/render-validation.json
           git config user.name "DropFinder Render Validator"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deployment/render-validation.json
-          git commit -m "deploy: record healthy pricing and UI validation [skip ci]"
-          git pull --rebase origin deploy/full-stack-hf
-          git push origin HEAD:deploy/full-stack-hf
+          if ! git diff --cached --quiet; then
+            git commit -m "deploy: record healthy complete-data validation [skip ci]"
+            git push origin HEAD:deploy/full-stack-hf
+          fi
