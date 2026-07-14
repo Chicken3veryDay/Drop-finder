@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import sqlite3
 import tarfile
 import tempfile
@@ -14,15 +13,24 @@ from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
 
 RUNTIME_DIR = Path(os.getenv("DROPFINDER_RUNTIME_DIR", "/app/runtime")).resolve()
+STATE_PATH = os.getenv("HF_STATE_PATH", "dropfinder/state-v1.tar.gz").strip()
+_DIGEST_FILE = RUNTIME_DIR / ".last-hf-state-sha256"
+STATE_FILES = (
+    Path("data/catalog.json"),
+    Path("data/status.json"),
+    Path("data/runtime.json"),
+    Path("data/quarantine.json"),
+    Path("data/rejections.json"),
+    Path("scan-state.json"),
+)
 DB_PATHS = tuple(
     Path(path).resolve()
     for path in (
-        os.getenv("DROPFINDER_DB_PATH", "/app/runtime/dropfinder.db"),
-        os.getenv("DROPFINDER_RELIABILITY_DB_PATH", "/app/runtime/reliability.db"),
+        os.getenv("DROPFINDER_DB_PATH", ""),
+        os.getenv("DROPFINDER_RELIABILITY_DB_PATH", ""),
     )
+    if path.strip()
 )
-STATE_PATH = os.getenv("HF_STATE_PATH", "dropfinder/state-v1.tar.gz").strip()
-_DIGEST_FILE = RUNTIME_DIR / ".last-hf-state-sha256"
 
 
 def configured() -> bool:
@@ -63,10 +71,23 @@ def restore() -> bool:
     except (EntryNotFoundError, RepositoryNotFoundError):
         print("No prior private Hub snapshot exists; initializing clean state.", flush=True)
         return False
+
     archive_path = Path(downloaded)
-    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
     with tarfile.open(archive_path, "r:gz") as archive:
         _safe_extract(archive, RUNTIME_DIR)
+
+    manifest_path = RUNTIME_DIR / "snapshot-manifest.json"
+    manifest = {}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    finally:
+        manifest_path.unlink(missing_ok=True)
+
+    digest = str(manifest.get("content_sha256") or "").strip()
+    if not digest:
+        digest = _content_fingerprint(RUNTIME_DIR)
     _DIGEST_FILE.write_text(digest + "\n", encoding="ascii")
     print(f"Restored DropFinder state from hf://datasets/{_repo_id()}/{STATE_PATH}", flush=True)
     return True
@@ -79,7 +100,6 @@ def _sqlite_backup(source: Path, destination: Path) -> None:
         destination_connection = sqlite3.connect(destination, timeout=30)
         try:
             source_connection.backup(destination_connection, pages=256, sleep=0.02)
-            destination_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             destination_connection.close()
     finally:
@@ -88,28 +108,36 @@ def _sqlite_backup(source: Path, destination: Path) -> None:
 
 def _copy_runtime(snapshot_root: Path) -> None:
     snapshot_root.mkdir(parents=True, exist_ok=True)
-    db_set = {path.resolve() for path in DB_PATHS}
-    if RUNTIME_DIR.exists():
-        for source in RUNTIME_DIR.rglob("*"):
-            if not source.is_file():
-                continue
-            resolved = source.resolve()
-            if resolved in db_set or source.name.endswith(("-wal", "-shm")) or resolved == _DIGEST_FILE:
-                continue
-            relative = source.relative_to(RUNTIME_DIR)
-            destination = snapshot_root / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                shutil.copy2(source, destination)
-            except FileNotFoundError:
-                continue
+    for relative in STATE_FILES:
+        source = RUNTIME_DIR / relative
+        if not source.is_file():
+            continue
+        destination = snapshot_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(source.read_bytes())
+
     for source in DB_PATHS:
-        if source.exists():
-            try:
-                relative = source.relative_to(RUNTIME_DIR)
-            except ValueError:
-                relative = Path("databases") / source.name
-            _sqlite_backup(source, snapshot_root / relative)
+        if not source.is_file():
+            continue
+        try:
+            relative = source.relative_to(RUNTIME_DIR)
+        except ValueError:
+            relative = Path("databases") / source.name
+        _sqlite_backup(source, snapshot_root / relative)
+
+
+def _content_fingerprint(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.name in {"snapshot-manifest.json", _DIGEST_FILE.name}:
+            continue
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+    return digest.hexdigest()
 
 
 def backup(*, force: bool = False) -> bool:
@@ -120,10 +148,16 @@ def backup(*, force: bool = False) -> bool:
         tmp_path = Path(tmp)
         snapshot_root = tmp_path / "runtime"
         _copy_runtime(snapshot_root)
+        digest = _content_fingerprint(snapshot_root)
+        previous = _DIGEST_FILE.read_text(encoding="ascii").strip() if _DIGEST_FILE.exists() else ""
+        if not force and digest == previous:
+            return False
+
         manifest = {
-            "schema_version": "dropfinder-hf-state-v1",
+            "schema_version": "dropfinder-hf-state-v2",
             "created_at": time.time(),
             "state_path": STATE_PATH,
+            "content_sha256": digest,
             "files": sorted(
                 path.relative_to(snapshot_root).as_posix()
                 for path in snapshot_root.rglob("*")
@@ -139,10 +173,7 @@ def backup(*, force: bool = False) -> bool:
             for path in sorted(snapshot_root.rglob("*")):
                 if path.is_file():
                     archive.add(path, arcname=path.relative_to(snapshot_root), recursive=False)
-        digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-        previous = _DIGEST_FILE.read_text(encoding="ascii").strip() if _DIGEST_FILE.exists() else ""
-        if not force and digest == previous:
-            return False
+
         HfApi(token=_token()).upload_file(
             path_or_fileobj=archive_path,
             path_in_repo=STATE_PATH,
@@ -153,7 +184,7 @@ def backup(*, force: bool = False) -> bool:
         _DIGEST_FILE.write_text(digest + "\n", encoding="ascii")
         print(
             f"Backed up DropFinder state to private Hub dataset "
-            f"({archive_path.stat().st_size} bytes, sha256={digest})",
+            f"({archive_path.stat().st_size} bytes, content_sha256={digest})",
             flush=True,
         )
         return True
