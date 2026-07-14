@@ -25,10 +25,9 @@ CONTEXT = {
     "holy_city_farms": "THCA Flower",
     "wnc_cbd": "High THCA Flower",
     "secret_nature": "THCA Flower",
-    "five_leaf_wellness": "THCA Flower",
 }
 # Only pages whose category itself is a verified THCA-flower context belong here.
-# Broad mixed flower pages are deliberately excluded, even when they are easier to parse.
+# Broad or redirecting shop pages are deliberately excluded.
 FALLBACK_HTML_ROUTES = {
     "black_tie_cbd": ["https://www.blacktiecbd.net/collections/thca-flower"],
     "preston_herb_co": ["https://www.prestonherbco.com/categories/flower"],
@@ -37,10 +36,6 @@ FALLBACK_HTML_ROUTES = {
     "secret_nature": [
         "https://secretnature.com/collections/thca-flower",
         "https://secretnaturecbd.com/collections/thca-flower",
-    ],
-    "five_leaf_wellness": [
-        "https://fiveleafwellness.com/product-category/thca-flower/",
-        "https://fiveleafwellness.com/product-category/flower/",
     ],
 }
 
