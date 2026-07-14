@@ -26,8 +26,8 @@ jobs:
           path = Path('scripts/catalog_normalization.py')
           text = path.read_text(encoding='utf-8')
           replacements = {
-              r'(\"Minis\", re.compile(r"\\b(?:minis?|mini\\s+buds?)\\b", re.I))': r'(\"Minis\", re.compile(r"\\b(?:mini\\s+buds?|minis?)\\b", re.I))',
-              r'(\"Smalls\", re.compile(r"\\b(?:smalls?|small\\s+buds?)\\b", re.I))': r'(\"Smalls\", re.compile(r"\\b(?:small\\s+buds?|smalls?)\\b", re.I))',
+              '("Minis", re.compile(r"\\b(?:minis?|mini\\s+buds?)\\b", re.I))': '("Minis", re.compile(r"\\b(?:mini\\s+buds?|minis?)\\b", re.I))',
+              '("Smalls", re.compile(r"\\b(?:smalls?|small\\s+buds?)\\b", re.I))': '("Smalls", re.compile(r"\\b(?:small\\s+buds?|smalls?)\\b", re.I))',
           }
           for old, new in replacements.items():
               if old not in text:
