@@ -29,32 +29,59 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure GitHub Pages
-        id: configure
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
+      - name: Enable or inspect GitHub Pages
+        id: pages_api
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          mkdir -p deployment-status
+          gh api "repos/${GITHUB_REPOSITORY}/pages" \
+            > deployment-status/pages-get-before.json \
+            2> deployment-status/pages-get-before.err
+          before_code=$?
+          if [ "$before_code" -ne 0 ]; then
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" \
+              -f build_type=workflow \
+              > deployment-status/pages-create.json \
+              2> deployment-status/pages-create.err
+            echo $? > deployment-status/pages-create.exit
+          else
+            echo 0 > deployment-status/pages-create.exit
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/pages" \
+            > deployment-status/pages-get-after.json \
+            2> deployment-status/pages-get-after.err
+          after_code=$?
+          echo "$after_code" > deployment-status/pages-get-after.exit
+          if [ "$after_code" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
 
       - name: Upload static dashboard
         id: upload
+        if: steps.pages_api.outputs.ready == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: cloud_pages
 
       - name: Deploy dashboard
         id: deployment
+        if: steps.pages_api.outputs.ready == 'true'
         uses: actions/deploy-pages@v4
 
       - name: Record workflow outcome
         if: always()
         env:
-          CONFIGURE_OUTCOME: ${{ steps.configure.outcome }}
+          PAGES_READY: ${{ steps.pages_api.outputs.ready }}
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
           DEPLOY_OUTCOME: ${{ steps.deployment.outcome }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           set -euo pipefail
-          mkdir -p deployment-status
           python - <<'PY'
           import json, os
           from datetime import datetime, timezone
@@ -62,7 +89,7 @@ jobs:
               "source_commit": os.environ["GITHUB_SHA"],
               "workflow_run_id": os.environ["GITHUB_RUN_ID"],
               "recorded_at": datetime.now(timezone.utc).isoformat(),
-              "configure_outcome": os.environ.get("CONFIGURE_OUTCOME", "unknown"),
+              "pages_ready": os.environ.get("PAGES_READY", "false"),
               "upload_outcome": os.environ.get("UPLOAD_OUTCOME", "unknown"),
               "deploy_outcome": os.environ.get("DEPLOY_OUTCOME", "unknown"),
               "page_url": os.environ.get("PAGE_URL", ""),
@@ -74,6 +101,6 @@ jobs:
           PY
           git config user.name "DropFinder Pages Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add deployment-status/pages-workflow.json
-          git commit -m "Record GitHub Pages workflow outcome" || exit 0
+          git add deployment-status
+          git commit -m "Record GitHub Pages API and deployment outcome" || exit 0
           git push origin HEAD:main
