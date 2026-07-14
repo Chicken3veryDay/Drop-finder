@@ -1,0 +1,52 @@
+name: Probe DropFinder potency provenance
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/potency-provenance-probe-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-potency-provenance-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Probe product pages and linked COAs
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'pypdf>=5,<7'
+          python -m py_compile scripts/potency_provenance_probe.py
+          python scripts/potency_provenance_probe.py \
+            --max-products 350 \
+            --output deployment/potency-provenance-probe.json
+      - name: Record potency evidence report
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -s deployment/potency-provenance-probe.json; then
+            cp deployment/potency-provenance-probe.json /tmp/potency-provenance-probe.json
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/potency-provenance-probe.json deployment/potency-provenance-probe.json
+            git config user.name "DropFinder Potency Probe"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add deployment/potency-provenance-probe.json
+            if ! git diff --cached --quiet; then
+              git commit -m "audit: record product and COA potency evidence [skip ci]"
+              git push origin HEAD:deploy/full-stack-hf
+            fi
+          fi
