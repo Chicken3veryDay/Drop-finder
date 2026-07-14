@@ -5,6 +5,7 @@ import argparse, hashlib, html, json, math, os, re, time, urllib.error, urllib.p
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT=Path(__file__).resolve().parents[1]; DEFAULT=ROOT/'cloud_pages'/'data'
 UA='DropFinderCloud/9.0 (+https://github.com/Chicken3veryDay/Drop-finder)'; LIMIT=8_000_000; TIMEOUT=18
@@ -12,10 +13,10 @@ SOURCES=[
 ('arete','Arete',[('html','https://arete.shop/l/national/products/category/thca-flower','mixed_flower')]),
 ('black_tie_cbd','Black Tie CBD',[('html','https://www.blacktiecbd.net/collections/thca-flower','mixed_flower')]),
 ('crysp','Crysp',[('html','https://crysp.co/thca-flower/','thca_flower'),('woo','https://crysp.co/wp-json/wc/store/v1/products?per_page=100&search=flower','mixed_flower')]),
-('five_leaf_wellness','Five Leaf Wellness',[('woo','https://fiveleafwellness.com/wp-json/wc/store/v1/products?per_page=100','storewide'),('html','https://fiveleafwellness.com/shop/','storewide')]),
+('five_leaf_wellness','Five Leaf Wellness',[('woo','https://fiveleafwellness.com/wp-json/wc/store/v1/products?per_page=100&search=flower','mixed_flower'),('woo','https://fiveleafwellness.com/wp-json/wc/store/v1/products?per_page=100','storewide'),('html','https://fiveleafwellness.com/shop/','storewide')]),
 ('green_unicorn_farms','Green Unicorn Farms',[('html','https://greenunicornfarms.com/category/thca-flower/','thca_flower'),('woo','https://greenunicornfarms.com/wp-json/wc/store/v1/products?per_page=100&search=thca','mixed_flower')]),
 ('hello_mary','Hello Mary',[('html','https://shophellomary.com/category/flower/','mixed_flower'),('woo','https://shophellomary.com/wp-json/wc/store/v1/products?per_page=100&search=flower','mixed_flower')]),
-('holy_city_farms','Holy City Farms',[('html','https://holycityfarms.com/product-category/smokeables/flower/','mixed_flower')]),
+('holy_city_farms','Holy City Farms',[('woo','https://holycityfarms.com/wp-json/wc/store/v1/products?per_page=100&search=flower','mixed_flower'),('html','https://holycityfarms.com/product-category/smokeables/flower/','mixed_flower')]),
 ('loud_house_hemp','Loud House Hemp',[('woo','https://loudhempproducts.com/wp-json/wc/store/v1/products?per_page=100','storewide')]),
 ('lucky_elk','Lucky Elk',[('shopify','https://luckyelk.com/collections/thca-flower/products.json?limit=250','thca_flower')]),
 ('preston_herb_co','Preston Herb Co.',[('html','https://www.prestonherbco.com/categories/flower','mixed_flower')]),
@@ -27,10 +28,19 @@ SOURCES=[
 ('stoney_branch_farms','Stoney Branch Farms',[('shopify','https://stoneybranch.com/collections/thca/products.json?limit=250','storewide')]),
 ('wnc_cbd','WNC CBD',[('html','https://wnc-cbd.com/high-thca-flower','mixed_flower')]),
 ]
-EXCLUDE=re.compile(r'\b(pre[- ]?rolls?|prerolls?|joints?|blunts?|cones?|vapes?|cartridges?|carts?|disposables?|gumm(?:y|ies)|edibles?|tinctures?|capsules?|beverages?|drinks?|seltzers?|concentrates?|rosin|badder|budder|crumble|diamonds?|sauce|isolate|wax|dabs?|hash|seeds?|clones?|incense|topicals?|salves?|balms?|creams?|lotions?|apparel|shirts?|hoodies?|hats?|posters?|fertilizer|accessories?|grinders?|trays?|glass|mushrooms?|amanita|pets?|gift cards?)\b',re.I)
+HARD_EXCLUDE=re.compile(r'\b(pre[- ]?rolls?|prerolls?|vapes?|cartridges?|carts?|disposables?|gumm(?:y|ies)|edibles?|tinctures?|capsules?|beverages?|drinks?|seltzers?|concentrates?|rosin|badder|budder|crumble|isolate|dabs?|seeds?|clones?|incense|topicals?|salves?|balms?|creams?|lotions?|apparel|shirts?|hoodies?|hats?|posters?|fertilizer|accessories?|grinders?|trays?|glass|mushrooms?|amanita|pets?|gift cards?)\b',re.I)
+AMBIGUOUS_FORM=re.compile(r'\b(joints?|blunts?|cones?|diamonds?|sauce|wax|resin|hash|batter|caviar|moon\s*rocks?|snow\s*caps?)\b',re.I)
+FORM_CONTEXT=re.compile(r'\b(pack|piece|infused|coated|dusted|sprayed|extract|dab|concentrate|ready[- ]?to[- ]?smoke|filled|rolled|1\s*g)\b',re.I)
+EXPLICIT_FLOWER=re.compile(r'\b(?:thca|hemp|high\s+thca)\s+flower\b',re.I)
 FLOWER=re.compile(r'\b(thca\s+flower|hemp\s+flower|flower|buds?|smalls|shake)\b',re.I); THCA=re.compile(r'\b(thca|thc-a|high\s+thca|type\s+[i1])\b',re.I)
-GRAM=re.compile(r'(?<!\d)(0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b',re.I); OUNCE=re.compile(r'(?<!\d)(1/8|1/4|1/2|1|2|4)\s*(?:oz|ounces?)\b',re.I); POTENCY=re.compile(r'\bTHC-?A\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%',re.I)
+GRAM=re.compile(r'(?<!\d)(0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b',re.I)
+OUNCE=re.compile(r'(?<!\d)(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)?\b',re.I)
+WORD_WEIGHT=re.compile(r'\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b',re.I)
+POTENCY=re.compile(r'\bTHC-?A\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%',re.I)
 LD=re.compile(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',re.I|re.S); TAG=re.compile(r'<[^>]+>'); WS=re.compile(r'\s+')
+ANCHOR=re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',re.I|re.S)
+META=re.compile(r'<meta\b([^>]+)>',re.I); ATTR=re.compile(r'([:\w-]+)\s*=\s*["\']([^"\']*)["\']',re.I)
+TITLE=re.compile(r'<title\b[^>]*>(.*?)</title>',re.I|re.S)
 
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 def text(v): return WS.sub(' ',TAG.sub(' ',html.unescape(str(v or '')))).strip()
@@ -42,8 +52,9 @@ def grams(s):
  m=GRAM.search(s)
  if m:return num(m.group(1))
  m=OUNCE.search(s)
- if not m:return None
- return round({'1/8':3.5437,'1/4':7.0874,'1/2':14.1748}.get(m.group(1),(num(m.group(1)) or 0)*28.3495),3)
+ if m:return round({'1/8':3.5437,'1/4':7.0874,'1/2':14.1748}.get(m.group(1),(num(m.group(1)) or 0)*28.3495),3)
+ m=WORD_WEIGHT.search(s)
+ return {'eighth':3.5437,'quarter':7.0874,'half ounce':14.1748,'half-oz':14.1748,'half oz':14.1748,'ounce':28.3495,'one ounce':28.3495,'zip':28.3495}.get(m.group(1).lower()) if m else None
 def url(v,base):
  try:p=urllib.parse.urlsplit(urllib.parse.urljoin(base,str(v or '')))
  except ValueError:return ''
@@ -63,7 +74,9 @@ def availability(v):
  return 'unknown'
 def record(sid,vendor,route,name,target,desc='',price=None,stock='',image='',variant=''):
  name=text(name);desc=text(desc);target=url(target,route[1]);combined=f'{name} {desc}'
- if not name or not target or EXCLUDE.search(combined) or not FLOWER.search(combined) or not (THCA.search(combined) or 'thca' in route[1].lower()):return None
+ if not name or not target or HARD_EXCLUDE.search(combined) or not FLOWER.search(combined) or not (THCA.search(combined) or 'thca' in route[1].lower()):return None
+ ambiguous=AMBIGUOUS_FORM.search(combined)
+ if ambiguous and FORM_CONTEXT.search(combined) and not EXPLICIT_FLOWER.search(name):return None
  p=num(price);g=grams(combined);pots=[num(x) for x in POTENCY.findall(combined)];pot=max([x for x in pots if x and x<=100],default=None)
  return {'id':hashlib.sha256(f'{sid}|{target}|{variant}'.encode()).hexdigest()[:24],'source_id':sid,'vendor':vendor,'name':name,'url':target,'image':url(image,route[1]) if image else '', 'price':p,'grams':g,'price_per_gram':round(p/g,4) if p and g else None,'thca':pot,'availability':availability(stock),'variant':text(variant),'source_type':route[0],'route_url':route[1],'collected_at':now()}
 def shopify(payload,sid,vendor,route):
@@ -108,6 +121,40 @@ def html_products(payload,sid,vendor,route):
    r=record(sid,vendor,route,o.get('name'),o.get('url') or o.get('@id'),o.get('description'),offers.get('price') or offers.get('lowPrice'),offers.get('availability'),image)
    if r:rows.append(r)
  return rows
+def meta_values(payload):
+ values={}
+ for raw in META.findall(payload):
+  attrs={k.lower():html.unescape(v) for k,v in ATTR.findall(raw)};key=(attrs.get('property') or attrs.get('name') or '').lower();value=attrs.get('content','')
+  if key and value:values.setdefault(key,value)
+ return values
+def html_detail(payload,sid,vendor,route,target):
+ rows=html_products(payload,sid,vendor,route)
+ if rows:return rows
+ meta=meta_values(payload);title=meta.get('og:title') or meta.get('twitter:title');m=TITLE.search(payload)
+ if not title and m:title=text(m.group(1)).split('|')[0].strip()
+ desc=meta.get('og:description') or meta.get('description') or '';price=meta.get('product:price:amount') or meta.get('og:price:amount');stock=meta.get('product:availability') or '';image=meta.get('og:image') or meta.get('twitter:image') or ''
+ row=record(sid,vendor,route,title,target,desc,price,stock,image)
+ return [row] if row else []
+def product_links(payload,route):
+ base=urllib.parse.urlsplit(route[1]);seen=[]
+ for href,label in ANCHOR.findall(payload):
+  target=url(href,route[1]);parsed=urllib.parse.urlsplit(target);label=text(label);path=parsed.path.lower()
+  if not target or parsed.netloc!=base.netloc.lower() or target==url(route[1],route[1]):continue
+  if not any(marker in path for marker in ('/product/','/products/','/shop/','/l/national/products/')):continue
+  signal=f'{label} {path.replace("-"," ")}'
+  if not FLOWER.search(signal) or not (THCA.search(signal) or 'thca' in route[1].lower()):continue
+  if target not in seen:seen.append(target)
+  if len(seen)>=12:break
+ return seen
+def html_with_details(payload,sid,vendor,route):
+ rows=html_products(payload,sid,vendor,route)
+ if rows:return rows
+ links=product_links(payload,route);out=[]
+ for target in links:
+  try:detail,ctype,status=fetch(target)
+  except Exception:continue
+  if status==200 and ctype in {'text/html','application/xhtml+xml'}:out.extend(html_detail(detail,sid,vendor,route,target))
+ return dedupe(out)
 def dedupe(rows):
  out={}
  for r in rows:out[(r['source_id'],r['url'],r.get('variant',''))]=r
@@ -118,12 +165,13 @@ def scan(source):
   rr={'route_id':f'{sid}-{idx}','url':route[1],'source_type':route[0]};t=time.monotonic()
   try:
    payload,ctype,status=fetch(route[1]);rr.update(http_status=status,content_type=ctype)
-   rows=shopify(payload,sid,vendor,route) if route[0]=='shopify' else woo(payload,sid,vendor,route) if route[0]=='woo' else html_products(payload,sid,vendor,route)
-   rr.update(status='healthy' if rows else 'empty',products=len(rows));attempts.append(rr)
+   rows=shopify(payload,sid,vendor,route) if route[0]=='shopify' else woo(payload,sid,vendor,route) if route[0]=='woo' else html_with_details(payload,sid,vendor,route)
+   rr.update(status='healthy' if rows else 'empty',products=len(rows),duration_seconds=round(time.monotonic()-t,3));attempts.append(rr)
    if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':'healthy','products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}
   except urllib.error.HTTPError as e:rr.update(status='http_error',http_status=e.code,error=f'HTTP {e.code}')
   except Exception as e:rr.update(status='error',error=f'{type(e).__name__}: {text(e)[:220]}')
-  rr['duration_seconds']=round(time.monotonic()-t,3);attempts.append(rr)
+  if not attempts or attempts[-1] is not rr:
+   rr['duration_seconds']=round(time.monotonic()-t,3);attempts.append(rr)
  return [],{'source_id':sid,'name':vendor,'enabled':True,'status':'degraded','products':0,'routes_attempted':len(attempts),'active_route':'','route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}
 def write(path,payload):
  path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+'.tmp');tmp.write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n');os.replace(tmp,path)
@@ -154,6 +202,7 @@ def merge(inp,out,previous=None):
  write(out/'catalog.json',{'schema_version':'dropfinder-cloud-catalog-v1','generated_at':stamp,'product_count':len(products),'products':products})
  write(out/'status.json',{'schema_version':'dropfinder-cloud-status-v1','generated_at':stamp,'version':'9.0.0-cloud','mode':'credential_free_github_pages','source_count':35,'enabled_sources':len(SOURCES),'healthy_sources':healthy,'degraded_sources':len(SOURCES)-healthy,'healthy_routes':healthy,'product_count':len(products),'sources':sorted(statuses,key=lambda x:x['source_id']),'limitations':['Read-only static snapshot; GitHub Pages cannot run the FastAPI/TUI worker service.','Only normalized public fields are published; raw responses, headers, cookies, databases and evidence are never uploaded.','Cloud scan health is not equivalent to full v9 live-source certification.']});print(f'merged {len(products)} products, {healthy}/{len(SOURCES)} healthy');return 0
 def selftest():
+ assert grams('1/8th ounce')==3.544;assert grams('quarter oz')==7.0874
  route=('shopify','https://example.com/collections/thca-flower/products.json','thca_flower');payload=json.dumps({'products':[{'title':'Blue Dream THCA Flower','handle':'blue','body_html':'3.5g THCA 24.1%','variants':[{'id':1,'title':'3.5g','price':'35','available':True}]},{'title':'THCA Pre-Rolls','handle':'rolls','variants':[{'id':2,'price':'20'}]}]});rows=shopify(payload,'fixture','Fixture',route);assert len(rows)==1 and rows[0]['price_per_gram']==10;print('cloud scanner self-test passed');return 0
 def main():
  p=argparse.ArgumentParser();p.add_argument('--output',type=Path,default=DEFAULT);p.add_argument('--shard',type=int);p.add_argument('--shards',type=int,default=6);p.add_argument('--merge',type=Path);p.add_argument('--previous-catalog',type=Path);p.add_argument('--self-test',action='store_true');a=p.parse_args()
