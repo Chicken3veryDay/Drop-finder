@@ -27,7 +27,7 @@ def main() -> int:
     restore()
 
     stop = threading.Event()
-    interval = max(900, int(os.getenv("DROPFINDER_BACKUP_INTERVAL_SECONDS", "3600")))
+    interval = max(900, int(os.getenv("DROPFINDER_BACKUP_INTERVAL_SECONDS", "1800")))
 
     def backup_loop() -> None:
         while not stop.wait(interval):
@@ -70,7 +70,7 @@ def main() -> int:
         stop.set()
         thread.join(timeout=5)
         try:
-            backup(force=True)
+            backup()
         except Exception as exc:
             print(f"Final private Hub backup failed: {exc}", file=sys.stderr, flush=True)
     return return_code
