@@ -53,7 +53,6 @@ _ACRONYMS = {
     "mac": "MAC",
     "og": "OG",
     "rso": "RSO",
-    "sour d": "Sour D",
 }
 _SMALL_WORDS = {"a", "an", "and", "at", "by", "for", "in", "of", "on", "the", "to", "with"}
 
@@ -96,7 +95,7 @@ def _remove_vendor(text: str, vendor: str) -> str:
         return text
     escaped = re.escape(vendor)
     text = re.sub(rf"{_VENDOR_JOIN}{escaped}\s*$", "", text, flags=re.I)
-    return re.sub(rf"\b{escaped}\b", "", text, flags=re.I)
+    return re.sub(rf"(?<!\w){escaped}(?!\w)", "", text, flags=re.I)
 
 
 def _remove_patterns(text: str, patterns: tuple[tuple[str, re.Pattern[str]], ...]) -> str:
@@ -113,14 +112,16 @@ def _smart_title(text: str) -> str:
         stripped = re.sub(r"[^a-z0-9]", "", lower)
         if lower in _ACRONYMS:
             result.append(_ACRONYMS[lower])
-        elif stripped in _ACRONYMS:
-            result.append(word.replace(stripped, _ACRONYMS[stripped]))
         elif lower in _SMALL_WORDS and index not in {0, len(words) - 1}:
             result.append(lower)
         elif word.isupper() and 1 < len(stripped) <= 4 and stripped not in {"grams", "gram"}:
             result.append(word)
         elif "'" in word:
-            result.append("'".join(part[:1].upper() + part[1:].lower() for part in word.split("'")))
+            parts = word.split("'")
+            result.append("'".join(
+                (part[:1].upper() + part[1:].lower()) if position == 0 or len(part) > 1 else part.lower()
+                for position, part in enumerate(parts)
+            ))
         else:
             result.append(word[:1].upper() + word[1:].lower())
     return " ".join(result)
@@ -149,7 +150,7 @@ def canonical_name(raw_name: object, vendor: object = "") -> tuple[str, str, str
 
     tokens_without_type = _PRODUCT_TYPE.sub(" ", text)
     tokens_without_type = _SPACE.sub(" ", tokens_without_type).strip()
-    if tokens_without_type and len(tokens_without_type.split()) >= 1:
+    if tokens_without_type:
         text = tokens_without_type
     text = _PUNCTUATION.sub("", _SPACE.sub(" ", text)).strip()
 
@@ -160,9 +161,6 @@ def canonical_name(raw_name: object, vendor: object = "") -> tuple[str, str, str
     if cultivation and cultivation.lower() not in title.lower():
         suffixes.append(cultivation)
     if form:
-        # "Minis" and "small buds" are competing source labels for the same
-        # visible form. Prefer the more specific source term instead of showing
-        # both human inventions on one product.
         suffixes.append(form)
     if suffixes:
         title = f"{title} {' '.join(suffixes)}"
@@ -190,6 +188,7 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
     raw_variant = _text(row.get("raw_variant") or row.get("variant"))
     display_name, flower_form, cultivation = canonical_name(raw_name, row.get("vendor"))
     package_label = format_grams(row.get("grams"))
+    grams = positive(row.get("grams"))
 
     row.update(
         raw_name=raw_name,
@@ -197,7 +196,7 @@ def normalize_product(product: dict[str, Any]) -> dict[str, Any]:
         name=display_name,
         display_name=display_name,
         variant=package_label or "",
-        package_grams=round(float(row["grams"]), 3) if positive(row.get("grams")) is not None else None,
+        package_grams=round(grams, 3) if grams is not None else None,
         package_label=package_label,
         flower_form=flower_form,
         cultivation=cultivation,
@@ -227,13 +226,15 @@ def normalization_failures(product: dict[str, Any]) -> list[str]:
         failures.append("weight_label_in_name")
     if any(character in name for character in ("|", "_", "•", "·")):
         failures.append("source_separator_in_name")
-    if vendor and vendor.lower() in name.lower():
+    if len(vendor) >= 4 and re.search(rf"(?<!\w){re.escape(vendor)}(?!\w)", name, re.I):
         failures.append("vendor_in_name")
     if package_label is None or product.get("package_label") != package_label:
         failures.append("package_label")
     if product.get("variant") != package_label:
         failures.append("variant_label")
-    if positive(product.get("package_grams")) != positive(product.get("grams")):
+    normalized_grams = positive(product.get("package_grams"))
+    source_grams = positive(product.get("grams"))
+    if normalized_grams is None or source_grams is None or abs(normalized_grams - source_grams) > 0.001:
         failures.append("package_grams")
     if not _text(product.get("search_text")):
         failures.append("search_text")
