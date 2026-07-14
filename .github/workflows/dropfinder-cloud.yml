@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - "scripts/cloud_scan.py"
+      - "scripts/cloud_scan_v2.py"
       - "cloud_pages/index.html"
       - "cloud_pages/manifest.webmanifest"
       - "cloud_pages/icon.svg"
@@ -39,12 +40,12 @@ jobs:
           python-version: "3.12"
       - name: Validate scanner
         run: |
-          python -m py_compile scripts/cloud_scan.py
-          python scripts/cloud_scan.py --self-test
+          python -m py_compile scripts/cloud_scan.py scripts/cloud_scan_v2.py
+          python scripts/cloud_scan_v2.py --self-test
       - name: Scan public storefronts
         run: |
           mkdir -p "scan-output/${{ matrix.shard }}"
-          python scripts/cloud_scan.py \
+          python scripts/cloud_scan_v2.py \
             --shard "${{ matrix.shard }}" \
             --shards 6 \
             --output "scan-output/${{ matrix.shard }}"
@@ -80,7 +81,7 @@ jobs:
       - name: Merge normalized snapshot
         run: |
           cp cloud_pages/data/catalog.json /tmp/previous-catalog.json 2>/dev/null || true
-          python scripts/cloud_scan.py \
+          python scripts/cloud_scan_v2.py \
             --merge scan-results \
             --output cloud_pages/data \
             --previous-catalog /tmp/previous-catalog.json
