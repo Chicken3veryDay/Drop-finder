@@ -14,12 +14,13 @@ FORBIDDEN = re.compile(
     r"\b(?:pre[- ]?rolls?|prerolls?|joints?|blunts?|cones?|vapes?|cartridges?|carts?|"
     r"disposables?|gumm(?:y|ies)|edibles?|tinctures?|capsules?|beverages?|drinks?|"
     r"seltzers?|concentrates?|rosin|resin|badder|budder|crumble|isolate|dabs?|wax|"
-    r"hash|sift\s*pucks?|pucks?|seeds?|clones?|incense|topicals?|salves?|balms?|"
+    r"sift\s*pucks?|pucks?|seeds?|clones?|incense|topicals?|salves?|balms?|"
     r"creams?|lotions?|apparel|shirts?|hoodies?|hats?|posters?|fertilizer|accessories?|"
     r"grinders?|trays?|glass|mushrooms?|amanita|pets?|gift\s*cards?|subscriptions?|"
-    r"samplers?|mystery\s*(?:box|bag|pack)s?|wholesale|bundles?)\b",
+    r"samplers?|mystery\s*(?:box|bag|pack)s?|wholesale|bundles?|hash\s*holes?)\b",
     re.I,
 )
+AMBIGUOUS_HASH = re.compile(r"\bhash\b", re.I)
 THCA = re.compile(r"\b(?:thca|thc-a|high\s+thca)\b", re.I)
 FLOWER = re.compile(r"\b(?:flower|buds?|smalls?|minis?|popcorn|shake|trim)\b", re.I)
 ALT = re.compile(r"\b(?:cbd|cbg|type\s*[34]|delta[- ]?8|hhc|thc[- ]?p|thc[- ]?o)\b", re.I)
@@ -78,6 +79,8 @@ def reject_reason(product: dict) -> str | None:
         return "missing_or_invalid_url"
     if FORBIDDEN.search(text):
         return "forbidden_product_form"
+    if AMBIGUOUS_HASH.search(text) and not explicit_flower:
+        return "ambiguous_hash_without_flower_evidence"
     if PLACEHOLDER.fullmatch(name):
         return "generic_or_fragment_title"
     if ALT.search(text) and not explicit_thca:
@@ -243,13 +246,14 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
 def self_test(root: Path) -> int:
     root.mkdir(parents=True, exist_ok=True)
     valid = {"id": "1", "source_id": "a", "name": "Blue Dream THCA Flower", "url": "https://x/products/blue-dream-thca-flower", "price": 20}
+    valid_hash_strain = {"id": "4", "source_id": "a", "name": "Hash Burger THCA Flower", "url": "https://x/products/hash-burger-thca-flower", "price": 25}
     bad_roll = {"id": "2", "source_id": "a", "name": "Indica Hybrid Sativa", "url": "https://x/products/thca-pre-rolled-joints", "price": 10}
     bad_subscription = {"id": "3", "source_id": "a", "name": "THCA Flower Subscription", "url": "https://x/products/subscription", "price": 20}
     (root / "shard-0.json").write_text(json.dumps({
         "schema_version": "dropfinder-autonomous-shard-v1",
-        "products": [valid, bad_roll, bad_subscription],
+        "products": [valid, valid_hash_strain, bad_roll, bad_subscription],
         "sources": [
-            {"source_id": "a", "name": "A", "admitted": True, "status": "healthy", "products": 3},
+            {"source_id": "a", "name": "A", "admitted": True, "status": "healthy", "products": 4},
             {"source_id": "b", "name": "B", "admitted": False, "status": "quarantined", "products": 0},
         ],
     }), encoding="utf-8")
@@ -258,7 +262,8 @@ def self_test(root: Path) -> int:
     catalog = json.loads((root / "out" / "catalog.json").read_text())
     rejections = json.loads((root / "out" / "rejections.json").read_text())
     assert runtime["zero_degraded_active_services"] and status["degraded_sources"] == 0
-    assert catalog["product_count"] == 1 and catalog["products"][0]["id"] == "1"
+    assert catalog["product_count"] == 2
+    assert {row["id"] for row in catalog["products"]} == {"1", "4"}
     assert rejections["count"] == 2
     return 0
 
