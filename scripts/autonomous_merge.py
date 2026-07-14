@@ -1,11 +1,29 @@
 #!/usr/bin/env python3
-"""Admit only healthy retrieval workers and publish a zero-degraded catalog."""
+"""Admit only healthy retrieval workers and publish a zero-degraded strict-flower catalog."""
 from __future__ import annotations
 
 import argparse
 import json
+import re
+import urllib.parse
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+
+FORBIDDEN = re.compile(
+    r"\b(?:pre[- ]?rolls?|prerolls?|joints?|blunts?|cones?|vapes?|cartridges?|carts?|"
+    r"disposables?|gumm(?:y|ies)|edibles?|tinctures?|capsules?|beverages?|drinks?|"
+    r"seltzers?|concentrates?|rosin|resin|badder|budder|crumble|isolate|dabs?|wax|"
+    r"hash|sift\s*pucks?|pucks?|seeds?|clones?|incense|topicals?|salves?|balms?|"
+    r"creams?|lotions?|apparel|shirts?|hoodies?|hats?|posters?|fertilizer|accessories?|"
+    r"grinders?|trays?|glass|mushrooms?|amanita|pets?|gift\s*cards?|subscriptions?|"
+    r"samplers?|mystery\s*(?:box|bag|pack)s?|wholesale|bundles?)\b",
+    re.I,
+)
+THCA = re.compile(r"\b(?:thca|thc-a|high\s+thca)\b", re.I)
+FLOWER = re.compile(r"\b(?:flower|buds?|smalls?|minis?|popcorn|shake|trim)\b", re.I)
+ALT = re.compile(r"\b(?:cbd|cbg|type\s*[34]|delta[- ]?8|hhc|thc[- ]?p|thc[- ]?o)\b", re.I)
+PLACEHOLDER = re.compile(r"^(?:product|flower|strain|indica|sativa|hybrid|indica[, /]+hybrid[, /]+sativa|unknown|untitled)$", re.I)
 
 
 def now() -> str:
@@ -31,27 +49,113 @@ def dedupe(products: list[dict]) -> list[dict]:
         if not key:
             continue
         current = rows.get(key)
-        score = sum(product.get(field) not in (None, "", [], {}) for field in ("price", "grams", "thca", "image", "availability"))
-        old_score = -1 if current is None else sum(current.get(field) not in (None, "", [], {}) for field in ("price", "grams", "thca", "image", "availability"))
+        score = sum(product.get(field) not in (None, "", [], {}) for field in ("price", "grams", "thca", "image", "availability", "classification_evidence"))
+        old_score = -1 if current is None else sum(current.get(field) not in (None, "", [], {}) for field in ("price", "grams", "thca", "image", "availability", "classification_evidence"))
         if current is None or score > old_score:
             rows[key] = product
     return sorted(rows.values(), key=lambda row: (str(row.get("vendor") or "").lower(), str(row.get("name") or "").lower()))
 
 
+def product_text(product: dict) -> str:
+    url = str(product.get("url") or "")
+    try:
+        path = urllib.parse.unquote(urllib.parse.urlsplit(url).path).replace("-", " ").replace("_", " ")
+    except ValueError:
+        path = url
+    return " ".join(str(product.get(field) or "") for field in ("name", "variant")) + " " + path
+
+
+def reject_reason(product: dict) -> str | None:
+    name = str(product.get("name") or "").strip()
+    url = str(product.get("url") or "").strip()
+    text = product_text(product)
+    evidence = product.get("classification_evidence") if isinstance(product.get("classification_evidence"), dict) else {}
+    explicit_thca = bool(evidence.get("explicit_thca")) or bool(THCA.search(text))
+    explicit_flower = bool(evidence.get("explicit_flower")) or bool(FLOWER.search(text))
+    if not name:
+        return "missing_name"
+    if not url.startswith(("http://", "https://")):
+        return "missing_or_invalid_url"
+    if FORBIDDEN.search(text):
+        return "forbidden_product_form"
+    if PLACEHOLDER.fullmatch(name):
+        return "generic_or_fragment_title"
+    if ALT.search(text) and not explicit_thca:
+        return "alternate_cannabinoid_without_thca"
+    if not explicit_thca:
+        return "missing_product_level_thca_evidence"
+    if not explicit_flower:
+        return "missing_product_level_flower_evidence"
+    if product.get("availability") == "out_of_stock" and product.get("price") in (None, "") and not product.get("image"):
+        return "out_of_stock_placeholder_without_product_data"
+    return None
+
+
+def sanitize(products: list[dict]) -> tuple[list[dict], list[dict]]:
+    accepted: list[dict] = []
+    rejected: list[dict] = []
+    for product in dedupe(products):
+        reason = reject_reason(product)
+        if reason:
+            rejected.append({
+                "source_id": product.get("source_id"),
+                "vendor": product.get("vendor"),
+                "name": product.get("name"),
+                "url": product.get("url"),
+                "reason": reason,
+            })
+        else:
+            accepted.append(product)
+    return dedupe(accepted), rejected
+
+
 def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int) -> dict:
     shards = load_shards(input_dir)
     sources = [row for payload in shards for row in payload.get("sources", [])]
-    active = sorted([row for row in sources if row.get("admitted") and row.get("status") == "healthy"], key=lambda row: str(row.get("name") or ""))
-    quarantine = sorted([row for row in sources if row not in active], key=lambda row: str(row.get("name") or ""))
+    worker_active = [row for row in sources if row.get("admitted") and row.get("status") == "healthy"]
+    worker_quarantine = [row for row in sources if row not in worker_active]
+    worker_active_ids = {str(row.get("source_id") or "") for row in worker_active}
+    raw_products = [row for payload in shards for row in payload.get("products", []) if str(row.get("source_id") or "") in worker_active_ids]
+    products, rejected = sanitize(raw_products)
+    counts = Counter(str(row.get("source_id") or "") for row in products)
+
+    active: list[dict] = []
+    quarantine = list(worker_quarantine)
+    for source in worker_active:
+        source_id = str(source.get("source_id") or "")
+        accepted_count = counts.get(source_id, 0)
+        if accepted_count <= 0:
+            quarantined = dict(source)
+            quarantined.update(
+                admitted=False,
+                status="quarantined",
+                products=0,
+                reason_codes=sorted(set([*(source.get("reason_codes") or []), "no_products_after_final_sanitizer"])),
+            )
+            quarantine.append(quarantined)
+        else:
+            admitted = dict(source)
+            quality = dict(admitted.get("quality") or {})
+            quality["products"] = accepted_count
+            quality["rejected_products"] = sum(1 for row in rejected if str(row.get("source_id") or "") == source_id)
+            admitted.update(products=accepted_count, quality=quality, admitted=True, status="healthy")
+            active.append(admitted)
+
+    active = sorted(active, key=lambda row: str(row.get("name") or ""))
+    quarantine = sorted(quarantine, key=lambda row: str(row.get("name") or ""))
     active_ids = {str(row.get("source_id") or "") for row in active}
-    products = dedupe([row for payload in shards for row in payload.get("products", []) if str(row.get("source_id") or "") in active_ids])
+    products = [row for row in products if str(row.get("source_id") or "") in active_ids]
+
     if len(active) < min_active:
         raise RuntimeError(f"active-source floor failed: {len(active)} < {min_active}")
     if len(products) < min_products:
         raise RuntimeError(f"product floor failed: {len(products)} < {min_products}")
+    if any(reject_reason(product) for product in products):
+        raise RuntimeError("final product sanitizer invariant failed")
+
     generated = now()
     catalog = {
-        "schema_version": "dropfinder-cloud-catalog-v2",
+        "schema_version": "dropfinder-cloud-catalog-v3",
         "generated_at": generated,
         "product_count": len(products),
         "products": products,
@@ -62,7 +166,7 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
             "name": row.get("name"),
             "enabled": True,
             "status": "healthy",
-            "products": row.get("products", row.get("quality", {}).get("products", 0)),
+            "products": row.get("products", 0),
             "active_route": row.get("active_route", ""),
             "routes_attempted": row.get("routes_attempted", 0),
             "duration_seconds": row.get("duration_seconds", 0),
@@ -71,8 +175,9 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
         }
         for row in active
     ]
+    reason_counts = dict(sorted(Counter(row["reason"] for row in rejected).items()))
     status = {
-        "schema_version": "dropfinder-autonomous-runtime-v1",
+        "schema_version": "dropfinder-autonomous-runtime-v2",
         "generated_at": generated,
         "mode": "credential_free_github_actions",
         "source_count": len(sources),
@@ -83,33 +188,44 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
         "quarantined_sources": len(quarantine),
         "healthy_routes": sum(1 for source in status_sources for route in source.get("route_results", [])),
         "product_count": len(products),
+        "rejected_products": len(rejected),
+        "rejection_reasons": reason_counts,
         "services": {
             "retrieval_workers": "healthy",
             "admission_controller": "healthy",
+            "product_sanitizer": "healthy",
             "catalog_merge": "healthy",
             "publisher": "healthy",
         },
         "sources": status_sources,
         "limitations": [
-            "Every active source passed the current retrieval and data-quality gates.",
+            "Every active source passed retrieval, data-quality, and final product-level evidence gates.",
             "Failed candidates are quarantined and retried automatically; they are not counted as degraded active services.",
             "Workers run as scheduled resumable GitHub Actions jobs rather than permanent daemons.",
         ],
     }
     quarantine_payload = {
-        "schema_version": "dropfinder-source-quarantine-v1",
+        "schema_version": "dropfinder-source-quarantine-v2",
         "generated_at": generated,
         "count": len(quarantine),
         "sources": quarantine,
     }
+    rejection_payload = {
+        "schema_version": "dropfinder-product-rejections-v1",
+        "generated_at": generated,
+        "count": len(rejected),
+        "reason_counts": reason_counts,
+        "products": rejected,
+    }
     runtime = {
-        "schema_version": "dropfinder-autonomous-worker-runtime-v1",
+        "schema_version": "dropfinder-autonomous-worker-runtime-v2",
         "generated_at": generated,
         "status": "healthy",
         "zero_degraded_active_services": True,
         "active_sources": len(active),
         "quarantined_candidates": len(quarantine),
         "products": len(products),
+        "rejected_products": len(rejected),
         "shards": len(shards),
     }
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +233,7 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
         ("catalog.json", catalog),
         ("status.json", status),
         ("quarantine.json", quarantine_payload),
+        ("rejections.json", rejection_payload),
         ("runtime.json", runtime),
     ):
         (output_dir / filename).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -125,17 +242,24 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
 
 def self_test(root: Path) -> int:
     root.mkdir(parents=True, exist_ok=True)
+    valid = {"id": "1", "source_id": "a", "name": "Blue Dream THCA Flower", "url": "https://x/products/blue-dream-thca-flower", "price": 20}
+    bad_roll = {"id": "2", "source_id": "a", "name": "Indica Hybrid Sativa", "url": "https://x/products/thca-pre-rolled-joints", "price": 10}
+    bad_subscription = {"id": "3", "source_id": "a", "name": "THCA Flower Subscription", "url": "https://x/products/subscription", "price": 20}
     (root / "shard-0.json").write_text(json.dumps({
         "schema_version": "dropfinder-autonomous-shard-v1",
-        "products": [{"id": "1", "source_id": "a", "url": "https://x", "price": 1}],
+        "products": [valid, bad_roll, bad_subscription],
         "sources": [
-            {"source_id": "a", "name": "A", "admitted": True, "status": "healthy", "products": 1},
+            {"source_id": "a", "name": "A", "admitted": True, "status": "healthy", "products": 3},
             {"source_id": "b", "name": "B", "admitted": False, "status": "quarantined", "products": 0},
         ],
     }), encoding="utf-8")
     runtime = merge(root, root / "out", 1, 1)
     status = json.loads((root / "out" / "status.json").read_text())
+    catalog = json.loads((root / "out" / "catalog.json").read_text())
+    rejections = json.loads((root / "out" / "rejections.json").read_text())
     assert runtime["zero_degraded_active_services"] and status["degraded_sources"] == 0
+    assert catalog["product_count"] == 1 and catalog["products"][0]["id"] == "1"
+    assert rejections["count"] == 2
     return 0
 
 
