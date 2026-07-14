@@ -1,0 +1,96 @@
+name: Observe Render rollout status
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/render-rollout-status-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - name: Read Render deploy and public runtime state
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          token = os.environ['RENDER_API_KEY'].strip()
+          def api(path):
+              request = urllib.request.Request(
+                  'https://api.render.com/v1' + path,
+                  headers={'Authorization': f'Bearer {token}', 'Accept': 'application/json', 'User-Agent': 'DropFinder-Rollout-Observer/1.0'},
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+          def public(url):
+              request = urllib.request.Request(url, headers={'User-Agent': 'DropFinder-Rollout-Observer/1.0'})
+              with urllib.request.urlopen(request, timeout=90) as response:
+                  return json.load(response)
+
+          owners = api('/owners?limit=20') or []
+          owner_rows = [row.get('owner', row) for row in owners if isinstance(row, dict)]
+          owner_id = str(owner_rows[0].get('id') or '')
+          query = urllib.parse.urlencode({'name': 'dropfinder-os', 'ownerId': owner_id, 'limit': 20})
+          service_rows = api('/services?' + query) or []
+          services = [row.get('service', row) for row in service_rows if isinstance(row, dict)]
+          service = next(row for row in services if row.get('name') == 'dropfinder-os')
+          service_id = str(service['id'])
+          details = service.get('serviceDetails') if isinstance(service.get('serviceDetails'), dict) else {}
+          app_url = str(details.get('url') or service.get('url') or f"https://{service.get('slug')}.onrender.com").rstrip('/')
+          deploy_rows = api(f'/services/{service_id}/deploys?limit=10') or []
+          deploys = [row.get('deploy', row) for row in deploy_rows if isinstance(row, dict)]
+          report = {
+              'schema_version': 'dropfinder-render-rollout-status-v1',
+              'checked_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'service_id': service_id,
+              'service_url': app_url,
+              'suspended': service.get('suspended'),
+              'deploys': [
+                  {
+                      'id': row.get('id'),
+                      'status': row.get('status'),
+                      'created_at': row.get('createdAt'),
+                      'updated_at': row.get('updatedAt'),
+                      'commit_id': (row.get('commit') or {}).get('id') if isinstance(row.get('commit'), dict) else None,
+                      'commit_message': (row.get('commit') or {}).get('message') if isinstance(row.get('commit'), dict) else None,
+                  }
+                  for row in deploys[:10]
+              ],
+          }
+          for name, path in (('health', '/health'), ('ready', '/ready'), ('runtime', '/api/runtime')):
+              try:
+                  report[name] = public(app_url + path)
+              except Exception as exc:
+                  report[name + '_error'] = f'{type(exc).__name__}: {exc}'[:1000]
+          Path('deployment/render-rollout-status.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          PY
+      - name: Record rollout status
+        run: |
+          set -euo pipefail
+          cp deployment/render-rollout-status.json /tmp/render-rollout-status.json
+          git fetch origin deploy/full-stack-hf
+          git reset --hard origin/deploy/full-stack-hf
+          cp /tmp/render-rollout-status.json deployment/render-rollout-status.json
+          git config user.name "DropFinder Rollout Observer"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/render-rollout-status.json
+          if ! git diff --cached --quiet; then
+            git commit -m "deploy: record compact Render rollout status [skip ci]"
+            git push origin HEAD:deploy/full-stack-hf
+          fi
