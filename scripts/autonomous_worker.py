@@ -18,6 +18,7 @@ import cloud_scan_v2 as aggregate  # type: ignore
 
 PRICE = re.compile(r"\$\s*([0-9]{1,4}(?:\.[0-9]{1,2})?)")
 PRODUCT_PATHS = ("/product/", "/products/", "/l/national/products/", "/shop/")
+FALLBACK_EXCLUDE = re.compile(r"\b(sift\s*pucks?|dry\s*sift|pucks?|hash\s*holes?|pre[- ]?rolls?|joints?|blunts?|seeds?)\b", re.I)
 CONTEXT = {
     "black_tie_cbd": "THCA Flower",
     "preston_herb_co": "High THCA Flower",
@@ -26,7 +27,13 @@ CONTEXT = {
     "secret_nature": "THCA Flower",
     "five_leaf_wellness": "THCA Flower",
 }
-EXTRA_HTML_ROUTES = {
+# Only pages whose category itself is a verified THCA-flower context belong here.
+# Broad mixed flower pages are deliberately excluded, even when they are easier to parse.
+FALLBACK_HTML_ROUTES = {
+    "black_tie_cbd": ["https://www.blacktiecbd.net/collections/thca-flower"],
+    "preston_herb_co": ["https://www.prestonherbco.com/categories/flower"],
+    "holy_city_farms": ["https://holycityfarms.com/product-tag/thca/"],
+    "wnc_cbd": ["https://wnc-cbd.com/high-thca-flower"],
     "secret_nature": [
         "https://secretnature.com/collections/thca-flower",
         "https://secretnaturecbd.com/collections/thca-flower",
@@ -72,12 +79,11 @@ def card_rows(payload: str, source_id: str, vendor: str, route: tuple) -> list[d
         if not any(marker in path for marker in PRODUCT_PATHS):
             continue
         label = core.text(match.group(2))
-        if len(label) < 4 or label.lower() in {"options", "view product", "learn more", "shop now"}:
+        if len(label) < 4 or label.lower() in {"options", "view product", "learn more", "shop now", "add to cart"}:
             continue
         combined = f"{label} {context}"
-        if core.HARD_EXCLUDE.search(combined):
+        if core.HARD_EXCLUDE.search(combined) or FALLBACK_EXCLUDE.search(combined):
             continue
-        # Product cards generally place price/stock immediately after the title link.
         nearby = core.text(payload[match.start() : min(len(payload), match.end() + 2200)])
         prices = [core.num(value) for value in PRICE.findall(nearby)]
         price = next((value for value in prices if value is not None), None)
@@ -89,25 +95,20 @@ def card_rows(payload: str, source_id: str, vendor: str, route: tuple) -> list[d
 
 
 def fallback_scan(source: tuple) -> tuple[list[dict], list[dict]]:
-    source_id, vendor, routes = source
-    candidates = list(routes)
-    existing = {route[1] for route in candidates}
-    for target in EXTRA_HTML_ROUTES.get(source_id, []):
-        if target not in existing:
-            candidates.append(("html", target, "thca_flower"))
+    source_id, vendor, _ = source
+    targets = FALLBACK_HTML_ROUTES.get(source_id, [])
     rows: list[dict] = []
     attempts: list[dict] = []
-    for index, route in enumerate(candidates, 1):
-        if route[0] != "html":
-            continue
+    for index, target in enumerate(targets, 1):
+        route = ("html", target, "thca_flower")
         started = time.monotonic()
         result = {
             "route_id": f"{source_id}-fallback-{index}",
-            "url": route[1],
+            "url": target,
             "source_type": "html_card_fallback",
         }
         try:
-            payload, content_type, http_status = core.fetch(route[1])
+            payload, content_type, http_status = core.fetch(target)
             extracted = card_rows(payload, source_id, vendor, route)
             result.update(
                 http_status=http_status,
@@ -202,6 +203,8 @@ def self_test() -> int:
     try:
         rows = card_rows(fixture, "fixture", "Fixture", route)
         assert len(rows) == 1 and rows[0]["price"] == 24.99
+        rejected = card_rows('<a href="/products/hash-puck">Hash Sift Puck</a><div>$20</div>', "fixture", "Fixture", route)
+        assert rejected == []
     finally:
         if old is None:
             CONTEXT.pop("fixture", None)
