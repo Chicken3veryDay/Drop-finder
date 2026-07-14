@@ -31,7 +31,9 @@ COPY --chown=user:user scripts/autonomous_worker.py /app/scripts/autonomous_work
 COPY --chown=user:user scripts/autonomous_worker_v2.py /app/scripts/autonomous_worker_v2.py
 COPY --chown=user:user scripts/autonomous_worker_v4.py /app/scripts/autonomous_worker_v4.py
 COPY --chown=user:user scripts/autonomous_worker_v5.py /app/scripts/autonomous_worker_v5.py
+COPY --chown=user:user scripts/autonomous_worker_v6.py /app/scripts/autonomous_worker_v6.py
 COPY --chown=user:user scripts/autonomous_merge.py /app/scripts/autonomous_merge.py
+COPY --chown=user:user scripts/autonomous_merge_complete.py /app/scripts/autonomous_merge_complete.py
 COPY --chown=user:user cloud_pages/ /app/web/
 COPY --chown=user:user deploy/huggingface-space/operator.js /app/web/operator.js
 
@@ -41,7 +43,8 @@ from pathlib import Path
 app = Path('/app/space_app.py')
 text = app.read_text(encoding='utf-8')
 text = text.replace('huggingface_autonomous_service', 'render_autonomous_service')
-text = text.replace('autonomous_worker_v4.py', 'autonomous_worker_v5.py')
+text = text.replace('autonomous_worker_v4.py', 'autonomous_worker_v6.py')
+text = text.replace('autonomous_merge.py', 'autonomous_merge_complete.py')
 app.write_text(text, encoding='utf-8')
 
 index = Path('/app/web/index.html')
