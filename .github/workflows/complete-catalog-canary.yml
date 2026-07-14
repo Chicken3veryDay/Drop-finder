@@ -34,16 +34,17 @@ jobs:
             scripts/autonomous_worker.py \
             scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py \
+            scripts/autonomous_worker_v5.py \
             scripts/autonomous_merge.py \
             scripts/catalog_completeness_audit.py
-          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_worker_v5.py --self-test
           python scripts/autonomous_merge.py --self-test
       - name: Run complete live catalog canary
         run: |
           set -euo pipefail
           rm -rf .canary-complete
           mkdir -p .canary-complete/shards .canary-complete/output
-          python scripts/autonomous_worker_v4.py \
+          python scripts/autonomous_worker_v5.py \
             --shard 0 \
             --shards 1 \
             --workers 4 \
@@ -61,7 +62,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json
-          from collections import Counter
+          from collections import Counter, defaultdict
           from datetime import datetime, timezone
           from pathlib import Path
 
@@ -74,6 +75,9 @@ jobs:
           completeness = json.loads((root / 'completeness.json').read_text())
           products = catalog.get('products') or []
           by_source = Counter(str(row.get('source_id') or 'unknown') for row in products)
+          rejected_by_source = defaultdict(Counter)
+          for row in rejections.get('products') or []:
+              rejected_by_source[str(row.get('source_id') or 'unknown')][str(row.get('reason') or 'unknown')] += 1
           field_failures = []
           for row in products:
               required = {
@@ -89,7 +93,8 @@ jobs:
               if not all(required.values()):
                   field_failures.append({'id': row.get('id'), 'failed': [key for key, value in required.items() if not value]})
           report = {
-              'schema_version': 'dropfinder-complete-catalog-canary-v1',
+              'schema_version': 'dropfinder-complete-catalog-canary-v2',
+              'worker': 'autonomous_worker_v5',
               'canary_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               'status': 'healthy' if not field_failures and products else 'empty' if not products else 'invalid',
               'comparison_contract': catalog.get('comparison_contract'),
@@ -100,6 +105,10 @@ jobs:
               'complete_products_by_source': dict(sorted(by_source.items())),
               'rejected_products': rejections.get('count'),
               'rejection_reasons': rejections.get('reason_counts'),
+              'rejection_reasons_by_source': {
+                  source: dict(sorted(reasons.items()))
+                  for source, reasons in sorted(rejected_by_source.items())
+              },
               'field_failure_count': len(field_failures),
               'field_failure_examples': field_failures[:50],
               'completeness_audit': {
@@ -113,7 +122,16 @@ jobs:
                   str(row.get('source_id')): row.get('quality', {})
                   for row in status.get('sources', [])
               },
-              'sample_products': products[:30],
+              'quarantine_summary': [
+                  {
+                      'source_id': row.get('source_id'),
+                      'name': row.get('name'),
+                      'reason_codes': row.get('reason_codes'),
+                      'quality': row.get('quality'),
+                  }
+                  for row in quarantine.get('sources', [])
+              ],
+              'sample_products': products[:40],
           }
           Path('deployment/complete-catalog-canary.json').write_text(
               json.dumps(report, indent=2, sort_keys=True) + '\n',
@@ -132,10 +150,15 @@ jobs:
         run: |
           set -euo pipefail
           if test -s deployment/complete-catalog-canary.json; then
+            cp deployment/complete-catalog-canary.json /tmp/complete-catalog-canary.json
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/complete-catalog-canary.json deployment/complete-catalog-canary.json
             git config user.name "DropFinder Complete Catalog Canary"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add deployment/complete-catalog-canary.json
-            git commit -m "audit: record complete catalog canary [skip ci]"
-            git pull --rebase origin deploy/full-stack-hf
-            git push origin HEAD:deploy/full-stack-hf
+            if ! git diff --cached --quiet; then
+              git commit -m "audit: record complete catalog canary [skip ci]"
+              git push origin HEAD:deploy/full-stack-hf
+            fi
           fi
