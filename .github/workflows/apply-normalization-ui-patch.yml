@@ -1,0 +1,73 @@
+name: Apply DropFinder normalization and UI patch
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/normalization-ui-patch-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - name: Apply exact source patches
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          normalization = Path('scripts/catalog_normalization.py')
+          text = normalization.read_text(encoding='utf-8')
+          old = '''        elif "'" in word:
+              result.append("'".join(part[:1].upper() + part[1:].lower() for part in word.split("'")))
+'''
+          new = '''        elif "'" in word:
+              parts = word.split("'")
+              result.append("'".join(
+                  (part[:1].upper() + part[1:].lower()) if position == 0 or len(part) > 1 else part.lower()
+                  for position, part in enumerate(parts)
+              ))
+'''
+          if old not in text:
+              raise SystemExit('apostrophe title-casing patch target not found')
+          text = text.replace(old, new, 1)
+          old = '''    if positive(product.get("package_grams")) != positive(product.get("grams")):
+          failures.append("package_grams")
+'''
+          new = '''    normalized_grams = positive(product.get("package_grams"))
+      source_grams = positive(product.get("grams"))
+      if normalized_grams is None or source_grams is None or abs(normalized_grams - source_grams) > 0.001:
+          failures.append("package_grams")
+'''
+          if old not in text:
+              raise SystemExit('package-grams tolerance patch target not found')
+          text = text.replace(old, new, 1)
+          normalization.write_text(text, encoding='utf-8')
+
+          index = Path('cloud_pages/index.html')
+          html = index.read_text(encoding='utf-8')
+          old = '.media img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#111925}.image-fallback{font-weight:950;color:#536580;letter-spacing:.08em}'
+          new = '.media img{position:absolute;inset:0;z-index:1;width:100%;height:100%;object-fit:cover;background:#111925}.image-fallback{position:relative;z-index:0;font-weight:950;color:#536580;letter-spacing:.08em}'
+          if old not in html:
+              raise SystemExit('image stacking patch target not found')
+          index.write_text(html.replace(old, new, 1), encoding='utf-8')
+          PY
+          python -m py_compile scripts/catalog_normalization.py
+          python scripts/catalog_normalization.py --self-test
+          python scripts/autonomous_merge_complete.py --self-test
+      - name: Commit patched sources
+        run: |
+          set -euo pipefail
+          git config user.name "DropFinder Patch Runner"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/catalog_normalization.py cloud_pages/index.html
+          git commit -m "fix: harden canonical names and image stacking [skip ci]"
+          git pull --rebase origin deploy/full-stack-hf
+          git push origin HEAD:deploy/full-stack-hf
