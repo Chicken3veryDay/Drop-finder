@@ -1,0 +1,149 @@
+name: Repair and Verify DropFinder Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pages-repair.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+  actions: read
+
+concurrency:
+  group: pages-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Validate canonical artifact
+        run: |
+          set -euo pipefail
+          test -s cloud_pages/index.html
+          test -s cloud_pages/data/catalog.json
+          test -s cloud_pages/data/status.json
+          grep -q "DropFinder Cloud" cloud_pages/index.html
+          python -m json.tool cloud_pages/data/catalog.json >/dev/null
+          python -m json.tool cloud_pages/data/status.json >/dev/null
+      - name: Configure Pages
+        id: configure
+        continue-on-error: true
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Upload Pages artifact
+        id: upload
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: cloud_pages
+      - name: Deploy Pages
+        id: deploy
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+      - name: Query, smoke-test, and record result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_OUTPUT_URL: ${{ steps.deploy.outputs.page_url }}
+          CONFIGURE_OUTCOME: ${{ steps.configure.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+        run: |
+          set -uo pipefail
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY##*/}"
+          known_url="https://${owner,,}.github.io/${repo}/"
+          mkdir -p deployment
+
+          api_body="$(gh api "repos/${GITHUB_REPOSITORY}/pages" 2>&1)"
+          api_rc=$?
+          printf '%s\n' "$api_body" > /tmp/pages-api.txt
+
+          page_url="$DEPLOY_OUTPUT_URL"
+          if [ -z "$page_url" ] && [ "$api_rc" -eq 0 ]; then
+            page_url="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              print(json.loads(Path('/tmp/pages-api.txt').read_text()).get('html_url',''))
+          except Exception:
+              print('')
+          PY
+          )"
+          fi
+          [ -n "$page_url" ] || page_url="$known_url"
+
+          http_code=""
+          marker=false
+          curl_error=""
+          for attempt in $(seq 1 12); do
+            curl_error=""
+            http_code="$(curl -L -sS -o /tmp/dropfinder-public.html -w '%{http_code}' \
+              --connect-timeout 10 --max-time 30 "$page_url" 2>/tmp/curl-error.txt)" || curl_error="$(cat /tmp/curl-error.txt)"
+            if [ "$http_code" = "200" ] && grep -q "DropFinder Cloud" /tmp/dropfinder-public.html; then
+              marker=true
+              break
+            fi
+            sleep 10
+          done
+
+          PAGE_URL="$page_url" HTTP_CODE="${http_code:-0}" MARKER="$marker" \
+          API_RC="$api_rc" API_BODY="$api_body" CURL_ERROR="$curl_error" \
+          CONFIGURE_OUTCOME="$CONFIGURE_OUTCOME" UPLOAD_OUTCOME="$UPLOAD_OUTCOME" \
+          DEPLOY_OUTCOME="$DEPLOY_OUTCOME" python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          try:
+              catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
+              status=json.loads(Path('cloud_pages/data/status.json').read_text())
+          except Exception:
+              catalog={}; status={}
+          live=os.environ['HTTP_CODE']=='200' and os.environ['MARKER']=='true'
+          payload={
+              'schema_version':'dropfinder-pages-diagnostic-v1',
+              'status':'live' if live else 'failed',
+              'verified_at':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'page_url':os.environ['PAGE_URL'],
+              'http_status':int(os.environ['HTTP_CODE'] or 0),
+              'content_marker_verified':os.environ['MARKER']=='true',
+              'configure_outcome':os.environ['CONFIGURE_OUTCOME'],
+              'upload_outcome':os.environ['UPLOAD_OUTCOME'],
+              'deploy_outcome':os.environ['DEPLOY_OUTCOME'],
+              'pages_api_rc':int(os.environ['API_RC']),
+              'pages_api_response':os.environ['API_BODY'][:4000],
+              'curl_error':os.environ['CURL_ERROR'][:2000],
+              'workflow_sha':os.environ.get('GITHUB_SHA',''),
+              'product_count':catalog.get('product_count'),
+              'healthy_sources':status.get('healthy_sources'),
+              'enabled_sources':status.get('enabled_sources'),
+          }
+          Path('deployment/pages-diagnostics.json').write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+          if live:
+              Path('deployment/pages.json').write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(payload,indent=2,sort_keys=True))
+          PY
+
+          git config user.name "dropfinder-pages-repair-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          git add deployment/pages-diagnostics.json
+          [ -f deployment/pages.json ] && git add deployment/pages.json || true
+          git diff --cached --quiet || git commit -m "chore: record DropFinder Pages verification [skip ci]"
+          git push origin HEAD:main
+
+          test "$http_code" = "200"
+          test "$marker" = "true"
