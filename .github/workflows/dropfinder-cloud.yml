@@ -11,7 +11,7 @@ on:
       - "scripts/cloud_scan_v2.py"
       - "scripts/autonomous_worker.py"
       - "scripts/autonomous_worker_v2.py"
-      - "scripts/autonomous_worker_v3.py"
+      - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
       - "cloud_pages/index.html"
       - "cloud_pages/manifest.webmanifest"
@@ -49,15 +49,15 @@ jobs:
             scripts/cloud_scan_v2.py \
             scripts/autonomous_worker.py \
             scripts/autonomous_worker_v2.py \
-            scripts/autonomous_worker_v3.py \
+            scripts/autonomous_worker_v4.py \
             scripts/autonomous_merge.py
           python scripts/cloud_scan_v2.py --self-test
-          python scripts/autonomous_worker_v3.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
       - name: Retrieve, retry, verify, and classify storefront data
         run: |
           set -euo pipefail
           mkdir -p "scan-output/${{ matrix.shard }}"
-          python scripts/autonomous_worker_v3.py \
+          python scripts/autonomous_worker_v4.py \
             --shard "${{ matrix.shard }}" \
             --shards 6 \
             --workers 3 \
