@@ -1,0 +1,212 @@
+name: Verify complete live DropFinder release
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/live-complete-verification-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-live-complete-verification
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - name: Verify every published product and UI contract
+        id: verify_release
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import math
+          import urllib.parse
+          import urllib.request
+          from collections import Counter
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          APP_URL = 'https://dropfinder-os.onrender.com'
+          CONTRACT = 'exact_price_weight_ppg_thca_stock_image_v1'
+          PRODUCT_MARKERS = ('/product/', '/products/', '/product-page/', '/l/national/product/', '/cbd-hemp-flower/', '/hemp-products/')
+          LISTING_MARKERS = ('/product-category/', '/product-tag/', '/collections/', '/category/', '/categories/')
+
+          def fetch(path, json_response=True):
+              request = urllib.request.Request(
+                  APP_URL + path,
+                  headers={'User-Agent': 'DropFinder-Final-Live-Verifier/1.0', 'Accept-Encoding': 'identity'},
+              )
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  raw = response.read().decode('utf-8', 'replace')
+              return json.loads(raw) if json_response else raw
+
+          def positive(value):
+              if value is None or value == '' or isinstance(value, bool):
+                  return None
+              try:
+                  number = float(value)
+              except (TypeError, ValueError):
+                  return None
+              return number if math.isfinite(number) and number > 0 else None
+
+          def direct_product_url(value):
+              try:
+                  parsed = urllib.parse.urlsplit(str(value or ''))
+              except ValueError:
+                  return False
+              if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+                  return False
+              path = urllib.parse.unquote(parsed.path).lower()
+              return not any(marker in path for marker in LISTING_MARKERS) and any(marker in path for marker in PRODUCT_MARKERS)
+
+          report = {
+              'schema_version': 'dropfinder-live-complete-verification-v1',
+              'verified_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'service_url': APP_URL,
+          }
+          failures = []
+          try:
+              health = fetch('/health')
+              ready = fetch('/ready')
+              catalog = fetch('/api/catalog')
+              source_status = fetch('/api/status')
+              runtime = fetch('/api/runtime')
+              page = fetch('/', json_response=False)
+              products = catalog.get('products') or []
+              field_counts = Counter()
+              bad_rows = []
+              by_source = Counter()
+
+              for product in products:
+                  by_source[str(product.get('source_id') or 'unknown')] += 1
+                  price = positive(product.get('price'))
+                  grams = positive(product.get('grams'))
+                  ppg = positive(product.get('price_per_gram'))
+                  thca = positive(product.get('thca'))
+                  checks = {
+                      'comparison_complete': product.get('comparison_complete') is True,
+                      'comparison_contract': product.get('comparison_contract') == CONTRACT,
+                      'price': price is not None,
+                      'grams': grams is not None,
+                      'price_per_gram': ppg is not None,
+                      'pricing_confidence': product.get('pricing_confidence') in {'exact_variant', 'exact_title'},
+                      'weight_source': product.get('weight_source') in {'variant', 'title'},
+                      'thca': thca is not None and thca <= 100,
+                      'availability': product.get('availability') in {'in_stock', 'out_of_stock'},
+                      'image': str(product.get('image') or '').startswith(('http://', 'https://')),
+                      'direct_product_url': direct_product_url(product.get('url')),
+                  }
+                  failed = [name for name, passed in checks.items() if not passed]
+                  if price is not None and grams is not None and ppg is not None:
+                      calculated = round(price / grams, 4)
+                      if abs(calculated - ppg) > max(0.02, calculated * 0.01):
+                          failed.append('price_per_gram_arithmetic')
+                  if failed:
+                      field_counts.update(failed)
+                      bad_rows.append({
+                          'id': product.get('id'),
+                          'source_id': product.get('source_id'),
+                          'name': product.get('name'),
+                          'url': product.get('url'),
+                          'failed': failed,
+                      })
+
+              release_checks = {
+                  'health': health.get('status') == 'healthy',
+                  'scheduler': health.get('scheduler') == 'running',
+                  'ready': ready.get('ready') is True,
+                  'catalog_count': catalog.get('product_count') == len(products),
+                  'minimum_products': len(products) >= 25,
+                  'minimum_sources': int(source_status.get('healthy_sources') or 0) >= 4,
+                  'zero_degraded_sources': source_status.get('degraded_sources') == 0,
+                  'healthy_source_count': source_status.get('healthy_sources') == source_status.get('enabled_sources'),
+                  'catalog_contract': catalog.get('comparison_contract') == CONTRACT,
+                  'status_contract': source_status.get('comparison_contract') == CONTRACT,
+                  'runtime_contract': runtime.get('comparison_contract') == CONTRACT,
+                  'status_complete_count': source_status.get('complete_products') == len(products),
+                  'runtime_complete_count': runtime.get('complete_products') == len(products),
+                  'completeness_gate': source_status.get('services', {}).get('comparison_completeness_gate') == 'healthy',
+                  'all_product_fields': not bad_rows,
+                  'null_safe_numeric_parser': "value===null||value===undefined||value===''" in page,
+                  'positive_potency_render_guard': 'potency!==null&&potency<=100' in page,
+                  'no_literal_zero_thca': '0% THCA' not in page,
+                  'verified_unit_sort': 'Best verified $/g' in page,
+                  'legacy_filler_removed': 'Always-available phone snapshot' not in page and 'class="stats"' not in page,
+              }
+              failures = [name for name, passed in release_checks.items() if not passed]
+              report.update(
+                  status='healthy' if not failures else 'invalid',
+                  health=health,
+                  ready=ready,
+                  comparison_contract=catalog.get('comparison_contract'),
+                  product_count=len(products),
+                  complete_product_count=sum(row.get('comparison_complete') is True for row in products),
+                  source_count=source_status.get('healthy_sources'),
+                  products_by_source=dict(sorted(by_source.items())),
+                  field_failure_count=len(bad_rows),
+                  field_failure_counts=dict(sorted(field_counts.items())),
+                  field_failure_examples=bad_rows[:100],
+                  release_checks=release_checks,
+                  failed_release_checks=failures,
+                  zero_thca_value_count=sum(positive(row.get('thca')) is None for row in products),
+                  missing_grams_count=sum(positive(row.get('grams')) is None for row in products),
+                  missing_price_per_gram_count=sum(positive(row.get('price_per_gram')) is None for row in products),
+                  non_product_destination_count=sum(not direct_product_url(row.get('url')) for row in products),
+              )
+          except Exception as exc:
+              failures = ['verification_exception']
+              report.update(
+                  status='error',
+                  error_type=type(exc).__name__,
+                  error=str(exc)[:2000],
+                  failed_release_checks=failures,
+              )
+
+          Path('deployment/live-complete-verification.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          print(json.dumps({
+              'status': report.get('status'),
+              'product_count': report.get('product_count'),
+              'source_count': report.get('source_count'),
+              'field_failure_count': report.get('field_failure_count'),
+              'failed_release_checks': report.get('failed_release_checks'),
+          }, indent=2))
+          if failures:
+              raise SystemExit(f'live release verification failed: {failures}')
+          PY
+      - name: Record final verification evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -s deployment/live-complete-verification.json; then
+            cp deployment/live-complete-verification.json /tmp/live-complete-verification.json
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/live-complete-verification.json deployment/live-complete-verification.json
+            git config user.name "DropFinder Final Verifier"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add deployment/live-complete-verification.json
+            if ! git diff --cached --quiet; then
+              git commit -m "deploy: record final all-product verification [skip ci]"
+              git push origin HEAD:deploy/full-stack-hf
+            fi
+          fi
+      - name: Require verified release
+        if: always()
+        env:
+          VERIFY_OUTCOME: ${{ steps.verify_release.outcome }}
+        run: |
+          set -euo pipefail
+          test "$VERIFY_OUTCOME" = success
