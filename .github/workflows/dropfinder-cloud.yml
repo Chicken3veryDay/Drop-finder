@@ -1,14 +1,16 @@
-name: DropFinder Cloud Snapshot
+name: DropFinder Autonomous Cloud
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "23 */3 * * *"
   push:
     branches: [main]
     paths:
       - "scripts/cloud_scan.py"
       - "scripts/cloud_scan_v2.py"
+      - "scripts/autonomous_worker.py"
+      - "scripts/autonomous_merge.py"
       - "cloud_pages/index.html"
       - "cloud_pages/manifest.webmanifest"
       - "cloud_pages/icon.svg"
@@ -17,18 +19,17 @@ on:
 
 permissions:
   contents: write
-  pages: write
   actions: read
 
 concurrency:
-  group: dropfinder-cloud-snapshot
+  group: dropfinder-autonomous-cloud
   cancel-in-progress: false
 
 jobs:
   scan:
-    name: Scan shard ${{ matrix.shard }}
+    name: Retrieval worker ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 24
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -38,31 +39,37 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate scanner
+      - name: Validate worker code
         run: |
-          python -m py_compile scripts/cloud_scan.py scripts/cloud_scan_v2.py
+          set -euo pipefail
+          python -m py_compile \
+            scripts/cloud_scan.py \
+            scripts/cloud_scan_v2.py \
+            scripts/autonomous_worker.py \
+            scripts/autonomous_merge.py
           python scripts/cloud_scan_v2.py --self-test
-      - name: Scan public storefronts
+          python scripts/autonomous_worker.py --self-test
+      - name: Retrieve and classify storefront data
         run: |
+          set -euo pipefail
           mkdir -p "scan-output/${{ matrix.shard }}"
-          python scripts/cloud_scan_v2.py \
+          python scripts/autonomous_worker.py \
             --shard "${{ matrix.shard }}" \
             --shards 6 \
+            --workers 3 \
             --output "scan-output/${{ matrix.shard }}"
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: dropfinder-shard-${{ matrix.shard }}
-          path: scan-output/${{ matrix.shard }}/
+          name: autonomous-shard-${{ matrix.shard }}
+          path: scan-output/${{ matrix.shard }}/shard-${{ matrix.shard }}.json
           if-no-files-found: error
-          retention-days: 2
+          retention-days: 1
 
   publish:
-    name: Merge, publish, and verify catalog
+    name: Admit healthy sources and publish atomically
     needs: scan
-    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,171 +80,83 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
-          pattern: dropfinder-shard-*
+          pattern: autonomous-shard-*
           path: scan-results
           merge-multiple: true
-      - name: Merge and validate normalized snapshot
+      - name: Validate admission controller
         run: |
           set -euo pipefail
-          cp cloud_pages/data/catalog.json /tmp/previous-catalog.json 2>/dev/null || true
-          python scripts/cloud_scan_v2.py \
-            --merge scan-results \
+          rm -rf /tmp/dropfinder-autonomous-merge-test
+          python scripts/autonomous_merge.py --self-test
+      - name: Build zero-degraded production snapshot
+        run: |
+          set -euo pipefail
+          python scripts/autonomous_merge.py \
+            --input scan-results \
             --output cloud_pages/data \
-            --previous-catalog /tmp/previous-catalog.json
+            --min-active 5 \
+            --min-products 25
           python - <<'PY'
           import json
           from pathlib import Path
           catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
           status=json.loads(Path('cloud_pages/data/status.json').read_text())
+          runtime=json.loads(Path('cloud_pages/data/runtime.json').read_text())
+          quarantine=json.loads(Path('cloud_pages/data/quarantine.json').read_text())
           assert catalog['product_count'] == len(catalog['products'])
-          assert status['source_count'] == 35
-          assert status['enabled_sources'] == 17
-          assert Path('cloud_pages/index.html').is_file()
-          assert 'DropFinder Cloud' in Path('cloud_pages/index.html').read_text()
-          print(f"Publishing {catalog['product_count']} products from {status['healthy_sources']} healthy sources")
+          assert status['degraded_sources'] == 0
+          assert status['healthy_sources'] == status['enabled_sources']
+          assert runtime['zero_degraded_active_services'] is True
+          assert all(source['status'] == 'healthy' for source in status['sources'])
+          assert quarantine['count'] == status['quarantined_sources']
+          print(json.dumps(runtime, indent=2))
           PY
-      - name: Persist latest snapshot on main
+      - name: Commit runtime state to main
         run: |
           set -euo pipefail
-          git config user.name "DropFinder Cloud Bot"
+          mkdir -p deployment
+          cp cloud_pages/data/runtime.json deployment/autonomous-runtime.json
+          git config user.name "DropFinder Autonomous Worker"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add cloud_pages/data
+          git add cloud_pages/data deployment/autonomous-runtime.json
           if ! git diff --cached --quiet; then
-            git commit -m "Refresh DropFinder cloud snapshot [skip ci]"
+            git commit -m "Refresh zero-degraded DropFinder catalog [skip ci]"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
-      - name: Publish canonical site to gh-pages branch
+      - name: Publish immutable phone app to gh-pages
         run: |
           set -euo pipefail
           rm -rf /tmp/dropfinder-site
           mkdir -p /tmp/dropfinder-site
           cp -a cloud_pages/. /tmp/dropfinder-site/
           touch /tmp/dropfinder-site/.nojekyll
+          test -s /tmp/dropfinder-site/data/catalog.json
+          test -s /tmp/dropfinder-site/data/status.json
+          test -s /tmp/dropfinder-site/data/runtime.json
+          grep -q '"degraded_sources": 0' /tmp/dropfinder-site/data/status.json
 
-          git config user.name "DropFinder Pages Bot"
+          git config user.name "DropFinder Autonomous Publisher"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch --orphan gh-pages-publish
+          git switch --orphan autonomous-pages-next
           git rm -rf . >/dev/null 2>&1 || true
           git clean -fdx >/dev/null 2>&1 || true
           cp -a /tmp/dropfinder-site/. .
           git add -A
-          git commit -m "Publish DropFinder Cloud ${GITHUB_SHA}"
+          git commit -m "Publish autonomous DropFinder catalog ${GITHUB_SHA}"
           git push --force origin HEAD:gh-pages
-          git switch --force main
-      - name: Configure Pages branch source
-        id: configure
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify published branch tree
         run: |
-          set +e
-          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/tmp/pages-before.json 2>/tmp/pages-before.err; then
-            gh api --method PUT "repos/${GITHUB_REPOSITORY}/pages" \
-              -F build_type=legacy \
-              -F 'source[branch]=gh-pages' \
-              -F 'source[path]=/' >/tmp/pages-configure.json 2>/tmp/pages-configure.err
-            rc=$?
-          else
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" \
-              -F build_type=legacy \
-              -F 'source[branch]=gh-pages' \
-              -F 'source[path]=/' >/tmp/pages-configure.json 2>/tmp/pages-configure.err
-            rc=$?
-          fi
-          echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          echo "Pages API configure rc=$rc"
-          cat /tmp/pages-configure.json 2>/dev/null || true
-          cat /tmp/pages-configure.err 2>/dev/null || true
-          exit 0
-      - name: Verify public endpoint and persist receipt
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CONFIGURE_RC: ${{ steps.configure.outputs.rc }}
-        run: |
-          set -uo pipefail
-          git switch --force main
-          git pull --rebase origin main
-          owner="${GITHUB_REPOSITORY%%/*}"
-          repo="${GITHUB_REPOSITORY##*/}"
-          known_url="https://${owner,,}.github.io/${repo}/"
-          api_body="$(gh api "repos/${GITHUB_REPOSITORY}/pages" 2>&1)"
-          api_rc=$?
-          printf '%s\n' "$api_body" >/tmp/pages-api-final.txt
-          page_url=""
-          if [ "$api_rc" -eq 0 ]; then
-            page_url="$(python - <<'PY'
+          set -euo pipefail
+          git fetch origin gh-pages
+          git show origin/gh-pages:data/status.json >/tmp/published-status.json
+          git show origin/gh-pages:data/runtime.json >/tmp/published-runtime.json
+          python - <<'PY'
           import json
-          from pathlib import Path
-          try:
-              print(json.loads(Path('/tmp/pages-api-final.txt').read_text()).get('html_url',''))
-          except Exception:
-              print('')
+          status=json.load(open('/tmp/published-status.json'))
+          runtime=json.load(open('/tmp/published-runtime.json'))
+          assert status['degraded_sources'] == 0
+          assert status['healthy_sources'] == status['enabled_sources']
+          assert runtime['zero_degraded_active_services'] is True
+          print(f"Published {status['product_count']} products from {status['healthy_sources']} active healthy sources; {status['quarantined_sources']} candidates quarantined")
           PY
-          )"
-          fi
-          [ -n "$page_url" ] || page_url="$known_url"
-
-          code=""
-          marker=false
-          curl_error=""
-          for attempt in $(seq 1 30); do
-            curl_error=""
-            code="$(curl -L -sS -o /tmp/dropfinder-public.html -w '%{http_code}' \
-              --connect-timeout 10 --max-time 30 "$page_url" 2>/tmp/curl-error.txt)" || curl_error="$(cat /tmp/curl-error.txt)"
-            if [ "$code" = "200" ] && grep -q "DropFinder Cloud" /tmp/dropfinder-public.html; then
-              marker=true
-              break
-            fi
-            echo "Waiting for public catalog (attempt $attempt, HTTP ${code:-none})"
-            sleep 10
-          done
-
-          mkdir -p deployment
-          PAGE_URL="$page_url" HTTP_CODE="${code:-0}" MARKER="$marker" \
-          API_RC="$api_rc" API_BODY="$api_body" CURL_ERROR="$curl_error" \
-          CONFIGURE_RC="${CONFIGURE_RC:-999}" python - <<'PY'
-          import json, os
-          from datetime import datetime, timezone
-          from pathlib import Path
-          catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
-          status=json.loads(Path('cloud_pages/data/status.json').read_text())
-          try:
-              api=json.loads(os.environ['API_BODY'])
-          except Exception:
-              api={}
-          live=os.environ['HTTP_CODE']=='200' and os.environ['MARKER']=='true'
-          payload={
-              'schema_version':'dropfinder-pages-receipt-v3',
-              'status':'live' if live else 'failed',
-              'verified_at':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-              'page_url':os.environ['PAGE_URL'],
-              'http_status':int(os.environ['HTTP_CODE'] or 0),
-              'content_marker_verified':os.environ['MARKER']=='true',
-              'published_branch':'gh-pages',
-              'configure_rc':int(os.environ['CONFIGURE_RC']),
-              'pages_api_rc':int(os.environ['API_RC']),
-              'pages_status':api.get('status'),
-              'pages_build_type':api.get('build_type'),
-              'pages_source':api.get('source'),
-              'pages_api_response':os.environ['API_BODY'][:4000],
-              'curl_error':os.environ['CURL_ERROR'][:2000],
-              'workflow_sha':os.environ.get('GITHUB_SHA',''),
-              'product_count':catalog['product_count'],
-              'healthy_sources':status['healthy_sources'],
-              'enabled_sources':status['enabled_sources'],
-          }
-          Path('deployment/pages-diagnostics.json').write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
-          if live:
-              Path('deployment/pages.json').write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
-          print(json.dumps(payload,indent=2,sort_keys=True))
-          PY
-
-          git config user.name "DropFinder Cloud Bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deployment/pages-diagnostics.json
-          [ -f deployment/pages.json ] && git add deployment/pages.json || true
-          git diff --cached --quiet || git commit -m "chore: record verified DropFinder deployment [skip ci]"
-          git push origin HEAD:main
-
-          test "$code" = "200"
-          test "$marker" = "true"
