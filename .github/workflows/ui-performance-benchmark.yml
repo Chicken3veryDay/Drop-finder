@@ -1,0 +1,229 @@
+name: Benchmark DropFinder one-page performance
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/performance-benchmark-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-ui-performance-benchmark
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build 1000-product normalized fixture
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/dropfinder-benchmark
+          mkdir -p /tmp/dropfinder-benchmark/data
+          cp cloud_pages/index.html cloud_pages/sw.js cloud_pages/manifest.webmanifest cloud_pages/icon.svg /tmp/dropfinder-benchmark/
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          products = []
+          sizes = (3.5, 7, 14, 28)
+          for index in range(1000):
+              grams = sizes[index % len(sizes)]
+              price = round(18 + (index % 83) + grams * 1.7, 2)
+              name = f"Synthetic Strain {index:04d}"
+              label = f"{grams:g} g"
+              products.append({
+                  "id": f"synthetic-{index:04d}",
+                  "source_id": f"vendor_{index % 12:02d}",
+                  "vendor": f"Benchmark Vendor {index % 12:02d}",
+                  "raw_name": f"{name} THCA Weight: {grams:g}g",
+                  "raw_variant": f"Weight: {grams:g}g",
+                  "name": name,
+                  "display_name": name,
+                  "variant": label,
+                  "package_label": label,
+                  "package_grams": grams,
+                  "grams": grams,
+                  "flower_form": "Flower",
+                  "cultivation": "Indoor" if index % 3 == 0 else None,
+                  "normalization_contract": "dropfinder-product-normalization-v1",
+                  "name_normalization_version": "dropfinder-product-normalization-v1",
+                  "search_text": f"{name} benchmark vendor {index % 12:02d} {label}".lower(),
+                  "url": f"https://products.example.test/products/synthetic-{index:04d}",
+                  "image": f"https://images.example.test/{index:04d}.svg",
+                  "price": price,
+                  "price_per_gram": round(price / grams, 4),
+                  "pricing_confidence": "exact_variant",
+                  "weight_source": "variant",
+                  "price_type": "exact",
+                  "thca": round(20 + (index % 170) / 10, 1),
+                  "availability": "in_stock" if index % 5 else "out_of_stock",
+                  "comparison_complete": True,
+                  "comparison_contract": "exact_price_weight_ppg_thca_stock_image_v1",
+              })
+          generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+          catalog = {
+              "schema_version": "dropfinder-cloud-catalog-v5",
+              "generated_at": generated,
+              "comparison_contract": "exact_price_weight_ppg_thca_stock_image_v1",
+              "normalization_contract": "dropfinder-product-normalization-v1",
+              "product_count": len(products),
+              "products": products,
+          }
+          status = {
+              "generated_at": generated,
+              "healthy_sources": 12,
+              "enabled_sources": 12,
+              "quarantined_sources": 0,
+              "degraded_sources": 0,
+              "sources": [
+                  {"source_id": f"vendor_{index:02d}", "name": f"Benchmark Vendor {index:02d}", "status": "healthy", "products": sum(p["source_id"] == f"vendor_{index:02d}" for p in products)}
+                  for index in range(12)
+              ],
+          }
+          root = Path('/tmp/dropfinder-benchmark/data')
+          (root / 'catalog.json').write_text(json.dumps(catalog), encoding='utf-8')
+          (root / 'status.json').write_text(json.dumps(status), encoding='utf-8')
+          PY
+      - name: Install browser runtime
+        run: |
+          set -euo pipefail
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Run mobile one-page benchmark
+        run: |
+          set -euo pipefail
+          cd /tmp/dropfinder-benchmark
+          python -m http.server 8765 >/tmp/dropfinder-http.log 2>&1 &
+          echo $! >/tmp/dropfinder-http.pid
+          cd "$GITHUB_WORKSPACE"
+          cat > /tmp/dropfinder-benchmark.js <<'JS'
+          const fs = require('fs');
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const browser = await chromium.launch({headless: true});
+            const context = await browser.newContext({
+              viewport: {width: 390, height: 844},
+              deviceScaleFactor: 2,
+              isMobile: true,
+              hasTouch: true,
+              serviceWorkers: 'block'
+            });
+            const page = await context.newPage();
+            let imageRequests = 0;
+            await page.route('https://images.example.test/**', async route => {
+              imageRequests += 1;
+              await route.fulfill({
+                status: 200,
+                contentType: 'image/svg+xml',
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="112" height="132"><rect width="100%" height="100%" fill="#172233"/></svg>'
+              });
+            });
+            await page.addInitScript(() => {
+              window.__longTasks = [];
+              new PerformanceObserver(list => {
+                for (const entry of list.getEntries()) window.__longTasks.push(entry.duration);
+              }).observe({entryTypes: ['longtask']});
+            });
+
+            const navigationStarted = Date.now();
+            await page.goto('http://127.0.0.1:8765/', {waitUntil: 'domcontentloaded'});
+            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true', null, {timeout: 10000});
+            const allRenderedMs = Date.now() - navigationStarted;
+            const initialCards = await page.locator('.card').count();
+            const initialMetric = await page.evaluate(() => window.__dropfinderMetrics);
+            const longTasks = await page.evaluate(() => window.__longTasks || []);
+            const maxLongTaskMs = longTasks.length ? Math.max(...longTasks) : 0;
+            const totalLongTaskMs = longTasks.reduce((sum, value) => sum + value, 0);
+            const lazyImages = await page.locator('img[loading="lazy"][decoding="async"][fetchpriority="low"]').count();
+            const initialImageRequests = imageRequests;
+            const resultText = await page.locator('#resultCount').innerText();
+            const paginationControls = await page.locator('[class*="pagination"], [id*="pagination"], [data-page], button:has-text("Load more")').count();
+
+            const filterStarted = Date.now();
+            await page.locator('#query').fill('Synthetic Strain 0999');
+            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true' && document.querySelectorAll('.card').length === 1, null, {timeout: 3000});
+            const filterMs = Date.now() - filterStarted;
+            const filteredName = await page.locator('.card .name').innerText();
+
+            await page.locator('#query').fill('');
+            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true' && document.querySelectorAll('.card').length === 1000, null, {timeout: 7000});
+            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+            await page.waitForTimeout(250);
+            const lastVisible = await page.locator('[data-product-id="synthetic-0999"]').isVisible();
+
+            const checks = {
+              all_products_on_one_page: initialCards === 1000,
+              result_count_declares_one_page: resultText.includes('1000') && resultText.includes('on this page'),
+              no_pagination_controls: paginationControls === 0,
+              complete_render_under_5000ms: allRenderedMs < 5000,
+              internal_chunk_render_under_3000ms: Number(initialMetric.lastRenderMs || 999999) < 3000,
+              filter_under_600ms: filterMs < 600,
+              filter_result_correct: filteredName === 'Synthetic Strain 0999',
+              lazy_async_images_present: lazyImages === 1000,
+              offscreen_images_remain_lazy: initialImageRequests < 120,
+              max_long_task_under_500ms: maxLongTaskMs < 500,
+              total_long_task_under_3000ms: totalLongTaskMs < 3000,
+              last_product_reachable: lastVisible,
+            };
+            const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);
+            const report = {
+              schema_version: 'dropfinder-ui-performance-benchmark-v1',
+              status: failed.length ? 'failed' : 'healthy',
+              fixture_products: 1000,
+              viewport: {width: 390, height: 844, mobile: true},
+              all_rendered_ms: allRenderedMs,
+              internal_render_ms: initialMetric.lastRenderMs,
+              filter_ms: filterMs,
+              initial_card_count: initialCards,
+              lazy_image_count: lazyImages,
+              initial_image_requests: initialImageRequests,
+              max_long_task_ms: Math.round(maxLongTaskMs * 100) / 100,
+              total_long_task_ms: Math.round(totalLongTaskMs * 100) / 100,
+              long_task_count: longTasks.length,
+              result_text: resultText,
+              checks,
+              failed_checks: failed,
+            };
+            fs.writeFileSync('deployment/ui-performance-benchmark.json', JSON.stringify(report, null, 2) + '\n');
+            console.log(JSON.stringify(report, null, 2));
+            await browser.close();
+            if (failed.length) process.exit(1);
+          })().catch(error => {
+            console.error(error);
+            process.exit(1);
+          });
+          JS
+          node /tmp/dropfinder-benchmark.js
+      - name: Record benchmark evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if test -s deployment/ui-performance-benchmark.json; then
+            cp deployment/ui-performance-benchmark.json /tmp/ui-performance-benchmark.json
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/ui-performance-benchmark.json deployment/ui-performance-benchmark.json
+            git config user.name "DropFinder Performance Benchmark"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add deployment/ui-performance-benchmark.json
+            if ! git diff --cached --quiet; then
+              git commit -m "perf: record 1000-product mobile benchmark [skip ci]"
+              git push origin HEAD:deploy/full-stack-hf
+            fi
+          fi
