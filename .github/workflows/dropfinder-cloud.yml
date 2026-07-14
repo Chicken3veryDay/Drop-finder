@@ -1,11 +1,17 @@
-name: DropFinder Pages
+name: DropFinder Cloud Snapshot
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
   push:
     branches: [main]
     paths:
-      - "cloud_pages/**"
+      - "scripts/cloud_scan.py"
+      - "cloud_pages/index.html"
+      - "cloud_pages/manifest.webmanifest"
+      - "cloud_pages/icon.svg"
+      - "cloud_pages/sw.js"
       - ".github/workflows/dropfinder-cloud.yml"
 
 permissions:
@@ -14,93 +20,96 @@ permissions:
   id-token: write
 
 concurrency:
-  group: dropfinder-pages
-  cancel-in-progress: true
+  group: dropfinder-cloud-snapshot
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  scan:
+    name: Scan shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 24
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate scanner
+        run: |
+          python -m py_compile scripts/cloud_scan.py
+          python scripts/cloud_scan.py --self-test
+      - name: Scan public storefronts
+        run: |
+          mkdir -p "scan-output/${{ matrix.shard }}"
+          python scripts/cloud_scan.py \
+            --shard "${{ matrix.shard }}" \
+            --shards 6 \
+            --output "scan-output/${{ matrix.shard }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dropfinder-shard-${{ matrix.shard }}
+          path: scan-output/${{ matrix.shard }}/
+          if-no-files-found: error
+          retention-days: 2
+
+  publish:
+    name: Merge and publish phone dashboard
+    needs: scan
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Enable or inspect GitHub Pages
-        id: pages_api
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dropfinder-shard-*
+          path: scan-results
+          merge-multiple: true
+      - name: Merge normalized snapshot
         run: |
-          set +e
-          mkdir -p deployment-status
-          gh api "repos/${GITHUB_REPOSITORY}/pages" \
-            > deployment-status/pages-get-before.json \
-            2> deployment-status/pages-get-before.err
-          before_code=$?
-          if [ "$before_code" -ne 0 ]; then
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" \
-              -f build_type=workflow \
-              > deployment-status/pages-create.json \
-              2> deployment-status/pages-create.err
-            echo $? > deployment-status/pages-create.exit
-          else
-            echo 0 > deployment-status/pages-create.exit
+          cp cloud_pages/data/catalog.json /tmp/previous-catalog.json 2>/dev/null || true
+          python scripts/cloud_scan.py \
+            --merge scan-results \
+            --output cloud_pages/data \
+            --previous-catalog /tmp/previous-catalog.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
+          status=json.loads(Path('cloud_pages/data/status.json').read_text())
+          assert catalog['product_count'] == len(catalog['products'])
+          assert status['source_count'] == 35
+          assert status['enabled_sources'] == 17
+          print(f"Publishing {catalog['product_count']} products from {status['healthy_sources']} healthy sources")
+          PY
+      - name: Persist latest snapshot
+        run: |
+          git config user.name "DropFinder Cloud Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add cloud_pages/data
+          if ! git diff --cached --quiet; then
+            git commit -m "Refresh DropFinder cloud snapshot [skip ci]"
+            git pull --rebase origin main
+            git push origin HEAD:main
           fi
-          gh api "repos/${GITHUB_REPOSITORY}/pages" \
-            > deployment-status/pages-get-after.json \
-            2> deployment-status/pages-get-after.err
-          after_code=$?
-          echo "$after_code" > deployment-status/pages-get-after.exit
-          if [ "$after_code" -eq 0 ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
-          exit 0
-
-      - name: Upload static dashboard
-        id: upload
-        if: steps.pages_api.outputs.ready == 'true'
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: cloud_pages
-
-      - name: Deploy dashboard
+      - name: Deploy GitHub Pages
         id: deployment
-        if: steps.pages_api.outputs.ready == 'true'
         uses: actions/deploy-pages@v4
-
-      - name: Record workflow outcome
-        if: always()
-        env:
-          PAGES_READY: ${{ steps.pages_api.outputs.ready }}
-          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
-          DEPLOY_OUTCOME: ${{ steps.deployment.outcome }}
-          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json, os
-          from datetime import datetime, timezone
-          payload = {
-              "source_commit": os.environ["GITHUB_SHA"],
-              "workflow_run_id": os.environ["GITHUB_RUN_ID"],
-              "recorded_at": datetime.now(timezone.utc).isoformat(),
-              "pages_ready": os.environ.get("PAGES_READY", "false"),
-              "upload_outcome": os.environ.get("UPLOAD_OUTCOME", "unknown"),
-              "deploy_outcome": os.environ.get("DEPLOY_OUTCOME", "unknown"),
-              "page_url": os.environ.get("PAGE_URL", ""),
-          }
-          payload["status"] = "deployed" if payload["deploy_outcome"] == "success" else "failed"
-          with open("deployment-status/pages-workflow.json", "w", encoding="utf-8") as handle:
-              json.dump(payload, handle, indent=2)
-              handle.write("\n")
-          PY
-          git config user.name "DropFinder Pages Bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add deployment-status
-          git commit -m "Record GitHub Pages API and deployment outcome" || exit 0
-          git push origin HEAD:main
