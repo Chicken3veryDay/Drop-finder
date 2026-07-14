@@ -1,0 +1,132 @@
+name: Audit live DropFinder pricing
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/live-pricing-audit-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - name: Audit live catalog prices
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import collections
+          import json
+          import math
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          url = 'https://dropfinder-os.onrender.com/api/catalog'
+          request = urllib.request.Request(url, headers={'User-Agent': 'DropFinder-Live-Pricing-Audit/1.0'})
+          with urllib.request.urlopen(request, timeout=90) as response:
+              catalog = json.load(response)
+          products = catalog.get('products') or []
+
+          def number(value):
+              try:
+                  n = float(value)
+              except (TypeError, ValueError):
+                  return None
+              return n if math.isfinite(n) else None
+
+          rows = []
+          source_counts = collections.Counter()
+          issue_counts = collections.Counter()
+          price_groups = collections.Counter()
+          for product in products:
+              price = number(product.get('price'))
+              grams = number(product.get('grams'))
+              ppg = number(product.get('price_per_gram'))
+              issues = []
+              if price is None:
+                  issues.append('missing_price')
+              elif price <= 0:
+                  issues.append('nonpositive_price')
+              elif price < 3:
+                  issues.append('implausibly_low_price')
+              elif price > 1000:
+                  issues.append('implausibly_high_price')
+              if grams is None:
+                  issues.append('missing_weight')
+              elif grams <= 0 or grams > 448:
+                  issues.append('implausible_weight')
+              if price is not None and grams is not None and grams > 0:
+                  calculated = round(price / grams, 4)
+                  if ppg is None:
+                      issues.append('missing_price_per_gram')
+                  elif abs(calculated - ppg) > max(0.02, calculated * 0.01):
+                      issues.append('price_per_gram_mismatch')
+                  if calculated < 0.25:
+                      issues.append('implausibly_low_price_per_gram')
+                  if calculated > 100:
+                      issues.append('implausibly_high_price_per_gram')
+              elif ppg is not None:
+                  issues.append('price_per_gram_without_weight')
+              if price is not None:
+                  price_groups[round(price, 2)] += 1
+              if issues:
+                  source_counts[str(product.get('source_id') or 'unknown')] += 1
+                  issue_counts.update(issues)
+                  rows.append({
+                      'id': product.get('id'),
+                      'source_id': product.get('source_id'),
+                      'vendor': product.get('vendor'),
+                      'name': product.get('name'),
+                      'variant': product.get('variant'),
+                      'price': price,
+                      'grams': grams,
+                      'price_per_gram': ppg,
+                      'availability': product.get('availability'),
+                      'url': product.get('url'),
+                      'issues': issues,
+                  })
+
+          valid_prices = [number(p.get('price')) for p in products]
+          valid_prices = [p for p in valid_prices if p is not None and p > 0]
+          comparable = [
+              p for p in products
+              if number(p.get('price')) is not None
+              and number(p.get('price')) > 0
+              and number(p.get('grams')) is not None
+              and number(p.get('grams')) > 0
+          ]
+          report = {
+              'schema_version': 'dropfinder-live-pricing-audit-v1',
+              'audited_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'catalog_generated_at': catalog.get('generated_at'),
+              'product_count': len(products),
+              'priced_product_count': len(valid_prices),
+              'comparable_weighted_product_count': len(comparable),
+              'minimum_positive_price': min(valid_prices) if valid_prices else None,
+              'maximum_price': max(valid_prices) if valid_prices else None,
+              'issue_counts': dict(issue_counts.most_common()),
+              'sources_with_issues': dict(source_counts.most_common()),
+              'most_repeated_prices': [
+                  {'price': price, 'count': count}
+                  for price, count in price_groups.most_common(20)
+              ],
+              'examples': rows[:160],
+          }
+          Path('deployment/live-pricing-audit.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          git config user.name "DropFinder Pricing Auditor"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/live-pricing-audit.json
+          git commit -m "audit: record live pricing quality [skip ci]"
+          git pull --rebase origin deploy/full-stack-hf
+          git push origin HEAD:deploy/full-stack-hf
