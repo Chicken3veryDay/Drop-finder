@@ -31,6 +31,7 @@ jobs:
           set -euo pipefail
           python -m py_compile \
             deploy/render/render_deploy.py \
+            deploy/render/render_deploy_with_report.py \
             deploy/huggingface-space/space_app.py \
             deploy/huggingface-space/hf_state.py \
             deploy/huggingface-space/hf_supervisor.py \
@@ -47,6 +48,8 @@ jobs:
           grep -q 'plan.*free' deploy/render/render_deploy.py
           grep -q 'render_autonomous_service' deploy/render/Dockerfile
       - name: Create, deploy, scan, and verify Render service
+        id: render_deploy
+        continue-on-error: true
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -55,16 +58,24 @@ jobs:
           DROPFINDER_DEPLOYMENT_RECEIPT: deployment/render-deployment.json
         run: |
           set -euo pipefail
-          python deploy/render/render_deploy.py
-      - name: Record verified Render deployment receipt
+          python deploy/render/render_deploy_with_report.py
+      - name: Record Render deployment result
+        if: always()
         run: |
           set -euo pipefail
-          test -s deployment/render-deployment.json
           git config user.name "DropFinder Render Deployer"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deployment/render-deployment.json
+          git add deployment/render-deployment.json deployment/render-deployment-error.json 2>/dev/null || true
           if ! git diff --cached --quiet; then
-            git commit -m "deploy: record verified Render service [skip ci]"
+            git commit -m "deploy: record Render service result [skip ci]"
             git pull --rebase origin deploy/full-stack-hf
             git push origin HEAD:deploy/full-stack-hf
           fi
+      - name: Require verified deployment
+        if: always()
+        env:
+          DEPLOY_OUTCOME: ${{ steps.render_deploy.outcome }}
+        run: |
+          set -euo pipefail
+          test "$DEPLOY_OUTCOME" = success
+          test -s deployment/render-deployment.json
