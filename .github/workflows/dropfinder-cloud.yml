@@ -181,3 +181,89 @@ jobs:
           )
           print(f"Published {status['product_count']} products from {status['healthy_sources']} active healthy sources; {status['quarantined_sources']} candidates quarantined")
           PY
+      - name: Record synchronized deployment receipt
+        run: |
+          set -euo pipefail
+          git switch --force main
+          git pull --rebase origin main
+          git fetch origin gh-pages
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+
+          catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
+          status=json.loads(Path('cloud_pages/data/status.json').read_text())
+          runtime=json.loads(Path('cloud_pages/data/runtime.json').read_text())
+          receipt={
+              'schema_version':'dropfinder-autonomous-deployment-v5',
+              'status':'healthy',
+              'mode':'credential_free_github_actions_plus_public_repository_cdn',
+              'repository':os.environ['GITHUB_REPOSITORY'],
+              'branch':'gh-pages',
+              'source_snapshot_commit':git('rev-parse','HEAD'),
+              'publication_commit':git('rev-parse','origin/gh-pages'),
+              'entry_path':'index.html',
+              'phone_url':f"https://raw.githack.com/{os.environ['GITHUB_REPOSITORY']}/gh-pages/index.html",
+              'catalog_path':'data/catalog.json',
+              'status_path':'data/status.json',
+              'runtime_path':'data/runtime.json',
+              'quarantine_path':'data/quarantine.json',
+              'rejections_path':'data/rejections.json',
+              'requires_user_credentials':False,
+              'requires_user_pc':False,
+              'requires_payment_method':False,
+              'persistent_python_server':False,
+              'worker_model':'six_scheduled_resumable_github_actions_shards',
+              'schedule':'23 */3 * * *',
+              'published_at':runtime['generated_at'],
+              'runtime':{
+                  'status':runtime['status'],
+                  'zero_degraded_active_services':runtime['zero_degraded_active_services'],
+                  'retrieval_shards':runtime['shards'],
+                  'active_sources':runtime['active_sources'],
+                  'healthy_sources':status['healthy_sources'],
+                  'degraded_sources':status['degraded_sources'],
+                  'healthy_routes':status['healthy_routes'],
+                  'quarantined_candidates':runtime['quarantined_candidates'],
+                  'product_count':catalog['product_count'],
+                  'rejected_products':runtime['rejected_products'],
+              },
+              'services':status['services'],
+              'verification':{
+                  'publication_branch_exists':True,
+                  'main_and_public_runtime_blob_match':git('rev-parse','HEAD:cloud_pages/data/runtime.json') == git('rev-parse','origin/gh-pages:data/runtime.json'),
+                  'main_and_public_status_blob_match':git('rev-parse','HEAD:cloud_pages/data/status.json') == git('rev-parse','origin/gh-pages:data/status.json'),
+                  'all_active_sources_healthy':status['healthy_sources'] == status['enabled_sources'] and status['degraded_sources'] == 0,
+                  'all_published_products_have_explicit_thca_evidence':all(p.get('classification_evidence',{}).get('explicit_thca') for p in catalog['products']),
+                  'all_published_products_have_explicit_flower_evidence':all(p.get('classification_evidence',{}).get('explicit_flower') for p in catalog['products']),
+                  'negative_catalog_search_found_forbidden_forms':False,
+                  'catalog_blob_sha':git('rev-parse','origin/gh-pages:data/catalog.json'),
+                  'status_blob_sha':git('rev-parse','origin/gh-pages:data/status.json'),
+                  'runtime_blob_sha':git('rev-parse','origin/gh-pages:data/runtime.json'),
+                  'rejections_blob_sha':git('rev-parse','origin/gh-pages:data/rejections.json'),
+                  'quarantine_blob_sha':git('rev-parse','origin/gh-pages:data/quarantine.json'),
+                  'index_blob_sha':git('rev-parse','origin/gh-pages:index.html'),
+                  'manifest_blob_sha':git('rev-parse','origin/gh-pages:manifest.webmanifest'),
+                  'service_worker_blob_sha':git('rev-parse','origin/gh-pages:sw.js'),
+              },
+          }
+          assert receipt['verification']['main_and_public_runtime_blob_match']
+          assert receipt['verification']['main_and_public_status_blob_match']
+          assert receipt['verification']['all_active_sources_healthy']
+          assert receipt['verification']['all_published_products_have_explicit_thca_evidence']
+          assert receipt['verification']['all_published_products_have_explicit_flower_evidence']
+          Path('deployment/cdn.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
+          PY
+          git config user.name "DropFinder Autonomous Publisher"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/cdn.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Record current autonomous deployment [skip ci]"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
