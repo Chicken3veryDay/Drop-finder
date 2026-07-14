@@ -6,7 +6,7 @@ import subprocess
 import sys
 import threading
 
-from r2_state import backup, configured, restore
+from hf_state import backup, configured, restore
 
 
 def _require_secure_configuration() -> None:
@@ -17,8 +17,7 @@ def _require_secure_configuration() -> None:
         )
     if not configured():
         raise SystemExit(
-            "R2 persistence secrets are incomplete. Configure R2_ENDPOINT_URL, "
-            "R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and R2_BUCKET."
+            "Private Hub persistence is incomplete. Configure HF_TOKEN and HF_STATE_REPO."
         )
 
 
@@ -29,16 +28,16 @@ def main() -> int:
     restore()
 
     stop = threading.Event()
-    interval = max(60, int(os.getenv("DROPFINDER_BACKUP_INTERVAL_SECONDS", "300")))
+    interval = max(300, int(os.getenv("DROPFINDER_BACKUP_INTERVAL_SECONDS", "1800")))
 
     def backup_loop() -> None:
         while not stop.wait(interval):
             try:
                 backup()
             except Exception as exc:
-                print(f"R2 backup failed: {exc}", file=sys.stderr, flush=True)
+                print(f"Private Hub backup failed: {exc}", file=sys.stderr, flush=True)
 
-    thread = threading.Thread(target=backup_loop, name="r2-backup", daemon=True)
+    thread = threading.Thread(target=backup_loop, name="hf-state-backup", daemon=True)
     thread.start()
     child = subprocess.Popen(["/app/run.sh"], env=os.environ.copy())
 
@@ -57,9 +56,9 @@ def main() -> int:
         stop.set()
         thread.join(timeout=5)
         try:
-            backup()
+            backup(force=True)
         except Exception as exc:
-            print(f"Final R2 backup failed: {exc}", file=sys.stderr, flush=True)
+            print(f"Final private Hub backup failed: {exc}", file=sys.stderr, flush=True)
     return return_code
 
 
