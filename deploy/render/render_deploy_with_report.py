@@ -23,9 +23,21 @@ def redact(value: str) -> str:
     return result
 
 
+def apply_free_tier_compatibility() -> None:
+    original = render_deploy.service_details
+
+    def free_service_details() -> dict:
+        details = dict(original())
+        details.pop("maxShutdownDelaySeconds", None)
+        return details
+
+    render_deploy.service_details = free_service_details
+
+
 def main() -> int:
     error_path = Path("deployment/render-deployment-error.json")
     try:
+        apply_free_tier_compatibility()
         code = render_deploy.main()
         if error_path.exists():
             error_path.unlink()
