@@ -31,6 +31,7 @@ jobs:
           set -euo pipefail
           python -m py_compile \
             deploy/render/render_deploy.py \
+            deploy/render/render_complete_verifier.py \
             deploy/render/render_deploy_with_report.py \
             deploy/huggingface-space/space_app.py \
             deploy/huggingface-space/hf_state.py \
@@ -40,13 +41,16 @@ jobs:
             scripts/autonomous_worker.py \
             scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py \
+            scripts/autonomous_worker_v5.py \
             scripts/autonomous_merge.py
           python scripts/cloud_scan_v2.py --self-test
-          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_worker_v5.py --self-test
           python scripts/autonomous_merge.py --self-test
           test -s deploy/render/Dockerfile
           grep -q 'plan.*free' deploy/render/render_deploy.py
           grep -q 'render_autonomous_service' deploy/render/Dockerfile
+          grep -q 'autonomous_worker_v5.py' deploy/render/Dockerfile
+          grep -q 'exact_price_weight_ppg_thca_stock_image_v1' deploy/render/render_complete_verifier.py
       - name: Create, deploy, scan, and verify Render service
         id: render_deploy
         continue-on-error: true
