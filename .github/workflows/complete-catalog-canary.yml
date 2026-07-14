@@ -35,21 +35,23 @@ jobs:
             scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py \
             scripts/autonomous_worker_v5.py \
+            scripts/autonomous_worker_v6.py \
             scripts/autonomous_merge.py \
+            scripts/autonomous_merge_complete.py \
             scripts/catalog_completeness_audit.py
-          python scripts/autonomous_worker_v5.py --self-test
-          python scripts/autonomous_merge.py --self-test
+          python scripts/autonomous_worker_v6.py --self-test
+          python scripts/autonomous_merge_complete.py --self-test
       - name: Run complete live catalog canary
         run: |
           set -euo pipefail
           rm -rf .canary-complete
           mkdir -p .canary-complete/shards .canary-complete/output
-          python scripts/autonomous_worker_v5.py \
+          python scripts/autonomous_worker_v6.py \
             --shard 0 \
             --shards 1 \
             --workers 4 \
             --output .canary-complete/shards
-          python scripts/autonomous_merge.py \
+          python scripts/autonomous_merge_complete.py \
             --input .canary-complete/shards \
             --output .canary-complete/output \
             --min-active 0 \
@@ -62,6 +64,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import json
+          import urllib.parse
           from collections import Counter, defaultdict
           from datetime import datetime, timezone
           from pathlib import Path
@@ -78,6 +81,16 @@ jobs:
           rejected_by_source = defaultdict(Counter)
           for row in rejections.get('products') or []:
               rejected_by_source[str(row.get('source_id') or 'unknown')][str(row.get('reason') or 'unknown')] += 1
+
+          listing_markers = ('/product-category/', '/product-tag/', '/collections/', '/category/', '/categories/')
+          product_markers = ('/product/', '/products/', '/product-page/', '/l/national/product/', '/cbd-hemp-flower/', '/hemp-products/')
+          def direct_url(value):
+              try:
+                  path = urllib.parse.unquote(urllib.parse.urlsplit(str(value or '')).path).lower()
+              except ValueError:
+                  return False
+              return not any(marker in path for marker in listing_markers) and any(marker in path for marker in product_markers)
+
           field_failures = []
           for row in products:
               required = {
@@ -88,13 +101,14 @@ jobs:
                   'thca': isinstance(row.get('thca'), (int, float)) and 0 < row.get('thca') <= 100,
                   'availability': row.get('availability') in {'in_stock', 'out_of_stock'},
                   'image': str(row.get('image') or '').startswith(('http://', 'https://')),
-                  'url': str(row.get('url') or '').startswith(('http://', 'https://')),
+                  'direct_product_url': direct_url(row.get('url')),
               }
               if not all(required.values()):
                   field_failures.append({'id': row.get('id'), 'failed': [key for key, value in required.items() if not value]})
           report = {
-              'schema_version': 'dropfinder-complete-catalog-canary-v2',
-              'worker': 'autonomous_worker_v5',
+              'schema_version': 'dropfinder-complete-catalog-canary-v3',
+              'worker': 'autonomous_worker_v6',
+              'merger': 'autonomous_merge_complete',
               'canary_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               'status': 'healthy' if not field_failures and products else 'empty' if not products else 'invalid',
               'comparison_contract': catalog.get('comparison_contract'),
