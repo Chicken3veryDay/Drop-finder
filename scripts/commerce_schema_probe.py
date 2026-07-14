@@ -12,7 +12,7 @@ from typing import Any
 
 import cloud_scan
 
-UA = "DropFinder-Commerce-Schema-Probe/1.0"
+UA = "DropFinder-Commerce-Schema-Probe/1.1"
 
 
 def now() -> str:
@@ -47,6 +47,20 @@ def shape(value: Any, depth: int = 0) -> Any:
     if isinstance(value, str):
         return value[:160]
     return value
+
+
+def variation_ids(product: dict[str, Any]) -> list[int]:
+    result: list[int] = []
+    for row in product.get("variations") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            value = int(row.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            result.append(value)
+    return result
 
 
 def probe_woo(source_id: str, vendor: str, route: tuple) -> dict[str, Any]:
@@ -94,6 +108,18 @@ def probe_woo(source_id: str, vendor: str, route: tuple) -> dict[str, Any]:
                 "error": detail_error,
                 "shape": shape(detail),
             }
+        detail_rows = []
+        for variation_id in variation_ids(product)[:4]:
+            url = f"{root}/products/{variation_id}"
+            detail, detail_status, detail_error = fetch_json(url)
+            detail_rows.append({
+                "variation_id": variation_id,
+                "url": url,
+                "status": detail_status,
+                "error": detail_error,
+                "shape": shape(detail),
+            })
+        result["variation_details"] = detail_rows
     return result
 
 
@@ -133,7 +159,7 @@ def main() -> int:
                 results.append(probe_shopify(source_id, vendor, route))
                 break
     report = {
-        "schema_version": "dropfinder-commerce-schema-probe-v1",
+        "schema_version": "dropfinder-commerce-schema-probe-v2",
         "probed_at": now(),
         "sources": results,
     }
