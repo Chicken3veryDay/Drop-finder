@@ -28,6 +28,7 @@ def main() -> int:
 
     stop = threading.Event()
     interval = max(900, int(os.getenv("DROPFINDER_BACKUP_INTERVAL_SECONDS", "1800")))
+    asgi_app = os.getenv("DROPFINDER_ASGI_APP", "space_app:app").strip() or "space_app:app"
 
     def backup_loop() -> None:
         while not stop.wait(interval):
@@ -38,12 +39,13 @@ def main() -> int:
 
     thread = threading.Thread(target=backup_loop, name="hf-state-backup", daemon=True)
     thread.start()
+    print(f"Starting DropFinder ASGI application: {asgi_app}", flush=True)
     child = subprocess.Popen(
         [
             sys.executable,
             "-m",
             "uvicorn",
-            "space_app:app",
+            asgi_app,
             "--host",
             "0.0.0.0",
             "--port",
