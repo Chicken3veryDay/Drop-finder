@@ -1,0 +1,138 @@
+name: Publish DropFinder via gh-pages Branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pages-branch-fallback.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  actions: read
+
+concurrency:
+  group: pages-branch-fallback
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Validate canonical site
+        run: |
+          set -euo pipefail
+          test -s cloud_pages/index.html
+          test -s cloud_pages/data/catalog.json
+          test -s cloud_pages/data/status.json
+          grep -q "DropFinder Cloud" cloud_pages/index.html
+          python -m json.tool cloud_pages/data/catalog.json >/dev/null
+          python -m json.tool cloud_pages/data/status.json >/dev/null
+      - name: Publish immutable site tree to gh-pages
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/dropfinder-gh-pages
+          mkdir -p /tmp/dropfinder-gh-pages
+          cp -a cloud_pages/. /tmp/dropfinder-gh-pages/
+          touch /tmp/dropfinder-gh-pages/.nojekyll
+
+          git config user.name "dropfinder-pages-branch-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan gh-pages-publish
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -a /tmp/dropfinder-gh-pages/. .
+          git add -A
+          git commit -m "Publish DropFinder Cloud ${GITHUB_SHA}"
+          git push --force origin HEAD:gh-pages
+          git checkout --force main
+      - name: Configure branch-based GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" >/tmp/pages-before.json 2>/tmp/pages-before.err; then
+            gh api --method PUT "repos/${GITHUB_REPOSITORY}/pages" \
+              -F build_type=legacy \
+              -F 'source[branch]=gh-pages' \
+              -F 'source[path]=/' >/tmp/pages-configure.json
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages" \
+              -F build_type=legacy \
+              -F 'source[branch]=gh-pages' \
+              -F 'source[path]=/' >/tmp/pages-configure.json
+          fi
+          cat /tmp/pages-configure.json
+      - name: Verify public URL and commit receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git checkout --force main
+          git pull --rebase origin main
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY##*/}"
+          known_url="https://${owner,,}.github.io/${repo}/"
+          page_url="$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '.html_url // empty')"
+          [ -n "$page_url" ] || page_url="$known_url"
+
+          code=""
+          marker=false
+          for attempt in $(seq 1 30); do
+            code="$(curl -L -sS -o /tmp/dropfinder-public.html -w '%{http_code}' \
+              --connect-timeout 10 --max-time 30 "$page_url" || true)"
+            if [ "$code" = "200" ] && grep -q "DropFinder Cloud" /tmp/dropfinder-public.html; then
+              marker=true
+              break
+            fi
+            echo "Waiting for branch publication (attempt $attempt, HTTP ${code:-none})"
+            sleep 10
+          done
+
+          pages_api="$(gh api "repos/${GITHUB_REPOSITORY}/pages")"
+          mkdir -p deployment
+          PAGE_URL="$page_url" HTTP_CODE="${code:-0}" MARKER="$marker" PAGES_API="$pages_api" python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
+          status=json.loads(Path('cloud_pages/data/status.json').read_text())
+          api=json.loads(os.environ['PAGES_API'])
+          live=os.environ['HTTP_CODE']=='200' and os.environ['MARKER']=='true'
+          payload={
+              'schema_version':'dropfinder-pages-branch-receipt-v1',
+              'status':'live' if live else 'failed',
+              'verified_at':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'page_url':os.environ['PAGE_URL'],
+              'http_status':int(os.environ['HTTP_CODE'] or 0),
+              'content_marker_verified':os.environ['MARKER']=='true',
+              'pages_status':api.get('status'),
+              'pages_build_type':api.get('build_type'),
+              'pages_source':api.get('source'),
+              'workflow_sha':os.environ.get('GITHUB_SHA',''),
+              'published_branch':'gh-pages',
+              'product_count':catalog['product_count'],
+              'healthy_sources':status['healthy_sources'],
+              'enabled_sources':status['enabled_sources'],
+          }
+          Path('deployment/pages-branch-receipt.json').write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+          if live:
+              Path('deployment/pages.json').write_text(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(payload,indent=2,sort_keys=True))
+          PY
+
+          git config user.name "dropfinder-pages-branch-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/pages-branch-receipt.json
+          [ -f deployment/pages.json ] && git add deployment/pages.json || true
+          git diff --cached --quiet || git commit -m "chore: record branch Pages deployment [skip ci]"
+          git push origin HEAD:main
+
+          test "$code" = "200"
+          test "$marker" = "true"
