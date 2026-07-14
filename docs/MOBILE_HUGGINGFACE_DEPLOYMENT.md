@@ -21,10 +21,9 @@ issue, commit, ordinary GitHub variable, or Space source file.
 
 ## Step 1: Create the Hugging Face account from a phone
 
-Open Hugging Face in Safari or Chrome and create a free personal account. Signing
-in through GitHub is acceptable. Record the Hugging Face username, but it does
-not need to be entered into DropFinder; the deployment workflow discovers it
-from the token.
+Open Hugging Face in Safari or Chrome and create a free personal account using a
+new, unique password. Record the Hugging Face username, but it does not need to
+be entered into DropFinder; the deployment workflow discovers it from the token.
 
 ## Step 2: Create one Hugging Face write token
 
@@ -38,9 +37,8 @@ From the Hugging Face account:
 6. Choose the **Write** role.
 7. Create the token and copy it immediately.
 
-This dedicated token lets the deployment workflow create and update only the
-repositories available to the account. It can be revoked later without changing
-the account password.
+This dedicated token lets the deployment workflow create and update repositories
+under the account. It can be revoked later without changing the account password.
 
 ## Step 3: Add two GitHub Actions secrets
 
