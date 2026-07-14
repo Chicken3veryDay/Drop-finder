@@ -1,0 +1,49 @@
+name: Deploy DropFinder Cloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cloud_site/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Validate cloud artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s cloud_site/index.html
+          test -s cloud_site/data/status.json
+          python -m json.tool cloud_site/data/status.json >/dev/null
+          python -m json.tool cloud_site/manifest.webmanifest >/dev/null
+          grep -q "DropFinder OS 9.0" cloud_site/index.html
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: cloud_site
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
