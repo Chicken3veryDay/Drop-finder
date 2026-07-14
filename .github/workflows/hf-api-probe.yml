@@ -1,0 +1,68 @@
+name: Probe Hugging Face API
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/hf-api-probe-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Hugging Face API access
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          DROPFINDER_OPERATOR_TOKEN: ${{ secrets.DROPFINDER_OPERATOR_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'huggingface_hub>=0.34,<2'
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          report = {
+              "schema_version": "dropfinder-hf-api-probe-v1",
+              "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              "status": "failed",
+          }
+          token = os.getenv("HF_TOKEN", "").strip()
+          operator = os.getenv("DROPFINDER_OPERATOR_TOKEN", "").strip()
+          try:
+              if not token:
+                  raise RuntimeError("HF_TOKEN is missing or empty")
+              if len(operator) < 24:
+                  raise RuntimeError("DROPFINDER_OPERATOR_TOKEN is missing or invalid")
+              from huggingface_hub import HfApi
+              identity = HfApi(token=token).whoami()
+              report["status"] = "healthy"
+              report["identity"] = str(identity.get("name") or "")
+          except Exception as exc:
+              message = str(exc)
+              if token:
+                  message = message.replace(token, "[REDACTED]")
+              report["error_type"] = type(exc).__name__
+              report["error"] = message
+          Path("deployment/hf-api-probe.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git config user.name "DropFinder API Probe"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/hf-api-probe.json
+          git commit -m "deploy: record Hugging Face API probe [skip ci]"
+          git pull --rebase origin deploy/full-stack-hf
+          git push origin HEAD:deploy/full-stack-hf
