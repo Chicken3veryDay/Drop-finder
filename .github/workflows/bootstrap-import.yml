@@ -1,0 +1,83 @@
+name: Import DropFinder OS v9
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bootstrap-import.yml
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  BOOTSTRAP_URL: https://dfv9-c3d-7f3c91a2.loca.lt
+
+jobs:
+  import-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out bootstrap repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download checksum-verified source archive
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dropfinder-import
+          cd /tmp/dropfinder-import
+          curl --fail --location --retry 12 --retry-all-errors --connect-timeout 20 --max-time 600 \
+            -H 'bypass-tunnel-reminder: true' \
+            "$BOOTSTRAP_URL/dropfinder_source.zip" -o dropfinder_source.zip
+          curl --fail --location --retry 12 --retry-all-errors --connect-timeout 20 --max-time 120 \
+            -H 'bypass-tunnel-reminder: true' \
+            "$BOOTSTRAP_URL/dropfinder_source.zip.sha256" -o dropfinder_source.zip.sha256
+          sha256sum --check dropfinder_source.zip.sha256
+          unzip -q dropfinder_source.zip -d source
+
+      - name: Replace bootstrap tree with DropFinder source
+        run: |
+          set -euo pipefail
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/dropfinder-import/source/. .
+          test -f pyproject.toml
+          test -d app
+          test -f scripts/cloud_pages_export.py
+          test -f .github/workflows/cloud-pages.yml
+
+      - name: Validate imported source
+        run: |
+          python -m compileall -q app scripts cli.py
+          python scripts/cloud_pages_export.py --output cloud_pages
+          test -f cloud_pages/index.html
+          test -f cloud_pages/data/status.json
+
+      - name: Commit canonical repository tree
+        run: |
+          set -euo pipefail
+          git config user.name 'DropFinder Release Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'Release DropFinder OS v9.0 with free phone dashboard'
+          git push origin HEAD:main
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload initial phone dashboard
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: cloud_pages
+
+      - name: Deploy initial phone dashboard
+        id: deployment
+        uses: actions/deploy-pages@v4
