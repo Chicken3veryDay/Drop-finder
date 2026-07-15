@@ -1,0 +1,67 @@
+import type { MarketplaceProduct } from "../contracts";
+
+const evidence = {
+  sourceUrl: "https://vendor.example/products/blue-dream",
+  capturedAt: "2026-07-14T20:00:00Z",
+  field: "product",
+  method: "source" as const,
+  confidence: "high" as const,
+};
+
+export const validProduct: MarketplaceProduct = {
+  schemaVersion: "1.0.0",
+  id: "vendor-a:blue-dream",
+  identity: {
+    vendorProductId: "blue-dream",
+    canonicalStrainId: "blue-dream",
+    canonicalProductId: "vendor-a:blue-dream",
+  },
+  vendor: {
+    id: "vendor-a",
+    name: "Vendor A",
+    faviconUrl: "https://vendor.example/favicon.ico",
+    ageGate: "soft",
+    evidence: [evidence],
+  },
+  strainName: "Blue Dream",
+  lineage: "sativa-leaning-hybrid",
+  variants: [{
+    id: "eighth",
+    label: "3.5 g",
+    weight: { grams: 3.5, display: "3.5 g" },
+    currentPrice: { currency: "USD", cents: 2800 },
+    originalPrice: { currency: "USD", cents: 3200 },
+    discountPercent: 13,
+    pricePerGram: { currency: "USD", cents: 800 },
+    productUrl: "https://vendor.example/products/blue-dream?variant=eighth",
+    imageUrl: "https://vendor.example/images/blue-dream.jpg",
+    documentIds: ["coa-2026-07"],
+    batchIds: ["batch-123"],
+    stock: { state: "in_stock", available: true, observedAt: "2026-07-14T20:00:00Z" },
+    evidence: [evidence],
+  }],
+  totalThc: {
+    calculatedPercent: 25.42,
+    roundedDisplayPercent: 25,
+    raw: { thcaPercent: 28.5, delta9ThcPercent: 0.42, reportedTotalThcPercent: null },
+    method: "thca-conversion",
+    formula: "thca * 0.877 + delta9_thc",
+    provenance: [evidence],
+  },
+  rating: { value: 4.6, reviewCount: 82 },
+  effects: ["Relaxed", "Creative"],
+  growEnvironment: "indoor",
+  documents: [{
+    id: "coa-2026-07",
+    kind: "coa",
+    title: "July 2026 COA",
+    url: "https://vendor.example/documents/coa-2026-07.pdf",
+    vendorId: "vendor-a",
+    productId: "vendor-a:blue-dream",
+    variantIds: ["eighth"],
+    batchIds: ["batch-123"],
+    publishedAt: "2026-07-10T00:00:00Z",
+    evidence: [evidence],
+  }],
+  evidence: [evidence],
+};
