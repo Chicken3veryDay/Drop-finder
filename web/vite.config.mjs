@@ -4,7 +4,10 @@ import { resolve } from 'node:path';
 export default defineConfig({
   base: './',
   optimizeDeps: {
-    include: ['pdfjs-dist/legacy/build/pdf.mjs'],
+    include: [
+      'pdfjs-dist/legacy/build/pdf.mjs',
+      'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
+    ],
   },
   build: {
     outDir: 'dist-platform',
