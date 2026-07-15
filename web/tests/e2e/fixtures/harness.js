@@ -13,6 +13,7 @@ const sort = document.querySelector('#sort');
 const weight = document.querySelector('#weight');
 const overlay = document.querySelector('#overlay');
 const dialog = document.querySelector('#dialog');
+const documentStage = document.querySelector('#document-stage');
 const canvas = document.querySelector('#pdf-canvas');
 const fallback = document.querySelector('#document-fallback');
 const pageStatus = document.querySelector('#page-status');
@@ -26,13 +27,14 @@ let serviceWorkerReady = Promise.resolve(null);
 let queryVersion = 0;
 let nextOffset = null;
 let expandedProductId = null;
-let renderingDocument = false;
+let documentRenderRevision = 0;
 let lastFocusedDescriptor = null;
 let layoutEpoch = 0;
 let layoutStableTimer = null;
 const eventLog = [];
 
 main.dataset.layoutStable = 'false';
+documentStage.dataset.renderState = 'idle';
 await engine.initialize('e2e-generation-1', products);
 virtual.subscribe(() => renderRows());
 viewer.subscribe(state => { if (state.status === 'closed') overlay.hidden = true; void renderDocument(state); });
@@ -150,22 +152,55 @@ async function openPdf(row, invoker) {
   await opening;
 }
 async function renderDocument(state) {
-  pageStatus.textContent = state.pages ? `Page ${state.page} of ${state.pages}` : 'Loading document';
-  fallback.hidden = true; canvas.hidden = state.type !== 'pdf' || state.status !== 'ready';
-  if (state.status === 'error' || state.status === 'unsupported' || state.status === 'external-only') {
-    fallback.hidden = false; fallback.textContent = state.error?.message ?? 'Open the original document.'; return;
+  const revision = ++documentRenderRevision;
+  fallback.hidden = true;
+  documentStage.dataset.renderState = state.status;
+  delete documentStage.dataset.renderPage;
+
+  if (state.status === 'closed') {
+    canvas.hidden = true;
+    pageStatus.textContent = 'Loading document';
+    return;
   }
-  if (state.status !== 'ready' || state.type !== 'pdf' || renderingDocument) return;
-  renderingDocument = true;
-  try { await viewer.renderPage(canvas); }
-  finally { renderingDocument = false; }
+  if (state.status === 'error' || state.status === 'unsupported' || state.status === 'external-only') {
+    canvas.hidden = true;
+    fallback.hidden = false;
+    fallback.textContent = state.error?.message ?? 'Open the original document.';
+    pageStatus.textContent = 'Document unavailable';
+    return;
+  }
+  if (state.status !== 'ready' || state.type !== 'pdf') {
+    canvas.hidden = true;
+    pageStatus.textContent = 'Loading document';
+    return;
+  }
+
+  canvas.hidden = true;
+  documentStage.dataset.renderState = 'rendering';
+  pageStatus.textContent = `Rendering page ${state.page} of ${state.pages}`;
+  try {
+    const result = await viewer.renderPage(canvas, { page: state.page, fitWidth: state.fitWidth, scale: state.scale });
+    const current = viewer.snapshot();
+    if (revision !== documentRenderRevision || current.sessionId !== state.sessionId || current.page !== state.page || current.scale !== state.scale || current.fitWidth !== state.fitWidth) return;
+    canvas.hidden = false;
+    documentStage.dataset.renderState = 'ready';
+    documentStage.dataset.renderPage = String(result.page);
+    pageStatus.textContent = `Page ${state.page} of ${state.pages}`;
+  } catch (error) {
+    if (error?.name === 'AbortError' || revision !== documentRenderRevision) return;
+    canvas.hidden = true;
+    documentStage.dataset.renderState = 'error';
+    fallback.hidden = false;
+    fallback.textContent = 'This document could not be rendered. Open the original document.';
+    pageStatus.textContent = 'Document unavailable';
+  }
 }
 document.querySelector('#close-dialog').addEventListener('click', () => closeDialog());
-document.querySelector('#previous-page').addEventListener('click', () => { viewer.goToPage(viewer.snapshot().page - 1); void renderDocument(viewer.snapshot()); });
-document.querySelector('#next-page').addEventListener('click', () => { viewer.goToPage(viewer.snapshot().page + 1); void renderDocument(viewer.snapshot()); });
-document.querySelector('#zoom-in').addEventListener('click', () => { viewer.zoomIn(); void renderDocument(viewer.snapshot()); });
-document.querySelector('#zoom-out').addEventListener('click', () => { viewer.zoomOut(); void renderDocument(viewer.snapshot()); });
-document.querySelector('#fit-width').addEventListener('click', () => { viewer.setFitWidth(true); void renderDocument(viewer.snapshot()); });
+document.querySelector('#previous-page').addEventListener('click', () => viewer.goToPage(viewer.snapshot().page - 1));
+document.querySelector('#next-page').addEventListener('click', () => viewer.goToPage(viewer.snapshot().page + 1));
+document.querySelector('#zoom-in').addEventListener('click', () => viewer.zoomIn());
+document.querySelector('#zoom-out').addEventListener('click', () => viewer.zoomOut());
+document.querySelector('#fit-width').addEventListener('click', () => viewer.setFitWidth(true));
 document.querySelector('#unsupported').addEventListener('click', async event => {
   document.querySelector('#document-title').textContent = 'Unsupported document';
   const opening = viewer.open({ url: './unknown.bin', mimeType: 'application/octet-stream' }, { invoker: event.currentTarget });

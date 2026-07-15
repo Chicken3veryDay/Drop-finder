@@ -12,19 +12,20 @@ async function waitForCatalog(page) {
   await expect(page.locator('#main')).toHaveAttribute('data-layout-stable', 'true', { timeout: 45_000 });
 }
 
+async function waitForRenderedDocument(page, expectedPage, expectedPages = 2) {
+  const stage = page.locator('#document-stage');
+  await expect(stage).toHaveAttribute('data-render-state', 'ready', { timeout: DOCUMENT_READY_TIMEOUT });
+  await expect(stage).toHaveAttribute('data-render-page', String(expectedPage), { timeout: DOCUMENT_READY_TIMEOUT });
+  await expect(page.locator('#page-status')).toHaveText(`Page ${expectedPage} of ${expectedPages}`, { timeout: DOCUMENT_READY_TIMEOUT });
+  const canvas = page.locator('#pdf-canvas');
+  await expect(canvas).toBeVisible({ timeout: DOCUMENT_READY_TIMEOUT });
+  expect(await canvas.evaluate(element => element.width)).toBeGreaterThan(0);
+}
+
 async function openPwaHarness(page) {
   await page.goto(`${HARNESS}?pwa=1`);
   await waitForCatalog(page);
   await page.evaluate(() => window.__platformHarness.serviceWorkerReady);
-}
-
-async function waitForPdfReady(page) {
-  await expect(page.locator('#page-status')).toContainText('Page 1 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
-  await expect(page.locator('#pdf-canvas')).toBeVisible({ timeout: DOCUMENT_READY_TIMEOUT });
-  await expect.poll(
-    async () => page.locator('#pdf-canvas').evaluate(element => element.width),
-    { timeout: DOCUMENT_READY_TIMEOUT },
-  ).toBeGreaterThan(0);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -98,10 +99,11 @@ test('renders the real two-page PDF, navigates, zooms, closes, and restores focu
   await opener.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await waitForPdfReady(page);
+  await waitForRenderedDocument(page, 1);
   await page.getByRole('button', { name: 'Next page' }).click();
-  await expect(page.locator('#page-status')).toContainText('Page 2 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
+  await waitForRenderedDocument(page, 2);
   await page.getByRole('button', { name: 'Zoom in' }).click();
+  await waitForRenderedDocument(page, 2);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await expect(opener).toBeFocused();
@@ -146,7 +148,7 @@ test('has no serious automated accessibility violations in the document dialog',
   test.setTimeout(DOCUMENT_TEST_TIMEOUT);
   await page.getByRole('button', { name: 'Open COA' }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await waitForPdfReady(page);
+  await waitForRenderedDocument(page, 1);
   const results = await new AxeBuilder({ page }).include('#dialog').analyze();
   expect(results.violations.filter(violation => ['serious', 'critical'].includes(violation.impact))).toEqual([]);
 });

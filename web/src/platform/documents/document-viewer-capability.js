@@ -40,6 +40,8 @@ export class DocumentViewerCapability {
       loadingTask: null,
       pdf: null,
       renderTask: null,
+      renderRevision: 0,
+      renderSequence: Promise.resolve(),
       objectUrl: null,
     };
     this.setState({
@@ -112,28 +114,57 @@ export class DocumentViewerCapability {
     this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
   }
 
-  async renderPage(canvas, { page = this.state.page, fitWidth = this.state.fitWidth, scale = this.state.scale } = {}) {
+  renderPage(canvas, { page = this.state.page, fitWidth = this.state.fitWidth, scale = this.state.scale } = {}) {
     const session = this.session;
-    if (!session?.pdf || this.state.status !== 'ready') throw new PlatformError('document_not_ready', 'PDF is not ready');
-    session.renderTask?.cancel?.();
-    const pdfPage = await session.pdf.getPage(page);
-    const base = pdfPage.getViewport({ scale: 1 });
-    const effectiveScale = fitWidth && canvas.parentElement?.clientWidth
-      ? Math.min(this.options.maxScale, Math.max(this.options.minScale, canvas.parentElement.clientWidth / base.width))
-      : clamp(scale, this.options.minScale, this.options.maxScale);
-    const viewport = pdfPage.getViewport({ scale: effectiveScale });
-    const ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
-    canvas.width = Math.ceil(viewport.width * ratio);
-    canvas.height = Math.ceil(viewport.height * ratio);
-    canvas.style.width = `${Math.ceil(viewport.width)}px`;
-    canvas.style.height = `${Math.ceil(viewport.height)}px`;
-    const context = canvas.getContext('2d', { alpha: false });
-    if (!context) throw new PlatformError('canvas_unavailable', 'Canvas rendering is unavailable');
-    session.renderTask = pdfPage.render({ canvasContext: context, viewport, transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0] });
-    await session.renderTask.promise;
-    pdfPage.cleanup();
-    session.renderTask = null;
-    return { page, scale: effectiveScale, width: viewport.width, height: viewport.height };
+    if (!session?.pdf || this.state.status !== 'ready') {
+      return Promise.reject(new PlatformError('document_not_ready', 'PDF is not ready'));
+    }
+
+    const request = {
+      revision: ++session.renderRevision,
+      page,
+      fitWidth,
+      scale,
+    };
+    try { session.renderTask?.cancel?.(); } catch {}
+
+    const operation = session.renderSequence
+      .catch(() => undefined)
+      .then(() => this.performRenderPage(session, canvas, request));
+    session.renderSequence = operation.catch(() => undefined);
+    return operation;
+  }
+
+  async performRenderPage(session, canvas, request) {
+    assertCurrentRender(this, session, request.revision);
+    const pdfPage = await session.pdf.getPage(request.page);
+    let renderTask = null;
+    try {
+      assertCurrentRender(this, session, request.revision);
+      const base = pdfPage.getViewport({ scale: 1 });
+      const effectiveScale = request.fitWidth && canvas.parentElement?.clientWidth
+        ? Math.min(this.options.maxScale, Math.max(this.options.minScale, canvas.parentElement.clientWidth / base.width))
+        : clamp(request.scale, this.options.minScale, this.options.maxScale);
+      const viewport = pdfPage.getViewport({ scale: effectiveScale });
+      const ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
+      canvas.width = Math.ceil(viewport.width * ratio);
+      canvas.height = Math.ceil(viewport.height * ratio);
+      canvas.style.width = `${Math.ceil(viewport.width)}px`;
+      canvas.style.height = `${Math.ceil(viewport.height)}px`;
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new PlatformError('canvas_unavailable', 'Canvas rendering is unavailable');
+      renderTask = pdfPage.render({ canvasContext: context, viewport, transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0] });
+      session.renderTask = renderTask;
+      await renderTask.promise;
+      assertCurrentRender(this, session, request.revision);
+      return { page: request.page, scale: effectiveScale, width: viewport.width, height: viewport.height };
+    } catch (error) {
+      if (isRenderCancellation(error) || this.session !== session || request.revision !== session.renderRevision) throw abortError();
+      throw error;
+    } finally {
+      try { pdfPage.cleanup?.(); } catch {}
+      if (session.renderTask === renderTask) session.renderTask = null;
+    }
   }
 
   goToPage(page) {
@@ -151,7 +182,9 @@ export class DocumentViewerCapability {
     this.session = null;
     if (session) {
       session.controller.abort('Document viewer closed');
+      session.renderRevision += 1;
       try { session.renderTask?.cancel?.(); } catch {}
+      try { await session.renderSequence; } catch {}
       try { await session.loadingTask?.destroy?.(); } catch {}
       try { await session.pdf?.cleanup?.(); } catch {}
       if (session.objectUrl) URL.revokeObjectURL(session.objectUrl);
@@ -230,6 +263,12 @@ function settleWithin(promise, timeoutMs, signal, code) {
   });
 }
 
+function assertCurrentRender(viewer, session, revision) {
+  if (viewer.session !== session || session.controller.signal.aborted || revision !== session.renderRevision) throw abortError();
+}
+function isRenderCancellation(error) {
+  return error?.name === 'RenderingCancelledException' || error?.name === 'AbortException' || error?.name === 'AbortError';
+}
 function closedState() { return Object.freeze({ status: 'closed', type: null, documentRef: null, context: null, page: 1, pages: null, scale: 1, fitWidth: true, displayUrl: null, error: null, sessionId: null }); }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function cryptoRandomId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
