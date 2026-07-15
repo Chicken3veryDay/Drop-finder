@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: "23 */3 * * *"
   push:
-    branches: [main]
+    branches: [main, "ui-rewrite/**"]
     paths:
       - "scripts/cloud_scan.py"
       - "scripts/cloud_scan_v2.py"
@@ -17,6 +17,17 @@ on:
       - "cloud_pages/manifest.webmanifest"
       - "cloud_pages/icon.svg"
       - "cloud_pages/sw.js"
+      - "web/**"
+      - "docs/UI_REWRITE_CONTRACT.md"
+      - ".github/workflows/dropfinder-cloud.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "cloud_pages/manifest.webmanifest"
+      - "cloud_pages/icon.svg"
+      - "cloud_pages/sw.js"
+      - "web/**"
+      - "docs/UI_REWRITE_CONTRACT.md"
       - ".github/workflows/dropfinder-cloud.yml"
 
 permissions:
@@ -24,12 +35,92 @@ permissions:
   actions: read
 
 concurrency:
-  group: dropfinder-autonomous-cloud
+  group: dropfinder-autonomous-cloud-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  python-validation:
+    name: Python contract validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run affected Python self-tests
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/cloud_scan.py scripts/cloud_scan_v2.py \
+            scripts/autonomous_worker.py scripts/autonomous_worker_v2.py \
+            scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \
+            web/scripts/publication_gate.py
+          python scripts/cloud_scan_v2.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
+          rm -rf /tmp/dropfinder-autonomous-merge-test
+          python scripts/autonomous_merge.py --self-test
+
+  frontend:
+    name: Frontend foundation validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked frontend dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+      - name: Lint frontend
+        working-directory: web
+        run: npm run lint
+      - name: Typecheck frontend
+        id: typecheck
+        continue-on-error: true
+        working-directory: web
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee typecheck.log
+      - name: Test frontend contracts and shell
+        id: tests
+        continue-on-error: true
+        working-directory: web
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log
+      - name: Build and verify static publication
+        id: build
+        continue-on-error: true
+        working-directory: web
+        run: |
+          set -o pipefail
+          { npm run build && npm run verify:publication; } 2>&1 | tee build.log
+      - name: Export frontend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropfinder-web-diagnostics
+          path: |
+            web/typecheck.log
+            web/test.log
+            web/build.log
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Enforce frontend validation results
+        if: always()
+        run: |
+          test "${{ steps.typecheck.outcome }}" = success
+          test "${{ steps.tests.outcome }}" = success
+          test "${{ steps.build.outcome }}" = success
+
   scan:
     name: Retrieval worker ${{ matrix.shard }}
+    needs: python-validation
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -41,26 +132,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate worker code
-        run: |
-          set -euo pipefail
-          python -m py_compile \
-            scripts/cloud_scan.py \
-            scripts/cloud_scan_v2.py \
-            scripts/autonomous_worker.py \
-            scripts/autonomous_worker_v2.py \
-            scripts/autonomous_worker_v4.py \
-            scripts/autonomous_merge.py
-          python scripts/cloud_scan_v2.py --self-test
-          python scripts/autonomous_worker_v4.py --self-test
       - name: Retrieve, retry, verify, and classify storefront data
         run: |
           set -euo pipefail
           mkdir -p "scan-output/${{ matrix.shard }}"
           python scripts/autonomous_worker_v4.py \
-            --shard "${{ matrix.shard }}" \
-            --shards 6 \
-            --workers 3 \
+            --shard "${{ matrix.shard }}" --shards 6 --workers 3 \
             --output "scan-output/${{ matrix.shard }}"
       - uses: actions/upload-artifact@v4
         with:
@@ -71,9 +148,10 @@ jobs:
 
   publish:
     name: Admit healthy sources and publish atomically
-    needs: scan
+    needs: [frontend, python-validation, scan]
+    if: needs.frontend.result == 'success' && needs.python-validation.result == 'success' && needs.scan.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,42 +165,15 @@ jobs:
           pattern: autonomous-shard-*
           path: scan-results
           merge-multiple: true
-      - name: Validate admission controller
+      - name: Admit a zero-degraded production snapshot
         run: |
           set -euo pipefail
           rm -rf /tmp/dropfinder-autonomous-merge-test
           python scripts/autonomous_merge.py --self-test
-      - name: Build zero-degraded strict production snapshot
-        run: |
-          set -euo pipefail
           python scripts/autonomous_merge.py \
-            --input scan-results \
-            --output cloud_pages/data \
-            --min-active 5 \
-            --min-products 25
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
-          status=json.loads(Path('cloud_pages/data/status.json').read_text())
-          runtime=json.loads(Path('cloud_pages/data/runtime.json').read_text())
-          quarantine=json.loads(Path('cloud_pages/data/quarantine.json').read_text())
-          rejections=json.loads(Path('cloud_pages/data/rejections.json').read_text())
-          assert catalog['product_count'] == len(catalog['products'])
-          assert status['degraded_sources'] == 0
-          assert status['healthy_sources'] == status['enabled_sources']
-          assert runtime['zero_degraded_active_services'] is True
-          assert all(value == 'healthy' for value in status['services'].values())
-          assert all(source['status'] == 'healthy' for source in status['sources'])
-          assert quarantine['count'] == status['quarantined_sources']
-          assert rejections['count'] == status['rejected_products']
-          assert all(
-              product.get('classification_evidence', {}).get('explicit_thca')
-              and product.get('classification_evidence', {}).get('explicit_flower')
-              for product in catalog['products']
-          )
-          print(json.dumps(runtime, indent=2))
-          PY
+            --input scan-results --output cloud_pages/data \
+            --min-active 5 --min-products 25
+          python web/scripts/publication_gate.py validate-snapshot
       - name: Commit runtime state to main
         run: |
           set -euo pipefail
@@ -136,6 +187,17 @@ jobs:
             git pull --rebase origin main
             git push origin HEAD:main
           fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build deterministic frontend without touching generated data
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          npm run verify:publication
       - name: Publish immutable phone app to gh-pages
         run: |
           set -euo pipefail
@@ -146,9 +208,7 @@ jobs:
           test -s /tmp/dropfinder-site/data/catalog.json
           test -s /tmp/dropfinder-site/data/status.json
           test -s /tmp/dropfinder-site/data/runtime.json
-          test -s /tmp/dropfinder-site/data/rejections.json
-          grep -q '"degraded_sources": 0' /tmp/dropfinder-site/data/status.json
-
+          test -s /tmp/dropfinder-site/assets/vite-manifest.json
           git config user.name "DropFinder Autonomous Publisher"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch --orphan autonomous-pages-next
@@ -162,103 +222,17 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin gh-pages
-          git show origin/gh-pages:data/status.json >/tmp/published-status.json
-          git show origin/gh-pages:data/runtime.json >/tmp/published-runtime.json
-          git show origin/gh-pages:data/catalog.json >/tmp/published-catalog.json
-          python - <<'PY'
-          import json
-          status=json.load(open('/tmp/published-status.json'))
-          runtime=json.load(open('/tmp/published-runtime.json'))
-          catalog=json.load(open('/tmp/published-catalog.json'))
-          assert status['degraded_sources'] == 0
-          assert status['healthy_sources'] == status['enabled_sources']
-          assert runtime['zero_degraded_active_services'] is True
-          assert catalog['product_count'] == len(catalog['products'])
-          assert all(
-              product.get('classification_evidence', {}).get('explicit_thca')
-              and product.get('classification_evidence', {}).get('explicit_flower')
-              for product in catalog['products']
-          )
-          print(f"Published {status['product_count']} products from {status['healthy_sources']} active healthy sources; {status['quarantined_sources']} candidates quarantined")
-          PY
+          rm -rf /tmp/dropfinder-published
+          git worktree add --detach /tmp/dropfinder-published origin/gh-pages
+          node web/scripts/verify-publication.mjs /tmp/dropfinder-published
+          python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-published
       - name: Record synchronized deployment receipt
         run: |
           set -euo pipefail
           git switch --force main
           git pull --rebase origin main
           git fetch origin gh-pages
-          python - <<'PY'
-          import json
-          import os
-          import subprocess
-          from pathlib import Path
-
-          def git(*args):
-              return subprocess.check_output(['git', *args], text=True).strip()
-
-          catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
-          status=json.loads(Path('cloud_pages/data/status.json').read_text())
-          runtime=json.loads(Path('cloud_pages/data/runtime.json').read_text())
-          receipt={
-              'schema_version':'dropfinder-autonomous-deployment-v5',
-              'status':'healthy',
-              'mode':'credential_free_github_actions_plus_public_repository_cdn',
-              'repository':os.environ['GITHUB_REPOSITORY'],
-              'branch':'gh-pages',
-              'source_snapshot_commit':git('rev-parse','HEAD'),
-              'publication_commit':git('rev-parse','origin/gh-pages'),
-              'entry_path':'index.html',
-              'phone_url':f"https://raw.githack.com/{os.environ['GITHUB_REPOSITORY']}/gh-pages/index.html",
-              'catalog_path':'data/catalog.json',
-              'status_path':'data/status.json',
-              'runtime_path':'data/runtime.json',
-              'quarantine_path':'data/quarantine.json',
-              'rejections_path':'data/rejections.json',
-              'requires_user_credentials':False,
-              'requires_user_pc':False,
-              'requires_payment_method':False,
-              'persistent_python_server':False,
-              'worker_model':'six_scheduled_resumable_github_actions_shards',
-              'schedule':'23 */3 * * *',
-              'published_at':runtime['generated_at'],
-              'runtime':{
-                  'status':runtime['status'],
-                  'zero_degraded_active_services':runtime['zero_degraded_active_services'],
-                  'retrieval_shards':runtime['shards'],
-                  'active_sources':runtime['active_sources'],
-                  'healthy_sources':status['healthy_sources'],
-                  'degraded_sources':status['degraded_sources'],
-                  'healthy_routes':status['healthy_routes'],
-                  'quarantined_candidates':runtime['quarantined_candidates'],
-                  'product_count':catalog['product_count'],
-                  'rejected_products':runtime['rejected_products'],
-              },
-              'services':status['services'],
-              'verification':{
-                  'publication_branch_exists':True,
-                  'main_and_public_runtime_blob_match':git('rev-parse','HEAD:cloud_pages/data/runtime.json') == git('rev-parse','origin/gh-pages:data/runtime.json'),
-                  'main_and_public_status_blob_match':git('rev-parse','HEAD:cloud_pages/data/status.json') == git('rev-parse','origin/gh-pages:data/status.json'),
-                  'all_active_sources_healthy':status['healthy_sources'] == status['enabled_sources'] and status['degraded_sources'] == 0,
-                  'all_published_products_have_explicit_thca_evidence':all(p.get('classification_evidence',{}).get('explicit_thca') for p in catalog['products']),
-                  'all_published_products_have_explicit_flower_evidence':all(p.get('classification_evidence',{}).get('explicit_flower') for p in catalog['products']),
-                  'negative_catalog_search_found_forbidden_forms':False,
-                  'catalog_blob_sha':git('rev-parse','origin/gh-pages:data/catalog.json'),
-                  'status_blob_sha':git('rev-parse','origin/gh-pages:data/status.json'),
-                  'runtime_blob_sha':git('rev-parse','origin/gh-pages:data/runtime.json'),
-                  'rejections_blob_sha':git('rev-parse','origin/gh-pages:data/rejections.json'),
-                  'quarantine_blob_sha':git('rev-parse','origin/gh-pages:data/quarantine.json'),
-                  'index_blob_sha':git('rev-parse','origin/gh-pages:index.html'),
-                  'manifest_blob_sha':git('rev-parse','origin/gh-pages:manifest.webmanifest'),
-                  'service_worker_blob_sha':git('rev-parse','origin/gh-pages:sw.js'),
-              },
-          }
-          assert receipt['verification']['main_and_public_runtime_blob_match']
-          assert receipt['verification']['main_and_public_status_blob_match']
-          assert receipt['verification']['all_active_sources_healthy']
-          assert receipt['verification']['all_published_products_have_explicit_thca_evidence']
-          assert receipt['verification']['all_published_products_have_explicit_flower_evidence']
-          Path('deployment/cdn.json').write_text(json.dumps(receipt,indent=2,sort_keys=True)+'\n')
-          PY
+          python web/scripts/publication_gate.py record-receipt
           git config user.name "DropFinder Autonomous Publisher"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deployment/cdn.json
