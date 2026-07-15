@@ -1,0 +1,74 @@
+
+> dropfinder-web@1.0.0 benchmark
+> node scripts/performance/benchmark.mjs
+
+┌─────────┬───────┬───────────┬──────────┬──────────┬──────────┬────────────────┬─────────────┬─────────────────┬──────────────┬─────────────────┬─────────────────┬────────┐
+│ (index) │ size  │ fixtureMs │ parseP95 │ queryP50 │ queryP95 │ rapidTypingP95 │ allSortsP95 │ scrollWindowP95 │ expansionP95 │ maxRenderedRows │ retainedHeapMiB │ passed │
+├─────────┼───────┼───────────┼──────────┼──────────┼──────────┼────────────────┼─────────────┼─────────────────┼──────────────┼─────────────────┼─────────────────┼────────┤
+│ 0       │ 1000  │ 7.9       │ 4.39     │ 0.41     │ 0.7      │ 3.48           │ 5.99        │ 0.03            │ 0.39         │ 11              │ 1.72            │ true   │
+│ 1       │ 10000 │ 64.28     │ 37.96    │ 2.09     │ 2.09     │ 19.97          │ 21.25       │ 0               │ 0.13         │ 11              │ 19.89           │ true   │
+│ 2       │ 50000 │ 277.66    │ 342.7    │ 12.69    │ 13.64    │ 138.79         │ 116         │ 0               │ 0.11         │ 11              │ 86.34           │ true   │
+└─────────┴───────┴───────────┴──────────┴──────────┴──────────┴────────────────┴─────────────┴─────────────────┴──────────────┴─────────────────┴─────────────────┴────────┘
+{
+  "environment": {
+    "node": "v22.23.1",
+    "platform": "linux",
+    "arch": "x64",
+    "cpuModel": "AMD EPYC 7763 64-Core Processor",
+    "cpuCount": 4,
+    "totalMemoryGiB": 15.61,
+    "exposedGc": false
+  },
+  "report": [
+    {
+      "size": 1000,
+      "fixtureMs": 7.9,
+      "parseP95": 4.39,
+      "queryP50": 0.41,
+      "queryP95": 0.7,
+      "rapidTypingP95": 3.48,
+      "allSortsP95": 5.99,
+      "scrollWindowP95": 0.03,
+      "expansionP95": 0.39,
+      "maxRenderedRows": 11,
+      "retainedHeapMiB": 1.72,
+      "passed": true
+    },
+    {
+      "size": 10000,
+      "fixtureMs": 64.28,
+      "parseP95": 37.96,
+      "queryP50": 2.09,
+      "queryP95": 2.09,
+      "rapidTypingP95": 19.97,
+      "allSortsP95": 21.25,
+      "scrollWindowP95": 0,
+      "expansionP95": 0.13,
+      "maxRenderedRows": 11,
+      "retainedHeapMiB": 19.89,
+      "passed": true
+    },
+    {
+      "size": 50000,
+      "fixtureMs": 277.66,
+      "parseP95": 342.7,
+      "queryP50": 12.69,
+      "queryP95": 13.64,
+      "rapidTypingP95": 138.79,
+      "allSortsP95": 116,
+      "scrollWindowP95": 0,
+      "expansionP95": 0.11,
+      "maxRenderedRows": 11,
+      "retainedHeapMiB": 86.34,
+      "passed": true
+    }
+  ],
+  "supplemental": {
+    "catalogActivationMs": 23.31,
+    "firstDetailMs": 2.84,
+    "cachedDetailMs": 0.01,
+    "networkCalls": 3,
+    "documentControllerOpenMs": 1.46,
+    "detailCacheHit": true
+  }
+}

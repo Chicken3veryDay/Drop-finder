@@ -1,0 +1,221 @@
+
+> dropfinder-web@1.0.0 test
+> npm run test:unit && npm run test:platform
+
+
+> dropfinder-web@1.0.0 test:unit
+> vitest run --reporter=verbose
+
+
+[1m[46m RUN [49m[22m [36mv3.2.4 [39m[90m/home/runner/work/Drop-finder/Drop-finder/web[39m
+
+ [32m✓[39m src/app/featureRegistryCore.test.tsx[2m > [22mresolveFeatureModules[2m > [22morders modules deterministically by order then ID[32m 18[2mms[22m[39m
+ [32m✓[39m src/app/featureRegistryCore.test.tsx[2m > [22mresolveFeatureModules[2m > [22mfails closed when IDs are duplicated[32m 2[2mms[22m[39m
+ [32m✓[39m src/app/featureRegistryCore.test.tsx[2m > [22mresolveFeatureModules[2m > [22mfails closed when more than one primary marketplace is registered[32m 1[2mms[22m[39m
+ [32m✓[39m src/app/featureRegistryCore.test.tsx[2m > [22mresolveFeatureModules[2m > [22mrejects malformed modules and capability mismatches[32m 1[2mms[22m[39m
+ [32m✓[39m src/app/featureRegistryCore.test.tsx[2m > [22mresolveFeatureModules[2m > [22mleaves a duplicated slot unmounted instead of choosing by accident[32m 1[2mms[22m[39m
+ [32m✓[39m src/app/featureRegistryCore.test.tsx[2m > [22mresolveFeatureModules[2m > [22madapts the exact issue #8 primary-v1 module shape to a composite marketplace root[32m 1[2mms[22m[39m
+ [32m✓[39m src/app/featureRegistryCore.test.tsx[2m > [22mresolveFeatureModules[2m > [22mruns issue #9 style capability registrars without treating them as malformed modules[32m 1[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-hardening.test.ts[2m > [22mpublic links accept only bounded HTTP(S) URLs[32m 5[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-hardening.test.ts[2m > [22mdocument resolution rejects unsafe URLs and kind mismatches[32m 1[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-hardening.test.ts[2m > [22mprice-per-gram must agree with current price and weight[32m 1[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-hardening.test.ts[2m > [22mduplicate weights collapse deterministically to the best valid offer[32m 1[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-hardening.test.ts[2m > [22mduplicate product identities publish only one row[32m 6[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-hardening.test.ts[2m > [22minvalid ranges fail closed without mutating typed filter values[32m 4[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-hardening.test.ts[2m > [22mnon-HTTP product URLs cannot enter marketplace rows[32m 0[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mnormalizes punctuation and case without fuzzy expansion[32m 4[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22msearch is restricted to vendor and strain name[32m 13[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mvendor and lineage selections combine[32m 2[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mall numeric ranges and combined filters apply to active row values[32m 2[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mmissing potency is omitted only when a potency bound is active[32m 7[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mactive variant uses lowest PPG then price, weight, and stable ID[32m 3[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mout-of-stock and malformed variants can never render[32m 5[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mrow price, URL, and documents stay on the same selected variant[32m 1[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mavailable size count includes every valid in-stock size[32m 2[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mdiscount formatting rejects contradictory original prices[32m 0[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mTotal THC is whole-number shopper output with quiet unavailable state[32m 0[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mratings require both valid score and count[32m 0[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22monly one expanded row remains open and filtered-out expansion closes[32m 3[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mEscape clears search before blurring it[32m 2[2mms[22m[39m
+ [32m✓[39m src/features/marketplace/test/marketplace-core.test.ts[2m > [22mexact sort set and deterministic ordering[32m 18[2mms[22m[39m
+ [32m✓[39m src/features/integration/marketplace-integration.test.ts[2m > [22mintegrated marketplace contracts[2m > [22mmaps the real catalog-v4 compact index without inventing fields[32m 6[2mms[22m[39m
+ [32m✓[39m src/features/integration/marketplace-integration.test.ts[2m > [22mintegrated marketplace contracts[2m > [22mmaps lazy detail shards and preserves source-exposed effects[32m 1[2mms[22m[39m
+ [32m✓[39m src/features/integration/marketplace-integration.test.ts[2m > [22mintegrated marketplace contracts[2m > [22madapts exact marketplace filters and sorts to the worker engine[32m 6[2mms[22m[39m
+ [32m✓[39m src/contracts/validators.test.ts[2m > [22mvalidateMarketplaceProduct[2m > [22maccepts the versioned in-stock marketplace contract[32m 10[2mms[22m[39m
+ [32m✓[39m src/contracts/validators.test.ts[2m > [22mvalidateMarketplaceProduct[2m > [22mrejects out-of-stock variants so they cannot reach rendering[32m 4[2mms[22m[39m
+ [32m✓[39m src/contracts/validators.test.ts[2m > [22mvalidateMarketplaceProduct[2m > [22mrequires Total THC to expose the rounded whole-percent display value[32m 4[2mms[22m[39m
+ [32m✓[39m src/contracts/validators.test.ts[2m > [22mvalidateMarketplaceProduct[2m > [22mrejects duplicate variant identities[32m 7[2mms[22m[39m
+ [32m✓[39m src/contracts/validators.test.ts[2m > [22mvalidateCatalogManifest[2m > [22maccepts relative page and index metadata[32m 2[2mms[22m[39m
+ [32m✓[39m src/app/AppShell.test.tsx[2m > [22mAppShell[2m > [22mexposes concise marketplace landmarks and accessible names[32m 160[2mms[22m[39m
+ [32m✓[39m src/app/AppShell.test.tsx[2m > [22mAppShell[2m > [22mfocuses search with slash and clears then leaves it with Escape[32m 193[2mms[22m[39m
+ [32m✓[39m src/app/AppShell.test.tsx[2m > [22mAppShell[2m > [22mprovides a focus-visible rule rather than removing keyboard focus[32m 1[2mms[22m[39m
+ [32m✓[39m src/app/AppShell.test.tsx[2m > [22mAppShell[2m > [22mmounts an issue #8 composite marketplace without duplicating foundation search and filter regions[32m 40[2mms[22m[39m
+ [32m✓[39m src/app/capabilityRegistry.test.ts[2m > [22mRuntimeCapabilityRegistry[2m > [22maccepts the issue #9 registerCapability seam and resolves exact versions[32m 3[2mms[22m[39m
+ [32m✓[39m src/app/capabilityRegistry.test.ts[2m > [22mRuntimeCapabilityRegistry[2m > [22mfails closed when capability providers collide[32m 3[2mms[22m[39m
+ [32m✓[39m src/app/capabilityRegistry.test.ts[2m > [22mRuntimeCapabilityRegistry[2m > [22mrejects malformed registrations and registrar failures without throwing[32m 0[2mms[22m[39m
+ [32m✓[39m src/app/assetPaths.test.ts[2m > [22mpublication paths[2m > [22mkeeps every static path relative for GitHub Pages and raw.githack subpaths[32m 1[2mms[22m[39m
+ [32m✓[39m src/app/assetPaths.test.ts[2m > [22mpublication paths[2m > [22mrejects absolute URLs, root paths, and traversal[32m 1[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m8 passed[39m[22m[90m (8)[39m
+[2m      Tests [22m [1m[32m46 passed[39m[22m[90m (46)[39m
+[2m   Start at [22m 21:39:16
+[2m   Duration [22m 3.75s[2m (transform 529ms, setup 2.15s, collect 928ms, tests 560ms, environment 4.23s, prepare 1.00s)[22m
+
+
+> dropfinder-web@1.0.0 test:platform
+> node --test test/*.test.mjs
+
+TAP version 13
+# Subtest: document viewer cancels stale canvas work and serializes the latest render
+ok 1 - document viewer cancels stale canvas work and serializes the latest render
+  ---
+  duration_ms: 44.486549
+  type: 'test'
+  ...
+# Subtest: document viewer fails concisely when the dedicated PDF worker misses its bounded startup window
+ok 2 - document viewer fails concisely when the dedicated PDF worker misses its bounded startup window
+  ---
+  duration_ms: 43.430358
+  type: 'test'
+  ...
+# Subtest: PDF.js uses one explicit worker source and owns each loading-task worker lifecycle
+ok 3 - PDF.js uses one explicit worker source and owns each loading-task worker lifecycle
+  ---
+  duration_ms: 160.270153
+  type: 'test'
+  ...
+# Subtest: catalog client atomically validates generation and deduplicates detail requests
+ok 4 - catalog client atomically validates generation and deduplicates detail requests
+  ---
+  duration_ms: 49.210053
+  type: 'test'
+  ...
+# Subtest: catalog client rejects mixed generations and preserves cached complete generation
+ok 5 - catalog client rejects mixed generations and preserves cached complete generation
+  ---
+  duration_ms: 2.729396
+  type: 'test'
+  ...
+# Subtest: query engine chooses active variant by ppg then price, weight, stable id
+ok 6 - query engine chooses active variant by ppg then price, weight, stable id
+  ---
+  duration_ms: 1.125241
+  type: 'test'
+  ...
+# Subtest: query pages share a stable identity while offsets and request versions change
+ok 7 - query pages share a stable identity while offsets and request versions change
+  ---
+  duration_ms: 2.766014
+  type: 'test'
+  ...
+# Subtest: query engine supersedes rapid synchronous queries
+ok 8 - query engine supersedes rapid synchronous queries
+  ---
+  duration_ms: 0.861438
+  type: 'test'
+  ...
+# Subtest: virtual adapter keeps DOM window bounded and preserves anchor through measurement
+ok 9 - virtual adapter keeps DOM window bounded and preserves anchor through measurement
+  ---
+  duration_ms: 3.014909
+  type: 'test'
+  ...
+# Subtest: virtual adapter deduplicates pages and page requests
+ok 10 - virtual adapter deduplicates pages and page requests
+  ---
+  duration_ms: 0.437978
+  type: 'test'
+  ...
+# Subtest: document capability classifies safe viewer paths and bounds PDFs
+ok 11 - document capability classifies safe viewer paths and bounds PDFs
+  ---
+  duration_ms: 2.080304
+  type: 'test'
+  ...
+# Subtest: PWA coordinator exposes typed update events without reload loops
+ok 12 - PWA coordinator exposes typed update events without reload loops
+  ---
+  duration_ms: 0.628654
+  type: 'test'
+  ...
+# Subtest: feature registration exports all five versioned capabilities
+ok 13 - feature registration exports all five versioned capabilities
+  ---
+  duration_ms: 0.665663
+  type: 'test'
+  ...
+# Subtest: catalog client rejects oversized and hash-mismatched assets
+ok 14 - catalog client rejects oversized and hash-mismatched assets
+  ---
+  duration_ms: 10.919477
+  type: 'test'
+  ...
+# Subtest: catalog client honors abort signals before publication
+ok 15 - catalog client honors abort signals before publication
+  ---
+  duration_ms: 0.824239
+  type: 'test'
+  ...
+# Subtest: worker engine restarts once after a crash and reinitializes compact rows
+ok 16 - worker engine restarts once after a crash and reinitializes compact rows
+  ---
+  duration_ms: 0.527003
+  type: 'test'
+  ...
+# Subtest: virtual adapter evicts old pages from retained rows
+ok 17 - virtual adapter evicts old pages from retained rows
+  ---
+  duration_ms: 2.973251
+  type: 'test'
+  ...
+# Subtest: document viewer reports oversized and malformed PDFs honestly
+ok 18 - document viewer reports oversized and malformed PDFs honestly
+  ---
+  duration_ms: 1.160036
+  type: 'test'
+  ...
+# Subtest: real PDF.js runtime parses the pinned multi-page local fixture
+ok 19 - real PDF.js runtime parses the pinned multi-page local fixture
+  ---
+  duration_ms: 153.652057
+  type: 'test'
+  ...
+# Subtest: synthetic fixture factory is deterministic and includes four variants
+ok 20 - synthetic fixture factory is deterministic and includes four variants
+  ---
+  duration_ms: 1.289568
+  type: 'test'
+  ...
+# Subtest: null and blank numeric bounds remain unbounded instead of coercing to zero
+ok 21 - null and blank numeric bounds remain unbounded instead of coercing to zero
+  ---
+  duration_ms: 3.445954
+  type: 'test'
+  ...
+# Subtest: service worker installs shell from metadata and activates a complete legacy generation
+ok 22 - service worker installs shell from metadata and activates a complete legacy generation
+  ---
+  duration_ms: 45.974696
+  type: 'test'
+  ...
+# Subtest: service worker does not activate incomplete snapshots and switches only after an explicit update
+ok 23 - service worker does not activate incomplete snapshots and switches only after an explicit update
+  ---
+  duration_ms: 9.454452
+  type: 'test'
+  ...
+# Subtest: service worker rejects detail shards from another active generation
+ok 24 - service worker rejects detail shards from another active generation
+  ---
+  duration_ms: 6.798425
+  type: 'test'
+  ...
+1..24
+# tests 24
+# suites 0
+# pass 24
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 448.958024
