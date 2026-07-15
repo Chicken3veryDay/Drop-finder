@@ -1,0 +1,83 @@
+name: Issue 7 vendor compliance adapters
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/vendor_adapters/**"
+      - "tests/test_vendor_adapters.py"
+      - "tests/fixtures/vendor_adapters/**"
+      - "data/vendor_profiles.json"
+      - "research/vendors/**"
+      - "docs/VENDOR_AGE_VERIFICATION.md"
+      - "docs/VENDOR_LAB_COVERAGE.md"
+      - "scripts/cloud_scan.py"
+      - ".github/workflows/issue7-vendor-adapters.yml"
+  push:
+    branches: [ui-rewrite/03-vendor-compliance-labs]
+    paths:
+      - "scripts/vendor_adapters/**"
+      - "tests/test_vendor_adapters.py"
+      - "tests/fixtures/vendor_adapters/**"
+      - "data/vendor_profiles.json"
+      - "research/vendors/**"
+      - "docs/VENDOR_AGE_VERIFICATION.md"
+      - "docs/VENDOR_LAB_COVERAGE.md"
+      - "scripts/cloud_scan.py"
+      - ".github/workflows/issue7-vendor-adapters.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile adapters
+        run: python -m compileall -q scripts/vendor_adapters tests/test_vendor_adapters.py
+      - name: Verify vendor coverage
+        run: python -m scripts.vendor_adapters.cli verify
+      - name: Run deterministic fixtures and safety tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Exercise CLI parse path
+        run: |
+          python -m scripts.vendor_adapters.cli parse \
+            --candidate tests/fixtures/vendor_adapters/candidate.json \
+            --document tests/fixtures/vendor_adapters/text_coa.pdf \
+            --content-type application/pdf \
+            --output /tmp/parsed-lab.json
+          python - <<'PY'
+          import json
+          row=json.load(open('/tmp/parsed-lab.json'))
+          assert row['parse_status']=='parsed'
+          assert row['cannabinoids']['thca']==27.45
+          PY
+
+  live-safe-maintenance-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run bounded public GET-only probes
+        run: |
+          python -m scripts.vendor_adapters.cli live-check \
+            --workers 4 \
+            --timeout 8 \
+            --max-bytes 512000 \
+            --output artifacts/vendor-live-check.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue7-vendor-live-check
+          path: artifacts/vendor-live-check.json
+          if-no-files-found: error
+          retention-days: 7
