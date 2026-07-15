@@ -28,9 +28,80 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  final-scope-migration:
+    if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ui-rewrite/03-vendor-compliance-labs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rebase and normalize public age scopes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git rebase origin/main
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          path = Path('data/vendor_profiles.json')
+          payload = json.loads(path.read_text(encoding='utf-8'))
+          replacements = {'site_entry': 'browsing', 'uncertain': 'unknown'}
+          allowed = {'browsing', 'checkout', 'delivery', 'first_order', 'every_order', 'unknown'}
+          changed = 0
+          counts = {}
+          for profile in payload.get('vendors', []):
+              age = profile.get('age_verification', {})
+              scope = age.get('scope')
+              if scope in replacements:
+                  age['scope'] = replacements[scope]
+                  scope = age['scope']
+                  changed += 1
+              if scope not in allowed:
+                  raise SystemExit(f"unsupported age scope for {profile.get('vendor_id')}: {scope!r}")
+              counts[scope] = counts.get(scope, 0) + 1
+          if changed == 0:
+              raise SystemExit('age scopes were already normalized unexpectedly')
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps({'vendors': len(payload.get('vendors', [])), 'changes': changed, 'scope_counts': counts}, sort_keys=True))
+          PY
+      - name: Validate exact rebased tree
+        run: |
+          python -m compileall -q scripts/vendor_adapters tests/test_vendor_adapters.py
+          python -m scripts.vendor_adapters.cli verify
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python -m scripts.vendor_adapters.cli parse \
+            --candidate tests/fixtures/vendor_adapters/candidate.json \
+            --document tests/fixtures/vendor_adapters/text_coa.pdf \
+            --content-type application/pdf \
+            --output /tmp/parsed-lab.json
+          python - <<'PY'
+          import json
+          row = json.load(open('/tmp/parsed-lab.json'))
+          assert row['parse_status'] == 'parsed'
+          assert row['confidence'] == 'medium'
+          assert row['cannabinoids']['thca'] == 27.45
+          assert row['field_provenance']['cannabinoids.thca']['source_location'].startswith('text_line:')
+          PY
+          python scripts/cloud_scan_v2.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_merge.py --self-test
+      - name: Commit normalized scopes and publish rebased branch
+        run: |
+          git add data/vendor_profiles.json
+          git diff --cached --check
+          git commit -m "fix(issue7): normalize age verification scopes"
+          git push --force-with-lease origin HEAD:ui-rewrite/03-vendor-compliance-labs
+
   deterministic:
     runs-on: ubuntu-latest
     timeout-minutes: 10
