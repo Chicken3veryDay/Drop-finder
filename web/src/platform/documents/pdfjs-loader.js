@@ -1,22 +1,19 @@
 /** Lazy-loads PDF.js and binds one explicit dedicated module worker. */
 let sharedWorker = null;
-let sharedWorkerSource = null;
+let sharedWorkerIdentity = null;
 let sharedRuntime = null;
 
 export async function loadPdfJsRuntime(options = {}) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
-    let workerSrc = options.workerSrc;
-    if (!workerSrc) {
-      const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url');
-      workerSrc = workerModule.default;
-    }
-    pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
-    if (!sharedWorker || sharedWorkerSource !== workerSrc) {
+    const identity = options.workerSrc ?? 'vite:pdfjs-legacy-worker';
+    if (!sharedWorker || sharedWorkerIdentity !== identity) {
       disposePdfJsRuntimeWorker();
-      const worker = new Worker(workerSrc, { type: 'module', name: 'dropfinder-pdfjs' });
+      const worker = options.workerSrc
+        ? new Worker(options.workerSrc, { type: 'module', name: 'dropfinder-pdfjs' })
+        : await createBundledWorker();
       sharedWorker = worker;
-      sharedWorkerSource = workerSrc;
+      sharedWorkerIdentity = identity;
       sharedRuntime = pdfjs;
       worker.addEventListener('error', () => {
         if (sharedWorker !== worker) return;
@@ -24,12 +21,18 @@ export async function loadPdfJsRuntime(options = {}) {
           sharedRuntime.GlobalWorkerOptions.workerPort = null;
         }
         sharedWorker = null;
-        sharedWorkerSource = null;
+        sharedWorkerIdentity = null;
       }, { once: true });
     }
     pdfjs.GlobalWorkerOptions.workerPort = sharedWorker;
   }
   return pdfjs;
+}
+
+async function createBundledWorker() {
+  const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?worker');
+  const PdfJsWorker = workerModule.default;
+  return new PdfJsWorker({ name: 'dropfinder-pdfjs' });
 }
 
 export function disposePdfJsRuntimeWorker() {
@@ -38,6 +41,6 @@ export function disposePdfJsRuntimeWorker() {
   }
   sharedWorker?.terminate?.();
   sharedWorker = null;
-  sharedWorkerSource = null;
+  sharedWorkerIdentity = null;
   sharedRuntime = null;
 }
