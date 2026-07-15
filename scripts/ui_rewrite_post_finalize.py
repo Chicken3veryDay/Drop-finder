@@ -29,6 +29,41 @@ def main() -> None:
   return Number.isFinite(parsed) ? parsed : null;
 };''',
     )
+    replace(
+        provider,
+        '''    } catch (caught) {
+      if (!mounted.current || signal?.aborted) return;
+      setError(caught instanceof Error ? caught.message : "Marketplace data could not be loaded.");
+    } finally {''',
+        '''    } catch (caught) {
+      if (!mounted.current || signal?.aborted) return;
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      setError(caught instanceof Error ? caught.message : "Marketplace data could not be loaded.");
+    } finally {''',
+    )
+    replace(
+        provider,
+        '''  useEffect(() => {
+    mounted.current = true;
+    const controller = new AbortController();
+    void refresh(false, controller.signal);
+    return () => {
+      mounted.current = false;
+      controller.abort();
+    };
+  }, [refresh]);''',
+        '''  useEffect(() => {
+    mounted.current = true;
+    // CatalogGenerationClient deduplicates initialization through one shared
+    // promise. Aborting the first StrictMode mount would poison the second
+    // mount with the same AbortError, so startup is guarded by mounted state
+    // instead of tying the shared generation request to component cleanup.
+    void refresh(false);
+    return () => {
+      mounted.current = false;
+    };
+  }, [refresh]);''',
+    )
 
     marketplace = WEB / "src/features/marketplace/MarketplaceFeature.tsx"
     replace(
