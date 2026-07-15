@@ -1,0 +1,130 @@
+name: DropFinder UI Rewrite Composer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: dropfinder-ui-rewrite-composer
+  cancel-in-progress: false
+
+jobs:
+  compose:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.head.ref == 'ui-rewrite/06-full-integration')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-rewrite/06-full-integration
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: .integration/web/package.json
+
+      - name: Compose exact audited workstream heads
+        run: |
+          set -euo pipefail
+          python scripts/ui_rewrite_merge.py
+          python scripts/ui_rewrite_finalize.py
+
+      - name: Publish current catalog through v4 inside the integration tree
+        run: |
+          set -euo pipefail
+          rm -rf cloud_pages/data/catalog-v4
+          python -m scripts.catalog_v4 \
+            --input cloud_pages/data/catalog.json \
+            --output cloud_pages/data \
+            --detail-shards 16 \
+            --minimum-products 1 \
+            --minimum-variants 1
+          python -m scripts.catalog_v4 \
+            --input cloud_pages/data/catalog.json \
+            --output cloud_pages/data \
+            --verify-only
+
+      - name: Freeze dependencies and generated application shell
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts
+          npm ci
+          npm run build
+          npm run pwa:manifest
+          npm run pwa:check
+
+      - name: Commit the exact integrated tree before validation
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name "DropFinder Integration Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Integrate DropFinder UI rewrite workstreams [skip ci]"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          test -z "$(git status --porcelain)"
+
+      - name: Validate Python scanner, worker, merge, vendor, and catalog paths
+        run: |
+          set -euo pipefail
+          python -m compileall -q scripts tests
+          python scripts/cloud_scan_v2.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
+          rm -rf /tmp/dropfinder-autonomous-merge-test
+          python scripts/autonomous_merge.py --self-test
+          python -m scripts.catalog_v4.selftest
+          python -m unittest discover -s tests/catalog_v4 -v
+          python -m unittest discover -s tests -p 'test_vendor_adapters.py' -v
+
+      - name: Validate frontend, platform, performance, chunks, and publication preservation
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm run validate
+          npm run pwa:check
+
+      - name: Install browser matrix
+        working-directory: web
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Validate integrated app and platform harness in all browsers
+        working-directory: web
+        run: npm run test:e2e
+
+      - name: Confirm exact commit remained reproducible and clean
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.commit.outputs.sha }}"
+          git diff --exit-code
+          git diff --cached --exit-code
+          test -z "$(git status --porcelain)"
+
+      - name: Push validated integration head
+        run: git push origin HEAD:ui-rewrite/06-full-integration
+
+      - name: Preserve exact-head evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-rewrite-integration-${{ steps.commit.outputs.sha || github.run_id }}
+          path: |
+            web/playwright-report
+            web/test-results
+            web/dist-platform
+            cloud_pages/data/catalog-v4
+          if-no-files-found: ignore
+          retention-days: 14
