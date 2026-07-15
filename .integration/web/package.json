@@ -1,0 +1,56 @@
+{
+  "name": "dropfinder-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "node ./scripts/build.mjs",
+    "build:platform": "vite build --config vite.config.platform.mjs",
+    "verify:publication": "node ./scripts/verify-publication.mjs",
+    "typecheck": "tsc -b --pretty false && node scripts/typecheck.mjs",
+    "lint": "eslint . --max-warnings 0",
+    "test": "npm run test:unit && npm run test:platform",
+    "test:unit": "vitest run --reporter=verbose",
+    "test:platform": "node --test test/*.test.mjs",
+    "test:watch": "vitest",
+    "benchmark": "node scripts/performance/benchmark.mjs",
+    "analyze:chunks": "node scripts/performance/analyze-chunks.mjs",
+    "pwa:manifest": "node scripts/pwa/generate-shell-manifest.mjs",
+    "pwa:check": "node scripts/pwa/generate-shell-manifest.mjs --check",
+    "prepare:e2e-worker": "node scripts/pdfjs/prepare-e2e-worker.mjs",
+    "predev:e2e": "npm run prepare:e2e-worker",
+    "dev:e2e": "node tests/e2e/run-vite.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps chromium firefox webkit",
+    "validate": "npm run lint && npm run typecheck && npm test && npm run benchmark && npm run build && npm run build:platform && npm run analyze:chunks"
+  },
+  "dependencies": {
+    "pdfjs-dist": "5.4.624",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@eslint/js": "9.29.0",
+    "@playwright/test": "1.61.1",
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/react": "16.3.0",
+    "@testing-library/user-event": "14.6.1",
+    "@types/node": "22.15.30",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "@vitejs/plugin-react": "4.5.2",
+    "eslint": "9.29.0",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "eslint-plugin-react-refresh": "0.4.20",
+    "jsdom": "26.1.0",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.34.1",
+    "vite": "6.3.5",
+    "vitest": "3.2.4"
+  }
+}
