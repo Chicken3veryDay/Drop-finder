@@ -21,18 +21,30 @@ const engine = new MarketplaceQueryEngine();
 const virtual = new VirtualMarketplaceAdapter({ estimatedRowHeight: 96, overscanPx: 260, pageSize: 300, maxRetainedPages: 10 });
 const viewer = new DocumentViewerCapability({ maxBytes: 4 * 1024 * 1024, maxPages: 10 });
 const pwa = new PwaGenerationCoordinator();
+const pwaEnabled = new URL(location.href).searchParams.has('pwa');
+let serviceWorkerReady = Promise.resolve(null);
 let queryVersion = 0;
 let nextOffset = null;
 let expandedProductId = null;
 let renderingDocument = false;
 let lastFocusedDescriptor = null;
+let layoutEpoch = 0;
+let layoutStableTimer = null;
 const eventLog = [];
 
+main.dataset.layoutStable = 'false';
 await engine.initialize('e2e-generation-1', products);
 virtual.subscribe(() => renderRows());
 viewer.subscribe(state => { if (state.status === 'closed') overlay.hidden = true; void renderDocument(state); });
 pwa.subscribe(event => { eventLog.push(event); status.textContent = `PWA event: ${event.type}`; });
-try { await pwa.register('/e2e-sw.js', { scope: '/' }); } catch (error) { eventLog.push({ type: 'registration-error', message: error.message }); }
+if (pwaEnabled) {
+  try {
+    await pwa.register('/e2e-sw.js', { scope: '/' });
+    serviceWorkerReady = navigator.serviceWorker.ready;
+  } catch (error) {
+    eventLog.push({ type: 'registration-error', message: error.message });
+  }
+}
 
 async function runQuery({ preserveAnchor = false, append = false, offset = 0 } = {}) {
   const selectedWeight = weight.value ? Number(weight.value) : null;
@@ -100,10 +112,22 @@ function renderRows() {
     });
     article.querySelector('[data-action="document"]').addEventListener('click', event => openPdf(row, event.currentTarget));
     feed.append(article);
-    requestAnimationFrame(() => virtual.measure(row.productId, article.getBoundingClientRect().height));
+    scheduleMeasurement(row.productId, article);
   });
   if (lastFocusedDescriptor) requestAnimationFrame(() => articleFor(lastFocusedDescriptor.key)?.querySelector(`[data-action="${lastFocusedDescriptor.action}"]`)?.focus({ preventScroll: true }));
   main.dataset.renderedRows = String(windowState.renderedCount);
+}
+
+function scheduleMeasurement(productId, article) {
+  const epoch = ++layoutEpoch;
+  main.dataset.layoutStable = 'false';
+  requestAnimationFrame(() => {
+    virtual.measure(productId, article.getBoundingClientRect().height);
+    clearTimeout(layoutStableTimer);
+    layoutStableTimer = setTimeout(() => {
+      if (epoch === layoutEpoch) main.dataset.layoutStable = 'true';
+    }, 100);
+  });
 }
 
 viewport.addEventListener('scroll', () => {
@@ -154,13 +178,35 @@ document.addEventListener('keydown', event => { if (!overlay.hidden) viewer.hand
 overlay.addEventListener('click', event => { if (event.target === overlay) void closeDialog(); });
 async function closeDialog() { overlay.hidden = true; await viewer.close(); }
 
+async function waitForOfflineCache() {
+  const registration = await serviceWorkerReady;
+  const worker = navigator.serviceWorker.controller ?? registration?.active;
+  if (!worker) throw new Error('E2E service worker is unavailable');
+  const requestId = crypto.randomUUID();
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      navigator.serviceWorker.removeEventListener('message', onMessage);
+      reject(new Error('Timed out while flushing the E2E cache'));
+    }, 15_000);
+    function onMessage(event) {
+      if (event.data?.type !== 'e2e-cache-ready' || event.data.requestId !== requestId) return;
+      clearTimeout(timeout);
+      navigator.serviceWorker.removeEventListener('message', onMessage);
+      resolve();
+    }
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    worker.postMessage({ type: 'flush-cache', requestId });
+  });
+}
+
 virtual.setViewport(0, viewport.clientHeight);
 await runQuery();
 main.dataset.ready = 'true';
 window.__platformHarness = {
   engine, virtual, viewer, pwa, eventLog,
   stats: () => ({ renderedRows: Number(main.dataset.renderedRows), queryVersion: Number(main.dataset.queryVersion), total: Number(feed.dataset.resultCount) }),
-  serviceWorkerReady: navigator.serviceWorker?.ready,
+  serviceWorkerReady,
+  waitForOfflineCache,
 };
 
 function articleFor(key) { return feed.querySelector(`[data-product-id="${CSS.escape(key)}"]`); }
