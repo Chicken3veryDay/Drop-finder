@@ -1,9 +1,10 @@
-const CACHE = 'dropfinder-e2e-root-v3';
+const CACHE = 'dropfinder-e2e-root-v4';
 const SHELL = [
   '/tests/e2e/fixtures/harness.html',
   '/tests/e2e/fixtures/harness.js',
   '/tests/e2e/fixtures/sample.pdf',
 ];
+const pendingWrites = new Set();
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -28,11 +29,13 @@ self.addEventListener('fetch', event => {
     response,
     cacheCopy: response.ok ? response.clone() : null,
   }));
-  event.waitUntil(network.then(async ({ cacheCopy }) => {
+  const write = network.then(async ({ cacheCopy }) => {
     if (!cacheCopy) return;
     const cache = await caches.open(CACHE);
     await cache.put(event.request, cacheCopy);
-  }).catch(() => {}));
+  }).catch(() => {});
+  trackWrite(write);
+  event.waitUntil(write);
   event.respondWith(network.then(({ response }) => response).catch(async () => {
     const cache = await caches.open(CACHE);
     return (await cache.match(event.request))
@@ -44,8 +47,18 @@ self.addEventListener('fetch', event => {
 self.addEventListener('message', event => {
   if (event.data?.type === 'generation-status') event.source?.postMessage({ type: 'generation-status', id: 'e2e-generation-1' });
   if (event.data?.type === 'activate-generation') event.source?.postMessage({ type: 'generation-active', generationId: event.data.generationId });
+  if (event.data?.type === 'flush-cache') {
+    event.waitUntil(Promise.allSettled([...pendingWrites]).then(() => {
+      event.source?.postMessage({ type: 'e2e-cache-ready', requestId: event.data.requestId });
+    }));
+  }
   if (event.data?.type === 'simulate-update') {
     event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then(clients => clients.forEach(client => client.postMessage({ type: 'generation-ready', generationId: event.data.generationId }))));
   }
 });
+
+function trackWrite(promise) {
+  pendingWrites.add(promise);
+  promise.finally(() => pendingWrites.delete(promise));
+}
