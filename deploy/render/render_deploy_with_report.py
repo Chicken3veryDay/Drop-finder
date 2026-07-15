@@ -11,6 +11,8 @@ from pathlib import Path
 import render_complete_verifier
 import render_deploy
 
+KNOWN_RENDER_SERVICE_ID = os.getenv("RENDER_SERVICE_ID", "srv-d9barmojs32c739o9ke0").strip()
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -29,7 +31,8 @@ def apply_render_api_retries() -> None:
     original = render_deploy.RenderAPI.request
 
     def resilient_request(self, method: str, path: str, payload=None):
-        attempts = 5 if method.upper() == "GET" else 1
+        method_upper = method.upper()
+        attempts = 5 if method_upper == "GET" else 3 if method_upper in {"PUT", "PATCH", "DELETE"} else 1
         last_error: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
@@ -50,6 +53,40 @@ def apply_render_api_retries() -> None:
         raise RuntimeError("Render API retry loop ended unexpectedly")
 
     render_deploy.RenderAPI.request = resilient_request
+
+
+def apply_known_service_target() -> None:
+    if not KNOWN_RENDER_SERVICE_ID:
+        raise RuntimeError("RENDER_SERVICE_ID is empty")
+
+    def known_owner(_api) -> dict:
+        return {"id": "known-service-owner-bypass", "type": "known_service"}
+
+    def update_known_service(api, _owner_id: str, env_vars: list[dict[str, str]]):
+        service_id = KNOWN_RENDER_SERVICE_ID
+        service = api.request(
+            "PATCH",
+            f"/services/{service_id}",
+            {
+                "name": render_deploy.SERVICE_NAME,
+                "repo": render_deploy.REPOSITORY_URL,
+                "branch": render_deploy.REPOSITORY_BRANCH,
+                "autoDeploy": "no",
+                "rootDir": "",
+                "serviceDetails": render_deploy.service_details(),
+            },
+        )
+        api.request("PUT", f"/services/{service_id}/env-vars", env_vars)
+        if not isinstance(service, dict):
+            service = {}
+        service = dict(service)
+        service.setdefault("id", service_id)
+        service.setdefault("name", render_deploy.SERVICE_NAME)
+        service.setdefault("url", "https://dropfinder-os.onrender.com")
+        return service, None, False
+
+    render_deploy.select_owner = known_owner
+    render_deploy.create_or_update_service = update_known_service
 
 
 def apply_free_tier_compatibility() -> None:
@@ -157,6 +194,7 @@ def main() -> int:
     try:
         apply_render_api_retries()
         apply_free_tier_compatibility()
+        apply_known_service_target()
         apply_complete_catalog_floor()
         render_complete_verifier.apply()
         apply_quality_safe_scan_retention()
@@ -166,13 +204,16 @@ def main() -> int:
         return code
     except Exception as exc:
         report = {
-            "schema_version": "dropfinder-render-deployment-error-v5",
+            "schema_version": "dropfinder-render-deployment-error-v6",
             "status": "failed",
             "failed_at": utc_now(),
             "error_type": type(exc).__name__,
             "error": redact(str(exc))[:8000],
             "traceback": redact(traceback.format_exc())[-12000:],
+            "known_service_target_enabled": True,
+            "known_service_id": KNOWN_RENDER_SERVICE_ID,
             "render_api_get_retries_enabled": True,
+            "render_api_idempotent_write_retries_enabled": True,
             "complete_data_verifier_enabled": True,
             "normalization_verifier_enabled": True,
             "quality_safe_retention_enabled": True,
