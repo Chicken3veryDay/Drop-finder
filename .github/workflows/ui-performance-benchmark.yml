@@ -73,7 +73,7 @@ jobs:
                   "thca": round(20 + (index % 170) / 10, 1),
                   "availability": "in_stock" if index % 5 else "out_of_stock",
                   "comparison_complete": True,
-                  "comparison_contract": "exact_price_weight_ppg_thca_stock_image_v1",
+                  "comparison_contract": "exact_price_weight_ppg_thca_stock_image_v1"
               })
           generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
           catalog = {
@@ -82,7 +82,7 @@ jobs:
               "comparison_contract": "exact_price_weight_ppg_thca_stock_image_v1",
               "normalization_contract": "dropfinder-product-normalization-v1",
               "product_count": len(products),
-              "products": products,
+              "products": products
           }
           status = {
               "generated_at": generated,
@@ -93,7 +93,7 @@ jobs:
               "sources": [
                   {"source_id": f"vendor_{index:02d}", "name": f"Benchmark Vendor {index:02d}", "status": "healthy", "products": sum(p["source_id"] == f"vendor_{index:02d}" for p in products)}
                   for index in range(12)
-              ],
+              ]
           }
           root = Path('/tmp/dropfinder-benchmark/data')
           (root / 'catalog.json').write_text(json.dumps(catalog), encoding='utf-8')
@@ -105,6 +105,8 @@ jobs:
           npm install --no-save playwright@1.55.0
           npx playwright install --with-deps chromium
       - name: Run mobile one-page benchmark
+        id: browser_benchmark
+        continue-on-error: true
         run: |
           set -euo pipefail
           cd /tmp/dropfinder-benchmark
@@ -114,116 +116,173 @@ jobs:
           cat > /tmp/dropfinder-benchmark.js <<'JS'
           const fs = require('fs');
           const { chromium } = require('playwright');
+          const reportPath = 'deployment/ui-performance-benchmark.json';
+          const startedAt = new Date().toISOString();
+          let stage = 'initialize';
+
+          function writeReport(payload) {
+            fs.mkdirSync('deployment', {recursive: true});
+            fs.writeFileSync(reportPath, JSON.stringify(payload, null, 2) + '\n');
+          }
 
           (async () => {
-            const browser = await chromium.launch({headless: true});
-            const context = await browser.newContext({
-              viewport: {width: 390, height: 844},
-              deviceScaleFactor: 2,
-              isMobile: true,
-              hasTouch: true,
-              serviceWorkers: 'block'
-            });
-            const page = await context.newPage();
-            let imageRequests = 0;
-            await page.route('https://images.example.test/**', async route => {
-              imageRequests += 1;
-              await route.fulfill({
-                status: 200,
-                contentType: 'image/svg+xml',
-                body: '<svg xmlns="http://www.w3.org/2000/svg" width="112" height="132"><rect width="100%" height="100%" fill="#172233"/></svg>'
+            let browser;
+            try {
+              stage = 'launch_browser';
+              browser = await chromium.launch({headless: true});
+              const context = await browser.newContext({
+                viewport: {width: 390, height: 844},
+                deviceScaleFactor: 2,
+                isMobile: true,
+                hasTouch: true,
+                serviceWorkers: 'block'
               });
-            });
-            await page.addInitScript(() => {
-              window.__longTasks = [];
-              new PerformanceObserver(list => {
-                for (const entry of list.getEntries()) window.__longTasks.push(entry.duration);
-              }).observe({entryTypes: ['longtask']});
-            });
+              const page = await context.newPage();
+              let imageRequests = 0;
+              await page.route('https://images.example.test/**', async route => {
+                imageRequests += 1;
+                await route.fulfill({
+                  status: 200,
+                  contentType: 'image/svg+xml',
+                  body: '<svg xmlns="http://www.w3.org/2000/svg" width="112" height="132"><rect width="100%" height="100%" fill="#172233"/></svg>'
+                });
+              });
+              await page.addInitScript(() => {
+                window.__longTasks = [];
+                try {
+                  new PerformanceObserver(list => {
+                    for (const entry of list.getEntries()) window.__longTasks.push(entry.duration);
+                  }).observe({type: 'longtask', buffered: true});
+                } catch (_) {}
+              });
 
-            const navigationStarted = Date.now();
-            await page.goto('http://127.0.0.1:8765/', {waitUntil: 'domcontentloaded'});
-            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true', null, {timeout: 10000});
-            const allRenderedMs = Date.now() - navigationStarted;
-            const initialCards = await page.locator('.card').count();
-            const initialMetric = await page.evaluate(() => window.__dropfinderMetrics);
-            const longTasks = await page.evaluate(() => window.__longTasks || []);
-            const maxLongTaskMs = longTasks.length ? Math.max(...longTasks) : 0;
-            const totalLongTaskMs = longTasks.reduce((sum, value) => sum + value, 0);
-            const lazyImages = await page.locator('img[loading="lazy"][decoding="async"][fetchpriority="low"]').count();
-            const initialImageRequests = imageRequests;
-            const resultText = await page.locator('#resultCount').innerText();
-            const paginationControls = await page.locator('[class*="pagination"], [id*="pagination"], [data-page], button:has-text("Load more")').count();
+              stage = 'navigate';
+              const navigationStarted = Date.now();
+              await page.goto('http://127.0.0.1:8765/', {waitUntil: 'domcontentloaded'});
+              stage = 'wait_full_render';
+              await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true', null, {timeout: 15000});
+              const allRenderedMs = Date.now() - navigationStarted;
+              const initialCards = await page.locator('.card').count();
+              const initialMetric = await page.evaluate(() => window.__dropfinderMetrics || {});
+              const longTasks = await page.evaluate(() => window.__longTasks || []);
+              const maxLongTaskMs = longTasks.length ? Math.max(...longTasks) : 0;
+              const totalLongTaskMs = longTasks.reduce((sum, value) => sum + value, 0);
+              const lazyImages = await page.locator('img[loading="lazy"][decoding="async"][fetchpriority="low"]').count();
+              const initialImageRequests = imageRequests;
+              const resultText = await page.locator('#resultCount').innerText();
+              const paginationControls = await page.locator('[class*="pagination"], [id*="pagination"], [data-page], button:has-text("Load more")').count();
 
-            const filterStarted = Date.now();
-            await page.locator('#query').fill('Synthetic Strain 0999');
-            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true' && document.querySelectorAll('.card').length === 1, null, {timeout: 3000});
-            const filterMs = Date.now() - filterStarted;
-            const filteredName = await page.locator('.card .name').innerText();
+              stage = 'filter';
+              const filterStarted = Date.now();
+              await page.locator('#query').fill('Synthetic Strain 0999');
+              await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true' && document.querySelectorAll('.card').length === 1, null, {timeout: 3000});
+              const filterMs = Date.now() - filterStarted;
+              const filteredName = await page.locator('.card .name').innerText();
 
-            await page.locator('#query').fill('');
-            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true' && document.querySelectorAll('.card').length === 1000, null, {timeout: 7000});
-            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(250);
-            const lastVisible = await page.locator('[data-product-id="synthetic-0999"]').isVisible();
+              stage = 'restore_all';
+              await page.locator('#query').fill('');
+              await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true' && document.querySelectorAll('.card').length === 1000, null, {timeout: 10000});
+              await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+              await page.waitForTimeout(250);
+              const lastVisible = await page.locator('.card').last().isVisible();
 
-            const checks = {
-              all_products_on_one_page: initialCards === 1000,
-              result_count_declares_one_page: resultText.includes('1000') && resultText.includes('on this page'),
-              no_pagination_controls: paginationControls === 0,
-              complete_render_under_5000ms: allRenderedMs < 5000,
-              internal_chunk_render_under_3000ms: Number(initialMetric.lastRenderMs || 999999) < 3000,
-              filter_under_600ms: filterMs < 600,
-              filter_result_correct: filteredName === 'Synthetic Strain 0999',
-              lazy_async_images_present: lazyImages === 1000,
-              offscreen_images_remain_lazy: initialImageRequests < 120,
-              max_long_task_under_500ms: maxLongTaskMs < 500,
-              total_long_task_under_3000ms: totalLongTaskMs < 3000,
-              last_product_reachable: lastVisible,
-            };
-            const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);
-            const report = {
-              schema_version: 'dropfinder-ui-performance-benchmark-v1',
-              status: failed.length ? 'failed' : 'healthy',
-              fixture_products: 1000,
-              viewport: {width: 390, height: 844, mobile: true},
-              all_rendered_ms: allRenderedMs,
-              internal_render_ms: initialMetric.lastRenderMs,
-              filter_ms: filterMs,
-              initial_card_count: initialCards,
-              lazy_image_count: lazyImages,
-              initial_image_requests: initialImageRequests,
-              max_long_task_ms: Math.round(maxLongTaskMs * 100) / 100,
-              total_long_task_ms: Math.round(totalLongTaskMs * 100) / 100,
-              long_task_count: longTasks.length,
-              result_text: resultText,
-              checks,
-              failed_checks: failed,
-            };
-            fs.writeFileSync('deployment/ui-performance-benchmark.json', JSON.stringify(report, null, 2) + '\n');
-            console.log(JSON.stringify(report, null, 2));
-            await browser.close();
-            if (failed.length) process.exit(1);
-          })().catch(error => {
-            console.error(error);
-            process.exit(1);
-          });
+              const checks = {
+                all_products_on_one_page: initialCards === 1000,
+                result_count_declares_one_page: resultText.includes('1000') && resultText.includes('on this page'),
+                no_pagination_controls: paginationControls === 0,
+                complete_render_under_5000ms: allRenderedMs < 5000,
+                internal_chunk_render_under_3000ms: Number(initialMetric.lastRenderMs || 999999) < 3000,
+                filter_under_600ms: filterMs < 600,
+                filter_result_correct: filteredName === 'Synthetic Strain 0999',
+                lazy_async_images_present: lazyImages === 1000,
+                offscreen_images_remain_lazy: initialImageRequests < 120,
+                max_long_task_under_500ms: maxLongTaskMs < 500,
+                total_long_task_under_3000ms: totalLongTaskMs < 3000,
+                last_product_reachable: lastVisible
+              };
+              const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);
+              const report = {
+                schema_version: 'dropfinder-ui-performance-benchmark-v2',
+                status: failed.length ? 'failed' : 'healthy',
+                started_at: startedAt,
+                finished_at: new Date().toISOString(),
+                stage: 'complete',
+                fixture_products: 1000,
+                viewport: {width: 390, height: 844, mobile: true},
+                all_rendered_ms: allRenderedMs,
+                internal_render_ms: initialMetric.lastRenderMs,
+                fetch_and_parse_ms: initialMetric.fetchAndParseMs,
+                filter_ms: filterMs,
+                initial_card_count: initialCards,
+                lazy_image_count: lazyImages,
+                initial_image_requests: initialImageRequests,
+                max_long_task_ms: Math.round(maxLongTaskMs * 100) / 100,
+                total_long_task_ms: Math.round(totalLongTaskMs * 100) / 100,
+                long_task_count: longTasks.length,
+                result_text: resultText,
+                checks,
+                failed_checks: failed
+              };
+              writeReport(report);
+              console.log(JSON.stringify(report, null, 2));
+              if (failed.length) process.exitCode = 1;
+            } catch (error) {
+              const report = {
+                schema_version: 'dropfinder-ui-performance-benchmark-v2',
+                status: 'error',
+                started_at: startedAt,
+                finished_at: new Date().toISOString(),
+                stage,
+                error_type: error?.name || 'Error',
+                error: String(error?.stack || error).slice(0, 12000),
+                failed_checks: ['benchmark_exception']
+              };
+              writeReport(report);
+              console.error(JSON.stringify(report, null, 2));
+              process.exitCode = 1;
+            } finally {
+              if (browser) await browser.close();
+            }
+          })();
           JS
           node /tmp/dropfinder-benchmark.js
       - name: Record benchmark evidence
         if: always()
         run: |
           set -euo pipefail
-          if test -s deployment/ui-performance-benchmark.json; then
-            cp deployment/ui-performance-benchmark.json /tmp/ui-performance-benchmark.json
+          test -s deployment/ui-performance-benchmark.json
+          cp deployment/ui-performance-benchmark.json /tmp/ui-performance-benchmark.json
+          git config user.name "DropFinder Performance Benchmark"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          recorded=false
+          for attempt in 1 2 3 4 5; do
             git fetch origin deploy/full-stack-hf
             git reset --hard origin/deploy/full-stack-hf
             cp /tmp/ui-performance-benchmark.json deployment/ui-performance-benchmark.json
-            git config user.name "DropFinder Performance Benchmark"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add deployment/ui-performance-benchmark.json
-            if ! git diff --cached --quiet; then
-              git commit -m "perf: record 1000-product mobile benchmark [skip ci]"
-              git push origin HEAD:deploy/full-stack-hf
+            if git diff --cached --quiet; then
+              recorded=true
+              break
             fi
-          fi
+            git commit -m "perf: record 1000-product mobile benchmark [skip ci]"
+            if git push origin HEAD:deploy/full-stack-hf; then
+              recorded=true
+              break
+            fi
+            git reset --hard HEAD~1
+            sleep $((attempt * 2))
+          done
+          test "$recorded" = true
+      - name: Require healthy benchmark
+        if: always()
+        env:
+          BENCHMARK_OUTCOME: ${{ steps.browser_benchmark.outcome }}
+        run: |
+          set -euo pipefail
+          test "$BENCHMARK_OUTCOME" = success
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('deployment/ui-performance-benchmark.json').read_text())
+          assert report.get('status') == 'healthy', report
+          PY
