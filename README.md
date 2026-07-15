@@ -4,9 +4,9 @@ DropFinder is a THCA flower-only product intelligence system with real storefron
 
 ## Live phone app
 
-**https://raw.githack.com/Chicken3veryDay/Drop-finder/gh-pages/index.html**
+**https://chicken3veryday.github.io/Drop-finder/**
 
-Open that URL in Safari or Chrome. On iPhone, use **Share → Add to Home Screen** to install it like an app.
+This GitHub Pages address is the canonical live URL. Open it in Safari or Chrome. On iPhone, use **Share → Add to Home Screen** to install it like an app.
 
 The deployed artifact is an isolated `gh-pages` publication branch containing the product catalog, filters, sorting, favorites, source-health drawer, web-app manifest, service worker, and offline cache. It requires no user computer, VM, payment method, cloud account, API credential, SSH key, domain, personal access token, or manually supplied secret.
 
