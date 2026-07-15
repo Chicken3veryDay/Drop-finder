@@ -51,16 +51,16 @@ jobs:
           python scripts/catalog_normalization.py --self-test
           python scripts/autonomous_worker_v6.py --self-test
           python scripts/autonomous_merge_complete.py --self-test
-          node --check <(python - <<'PY'
+          python - <<'PY'
           import re
           from pathlib import Path
           html = Path('cloud_pages/index.html').read_text(encoding='utf-8')
           scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
           if len(scripts) != 1:
               raise SystemExit('expected one inline application script')
-          print(scripts[0])
+          Path('/tmp/dropfinder-index.js').write_text(scripts[0], encoding='utf-8')
           PY
-          )
+          node --check /tmp/dropfinder-index.js
           test -s deploy/render/Dockerfile
           grep -q 'plan.*free' deploy/render/render_deploy.py
           grep -q 'DROPFINDER_ASGI_APP=render_space_app:app' deploy/render/Dockerfile
