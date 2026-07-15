@@ -32,7 +32,7 @@ await engine.initialize('e2e-generation-1', products);
 virtual.subscribe(() => renderRows());
 viewer.subscribe(state => { if (state.status === 'closed') overlay.hidden = true; void renderDocument(state); });
 pwa.subscribe(event => { eventLog.push(event); status.textContent = `PWA event: ${event.type}`; });
-try { await pwa.register('./sw-fixture.js', { scope: './' }); } catch (error) { eventLog.push({ type: 'registration-error', message: error.message }); }
+try { await pwa.register('/e2e-sw.js', { scope: '/' }); } catch (error) { eventLog.push({ type: 'registration-error', message: error.message }); }
 
 async function runQuery({ preserveAnchor = false, append = false, offset = 0 } = {}) {
   const selectedWeight = weight.value ? Number(weight.value) : null;
@@ -88,9 +88,14 @@ function renderRows() {
     article.append(details);
     article.querySelector('[data-action="expand"]').addEventListener('click', event => {
       expandedProductId = expanded ? null : row.productId;
-      virtual.measure(row.productId, expanded ? 96 : 220);
-      renderRows();
-      requestAnimationFrame(() => articleFor(row.productId)?.querySelector('[data-action="expand"]')?.focus());
+      const measured = virtual.measure(row.productId, expanded ? 96 : 220);
+      if (!measured) renderRows();
+      const anchoredScrollTop = virtual.viewport.scrollTop;
+      requestAnimationFrame(() => {
+        viewport.scrollTop = anchoredScrollTop;
+        articleFor(row.productId)?.querySelector('[data-action="expand"]')?.focus({ preventScroll: true });
+        requestAnimationFrame(() => { viewport.scrollTop = anchoredScrollTop; });
+      });
       event.stopPropagation();
     });
     article.querySelector('[data-action="document"]').addEventListener('click', event => openPdf(row, event.currentTarget));
