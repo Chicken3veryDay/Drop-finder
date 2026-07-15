@@ -1,0 +1,511 @@
+/*
+ * Responsive presentation for the existing desktop marketplace.
+ *
+ * This file is intentionally additive. It does not introduce a mobile-only
+ * component tree or alter marketplace state, filtering, sorting, variant
+ * selection, virtualization, or document behavior.
+ */
+
+@media (max-width: 56.25rem) {
+  html,
+  body,
+  #root {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .app-shell {
+    min-height: 100dvh;
+  }
+
+  .app-header {
+    min-height: calc(3.25rem + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+    padding-right: max(var(--content-inline), env(safe-area-inset-right));
+    padding-left: max(var(--content-inline), env(safe-area-inset-left));
+  }
+
+  .marketplace {
+    width: 100%;
+    min-width: 0;
+    padding-top: var(--space-4);
+    padding-right: max(var(--content-inline), env(safe-area-inset-right));
+    padding-bottom: calc(var(--space-12) + env(safe-area-inset-bottom));
+    padding-left: max(var(--content-inline), env(safe-area-inset-left));
+  }
+
+  .app-shell .df-marketplace {
+    --df-control-height: 2.75rem;
+    min-width: 0;
+    font-size: 0.875rem;
+  }
+
+  .app-shell .df-search-wrap {
+    padding-bottom: 0.75rem;
+  }
+
+  .app-shell .df-search {
+    min-height: 2.75rem;
+    height: 2.75rem;
+    padding-inline: 0.875rem;
+    font-size: 1rem;
+  }
+
+  .app-shell .df-filter-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 0.5rem;
+    overflow: visible;
+    padding-bottom: 0.75rem;
+  }
+
+  .app-shell .df-filter-separator {
+    display: none;
+  }
+
+  .app-shell .df-multiselect,
+  .app-shell .df-multiselect summary,
+  .app-shell .df-sort,
+  .app-shell .df-sort select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-shell .df-multiselect summary,
+  .app-shell .df-sort select {
+    min-height: var(--df-control-height);
+    height: var(--df-control-height);
+  }
+
+  .app-shell .df-multiselect[open] {
+    grid-column: 1 / -1;
+  }
+
+  .app-shell .df-multiselect-menu {
+    position: static;
+    width: 100%;
+    min-width: 0;
+    max-height: min(19rem, 45dvh);
+    margin-top: 0.4rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+    box-shadow: none;
+  }
+
+  .app-shell .df-multiselect-menu label {
+    min-height: 2.75rem;
+    padding: 0.55rem 0.6rem;
+  }
+
+  .app-shell .df-range {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(4.75rem, 0.65fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 0.35rem;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-shell .df-range legend {
+    float: none;
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    align-self: center;
+  }
+
+  .app-shell .df-range label {
+    align-self: center;
+  }
+
+  .app-shell .df-range-input {
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    min-width: 0;
+    height: var(--df-control-height);
+  }
+
+  .app-shell .df-range-input input {
+    min-width: 0;
+    font-size: 1rem;
+  }
+
+  .app-shell .df-sort {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .app-shell .df-result-header {
+    min-height: 2.4rem;
+    padding-inline: 0.1rem;
+  }
+
+  .app-shell .df-column-header {
+    display: none;
+  }
+
+  .app-shell .df-list {
+    display: grid;
+    gap: 0.625rem;
+  }
+
+  .app-shell .df-product {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--df-border);
+    border-radius: 0.45rem;
+  }
+
+  .app-shell .df-product:hover,
+  .app-shell .df-product:focus-within,
+  .app-shell .df-product[data-expanded] {
+    border-color: var(--df-border-strong);
+  }
+
+  .app-shell .df-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "strain strain"
+      "vendor vendor"
+      "lineage lineage"
+      "thc weight"
+      "price ppg"
+      "rating rating";
+    gap: 0;
+    min-width: 0;
+    min-height: 0;
+    padding: 0.55rem 0.65rem 0.65rem;
+  }
+
+  .app-shell .df-cell {
+    display: grid;
+    align-content: start;
+    gap: 0.18rem;
+    min-width: 0;
+    padding: 0.35rem 0.4rem;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .app-shell .df-cell::before {
+    content: attr(data-label);
+    color: var(--df-subtle);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.025em;
+    line-height: 1.2;
+    text-transform: none;
+  }
+
+  .app-shell .df-vendor { grid-area: vendor; }
+  .app-shell .df-strain { grid-area: strain; font-size: 1rem; line-height: 1.3; }
+  .app-shell .df-lineage { grid-area: lineage; }
+  .app-shell .df-thc { grid-area: thc; text-align: left; }
+  .app-shell .df-weight { grid-area: weight; text-align: left; }
+  .app-shell .df-price { grid-area: price; text-align: left; }
+  .app-shell .df-ppg { grid-area: ppg; text-align: left; color: var(--df-muted); }
+  .app-shell .df-rating { grid-area: rating; display: grid; text-align: left; }
+
+  .app-shell .df-vendor-identity {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-shell .df-vendor-identity > span:last-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .app-shell .df-price-block {
+    flex-wrap: wrap;
+    row-gap: 0.15rem;
+  }
+
+  .app-shell .df-expanded {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 0.42fr) minmax(0, 1fr);
+    gap: 0.8rem;
+    min-width: 0;
+    min-height: 0;
+    padding: 0.85rem 0.75rem 0.95rem;
+  }
+
+  .app-shell .df-expanded-image {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: start;
+    min-width: 0;
+    min-height: 6.5rem;
+    max-height: 8rem;
+    border: 1px solid color-mix(in srgb, var(--df-border) 78%, transparent);
+    border-radius: 0.35rem;
+    background: rgb(0 0 0 / 10%);
+  }
+
+  .app-shell .df-expanded-image img {
+    max-height: 8rem;
+  }
+
+  .app-shell .df-expanded-meta {
+    grid-column: 2;
+    grid-row: 1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  .app-shell .df-expanded-meta label {
+    grid-column: 1 / -1;
+  }
+
+  .app-shell .df-expanded-meta select {
+    width: 100%;
+    min-width: 0;
+    min-height: 2.75rem;
+    font-size: 1rem;
+  }
+
+  .app-shell .df-expanded-facts {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  .app-shell .df-expanded-facts strong {
+    overflow-wrap: anywhere;
+  }
+
+  .app-shell .df-expanded-actions {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .app-shell .df-expanded-actions a,
+  .app-shell .df-expanded-actions button,
+  .app-shell .df-state button,
+  .app-shell .df-document-panel button,
+  .app-shell .df-document-panel a {
+    min-width: 0;
+    min-height: 2.75rem;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .app-shell .df-skeleton-list {
+    display: grid;
+    gap: 0.625rem;
+  }
+
+  .app-shell .df-skeleton-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: 10rem;
+    overflow: hidden;
+    border: 1px solid var(--df-border);
+    border-radius: 0.45rem;
+  }
+
+  .app-shell .df-document-backdrop {
+    align-items: stretch;
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+  }
+
+  .app-shell .df-document-panel {
+    width: 100%;
+    height: calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)));
+    max-height: none;
+    min-width: 0;
+  }
+
+  .app-shell .df-document-panel > header {
+    flex-wrap: wrap;
+    align-items: center;
+    min-width: 0;
+    gap: 0.5rem;
+    padding: 0.65rem;
+  }
+
+  .app-shell .df-document-panel > header > strong {
+    flex: 1 1 12rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .app-shell .df-document-panel > header > span {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  .app-shell .df-document-content {
+    min-width: 0;
+    min-height: 0;
+    padding: 0.75rem;
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 33.75rem) {
+  .app-header {
+    gap: var(--space-3);
+  }
+
+  .app-section {
+    padding-left: var(--space-3);
+  }
+
+  .app-shell .df-filter-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .df-multiselect[open],
+  .app-shell .df-range,
+  .app-shell .df-sort {
+    grid-column: 1;
+  }
+
+  .app-shell .df-range {
+    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+    row-gap: 0.35rem;
+  }
+
+  .app-shell .df-range legend {
+    grid-column: 1 / -1;
+  }
+
+  .app-shell .df-row {
+    padding-inline: 0.45rem;
+  }
+
+  .app-shell .df-expanded {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .df-expanded-image,
+  .app-shell .df-expanded-meta,
+  .app-shell .df-expanded-facts,
+  .app-shell .df-expanded-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .app-shell .df-expanded-image {
+    width: 100%;
+    min-height: 9rem;
+    max-height: 12rem;
+  }
+
+  .app-shell .df-expanded-image img {
+    max-height: 12rem;
+  }
+
+  .app-shell .df-expanded-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .df-document-backdrop {
+    padding: 0;
+  }
+
+  .app-shell .df-document-panel {
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .app-shell .df-document-panel > header {
+    padding-top: max(0.65rem, env(safe-area-inset-top));
+    padding-right: max(0.65rem, env(safe-area-inset-right));
+    padding-left: max(0.65rem, env(safe-area-inset-left));
+  }
+
+  .app-shell .df-document-content {
+    padding-right: max(0.65rem, env(safe-area-inset-right));
+    padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+    padding-left: max(0.65rem, env(safe-area-inset-left));
+  }
+}
+
+@media (max-width: 24rem) {
+  .app-header {
+    min-height: calc(3rem + env(safe-area-inset-top));
+  }
+
+  .wordmark {
+    font-size: 1.08rem;
+  }
+
+  .app-section {
+    font-size: 0.78rem;
+  }
+
+  .app-shell .df-row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "strain"
+      "vendor"
+      "lineage"
+      "thc"
+      "weight"
+      "price"
+      "ppg"
+      "rating";
+  }
+
+  .app-shell .df-expanded-meta,
+  .app-shell .df-expanded-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .df-expanded-meta label,
+  .app-shell .df-expanded-meta > div:last-child {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 56.25rem) and (pointer: coarse) {
+  .app-shell .df-marketplace summary,
+  .app-shell .df-marketplace select,
+  .app-shell .df-marketplace button,
+  .app-shell .df-expanded-actions a,
+  .app-shell .df-document-panel a {
+    min-height: 2.75rem;
+  }
+
+  .app-shell .df-multiselect-menu label {
+    min-height: 2.75rem;
+  }
+}
+
+@media (max-width: 56.25rem) and (orientation: landscape) and (max-height: 31rem) {
+  .app-shell .df-multiselect-menu {
+    max-height: 48dvh;
+  }
+
+  .app-shell .df-document-panel {
+    height: calc(100dvh - max(0.5rem, env(safe-area-inset-top)) - max(0.5rem, env(safe-area-inset-bottom)));
+  }
+}
+
+@media (max-width: 56.25rem) and (forced-colors: active) {
+  .app-shell .df-product,
+  .app-shell .df-expanded-image {
+    border-color: CanvasText;
+  }
+}

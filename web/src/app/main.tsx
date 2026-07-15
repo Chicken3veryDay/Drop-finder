@@ -4,6 +4,7 @@ import { AppShell } from "./AppShell";
 import { featureRegistry } from "./featureRegistry";
 import { registerServiceWorker } from "./registerServiceWorker";
 import "../styles/index.css";
+import "../features/marketplace/marketplace-mobile-parity.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root application mount.");

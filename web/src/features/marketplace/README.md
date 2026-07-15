@@ -1,31 +1,31 @@
 # DropFinder marketplace feature
 
-This directory is the isolated Issue #8 marketplace package. It owns shopper-facing search, filters, sorting, compact rows, inline expansion, responsive mobile rendering, and document-action wiring. It does not own catalog generation, vendor research, application-shell tokens, virtualization, PWA behavior, or PDF rendering.
+This directory owns the shopper-facing marketplace feature: search, filters, sorting, compact rows, inline expansion, responsive presentation, and document-action wiring. It does not own catalog generation, vendor research, application-shell tokens, virtualization, PWA behavior, or PDF rendering.
 
 ## Public entry points
 
 - `MarketplaceFeature`: React primary surface.
-- `marketplaceFeatureModule`: issue #5 feature-registration object (`id: marketplace`, `kind: primary`, version 1).
+- `marketplaceFeatureModule`: feature-registration object (`id: marketplace`, `kind: primary`, version 1).
 - `queryMarketplace`: deterministic feature-local fallback query implementation.
 - `MarketplaceFeatureProps`: integration contract for catalog data, lazy details, platform query execution, document viewing, and virtualization.
 
 ## Sibling contracts
 
-### Issue #5 foundation
+### Foundation
 
-The module expects React and the shared dark design tokens. Every CSS variable has a dark local fallback so this branch can be reviewed independently. The final integrator should register the default export through the foundation feature registry without editing this package.
+The module expects React and the shared dark design tokens. Every CSS variable has a dark local fallback so the feature can be reviewed independently. The feature is registered through the foundation feature registry.
 
-### Issue #6 catalog v4
+### Catalog v4
 
 Map the compact catalog index into `MarketplaceProduct[]`. Pass detail shards through `detailsByProductId` or `loadDetail`. Only explicitly in-stock variants are accepted. The UI does not rewrite strain identity, calculate Total THC, infer lineage/effects, or repair pricing.
 
-### Issue #7 vendor/document data
+### Vendor and document data
 
 Map weight/variant-specific COA and terpene records directly onto each `MarketplaceVariant`. Document identity is never guessed by display order.
 
-### Issue #9 platform
+### Platform
 
-Pass the platform `MarketplaceQueryCapability`, `DocumentViewerCapability`, and `VirtualMarketplaceAdapter` through props. The feature-local document overlay is a safe fallback: images render directly, while PDF/HTML/unsupported documents offer the original public source. Full PDF navigation/zoom belongs to issue #9.
+Pass the platform `MarketplaceQueryCapability`, `DocumentViewerCapability`, and `VirtualMarketplaceAdapter` through props. The feature-local document overlay is a safe fallback: images render directly, while PDF/HTML/unsupported documents offer the original public source. Full PDF navigation and zoom belong to the platform capability.
 
 ## Behavior guarantees
 
@@ -37,32 +37,24 @@ Pass the platform `MarketplaceQueryCapability`, `DocumentViewerCapability`, and 
 - Invalid or non-positive price/weight/PPG records are not rendered.
 - Potency is rounded to a whole percent and never exposes the raw laboratory field name.
 - Only one row is expanded at a time, and expansion closes when filtering removes the product.
-- Desktop uses a continuous aligned row list. Mobile switches to a purpose-built two-line layout instead of horizontally scrolling the desktop grid.
+- Desktop and mobile use the same row, filter, detail, and state components. Responsive CSS reflows the existing desktop fields without creating a separate mobile product surface.
+- Mobile preserves all eight desktop row fields, their labels, ordering, formatting, and actions.
 - `/` focuses search. Escape clears search first, then blurs it. Enter and Space toggle rows.
 - Reduced motion, forced colors, visible focus, result announcements, focus restoration, and modal focus trapping are included.
 
+The complete responsive contract and acceptance matrix are documented in [`docs/MOBILE_DESKTOP_PARITY_BUILD_SPEC.md`](../../../../docs/MOBILE_DESKTOP_PARITY_BUILD_SPEC.md).
+
 ## Local validation
 
-The package deliberately avoids owning the root frontend lockfile. In a checkout with Node and TypeScript available:
+From `web/` in a checkout with Node 22 or newer:
 
 ```bash
-tsc -p web/src/features/marketplace/tsconfig.json
-rm -rf .tmp-marketplace-tests
-mkdir -p .tmp-marketplace-tests
-
-tsc \
-  --target ES2022 \
-  --module NodeNext \
-  --moduleResolution NodeNext \
-  --strict \
-  --skipLibCheck \
-  --outDir .tmp-marketplace-tests \
-  web/src/features/marketplace/test/node-shim.d.ts \
-  web/src/features/marketplace/marketplace-core.ts \
-  web/src/features/marketplace/test/fixtures.ts \
-  web/src/features/marketplace/test/marketplace-core.test.ts
-
-node --test .tmp-marketplace-tests/test/marketplace-core.test.js
+npm ci
+npm run lint
+npm run typecheck
+npm test
+npm run test:e2e
+npm run build
 ```
 
-Browser component, visual-regression, mobile Safari/Chrome, and real document-capability tests must run after the issue #5 and #9 branches are integrated. This isolated branch intentionally does not take ownership of their React/Vite/Playwright lockfile or platform runtime, so those checks are not represented as passed here.
+The Playwright matrix includes desktop Chromium, Firefox, WebKit, Pixel 7 Chromium, and iPhone WebKit. The integrated mobile test checks desktop-field parity, filter availability, inline expansion, touch-target sizing, accessibility, bounded virtualization, and document-level overflow.
