@@ -19,7 +19,7 @@ export class CatalogGenerationClient {
     this.options = { ...DEFAULTS, ...options };
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
     if (!this.fetchImpl) throw new PlatformError('fetch_unavailable', 'Fetch is unavailable');
-    this.cache = options.cache ?? new MemoryGenerationCache();
+    this.cache = options.cache ?? createDefaultGenerationCache(options.cacheName);
     this.active = null;
     this.pending = null;
     this.inflight = new Map();
@@ -36,7 +36,8 @@ export class CatalogGenerationClient {
     return this.active;
   }
 
-  async initialize({ signal } = {}) {
+  async initialize({ signal, force = false } = {}) {
+    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) return this.active;
     try {
       return await this.refresh({ signal, allowCachedFallback: true });
     } catch (error) {
@@ -188,6 +189,31 @@ export class CatalogGenerationClient {
     }
     throw lastError;
   }
+}
+
+export class BrowserGenerationCache {
+  constructor(options = {}) {
+    this.cacheName = options.cacheName ?? 'dropfinder-client-generation-v1';
+    this.key = new URL('/__dropfinder__/last-complete.json', globalThis.location?.origin ?? 'https://dropfinder.invalid').href;
+  }
+  async getLastComplete() {
+    try {
+      const cache = await globalThis.caches.open(this.cacheName);
+      const response = await cache.match(this.key);
+      if (!response) return null;
+      const value = await response.json();
+      if (!value?.generationId || !value?.manifest || !value?.index) return null;
+      return Object.freeze(value);
+    } catch { return null; }
+  }
+  async putComplete(value) {
+    const cache = await globalThis.caches.open(this.cacheName);
+    await cache.put(this.key, new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } }));
+  }
+}
+
+export function createDefaultGenerationCache(cacheName) {
+  return globalThis.caches?.open ? new BrowserGenerationCache({ cacheName }) : new MemoryGenerationCache();
 }
 
 export class MemoryGenerationCache {

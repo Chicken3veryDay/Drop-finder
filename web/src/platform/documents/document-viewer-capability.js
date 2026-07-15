@@ -1,4 +1,5 @@
 import { PlatformError } from '../contracts.js';
+import { loadPdfJsRuntime } from './pdfjs-loader.js';
 
 const DEFAULTS = Object.freeze({
   maxBytes: 20 * 1024 * 1024,
@@ -14,7 +15,7 @@ export class DocumentViewerCapability {
   constructor(options = {}) {
     this.options = { ...DEFAULTS, ...options };
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
-    this.loadPdfJs = options.loadPdfJs ?? (() => import('pdfjs-dist/build/pdf.mjs'));
+    this.loadPdfJs = options.loadPdfJs ?? (() => loadPdfJsRuntime({ workerSrc: options.pdfWorkerUrl }));
     this.state = closedState();
     this.listeners = new Set();
     this.session = null;
@@ -32,10 +33,10 @@ export class DocumentViewerCapability {
     this.lockScroll();
     const controller = new AbortController();
     const sessionId = cryptoRandomId();
-    this.session = { id: sessionId, controller, pdf: null, renderTask: null, objectUrl: null };
+    this.session = { id: sessionId, controller, loadingTask: null, pdf: null, renderTask: null, objectUrl: null };
     this.setState({
       status: 'loading', type, documentRef, context, page: 1, pages: null,
-      scale: this.options.initialScale, fitWidth: true, error: null, sessionId,
+      scale: this.options.initialScale, fitWidth: true, displayUrl: null, error: null, sessionId,
     });
     try {
       if (type === 'pdf') await this.openPdf(documentRef, sessionId, controller.signal);
@@ -60,6 +61,7 @@ export class DocumentViewerCapability {
     const pdfjs = await this.loadPdfJs();
     if (signal.aborted || sessionId !== this.session?.id) return;
     const task = pdfjs.getDocument({ data: bytes, isEvalSupported: false, useWorkerFetch: false });
+    this.session.loadingTask = task;
     const pdf = await task.promise;
     if (pdf.numPages > this.options.maxPages) {
       await pdf.destroy();
@@ -71,14 +73,20 @@ export class DocumentViewerCapability {
 
   async openImage(documentRef, sessionId, signal) {
     if (!this.fetchImpl) {
-      this.setState({ ...this.state, status: 'ready' });
+      this.setState({ ...this.state, status: 'ready', displayUrl: documentRef.url });
       return;
     }
-    const response = await this.fetchImpl(documentRef.url, { signal, method: 'HEAD', credentials: 'omit', referrerPolicy: 'no-referrer' });
+    const response = await this.fetchImpl(documentRef.url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
     const length = Number(response.headers.get('content-length'));
     if (Number.isFinite(length) && length > this.options.maxBytes) throw new PlatformError('document_oversized', 'Image is too large');
-    if (!response.ok && response.status !== 405) throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
-    if (sessionId === this.session?.id) this.setState({ ...this.state, status: 'ready' });
+    if (!response.ok) throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > this.options.maxBytes) throw new PlatformError('document_oversized', 'Image is too large');
+    if (sessionId !== this.session?.id || signal.aborted) return;
+    const blob = new Blob([bytes], { type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream' });
+    const objectUrl = URL.createObjectURL(blob);
+    this.session.objectUrl = objectUrl;
+    this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
   }
 
   async renderPage(canvas, { page = this.state.page, fitWidth = this.state.fitWidth, scale = this.state.scale } = {}) {
@@ -97,6 +105,7 @@ export class DocumentViewerCapability {
     canvas.style.width = `${Math.ceil(viewport.width)}px`;
     canvas.style.height = `${Math.ceil(viewport.height)}px`;
     const context = canvas.getContext('2d', { alpha: false });
+    if (!context) throw new PlatformError('canvas_unavailable', 'Canvas rendering is unavailable');
     session.renderTask = pdfPage.render({ canvasContext: context, viewport, transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0] });
     await session.renderTask.promise;
     pdfPage.cleanup();
@@ -120,7 +129,8 @@ export class DocumentViewerCapability {
     if (session) {
       session.controller.abort('Document viewer closed');
       try { session.renderTask?.cancel?.(); } catch {}
-      try { await session.pdf?.destroy?.(); } catch {}
+      try { await session.loadingTask?.destroy?.(); } catch {}
+      try { await session.pdf?.cleanup?.(); } catch {}
       if (session.objectUrl) URL.revokeObjectURL(session.objectUrl);
     }
     this.unlockScroll();
@@ -182,6 +192,6 @@ function conciseDocumentError(error) {
   };
   return { code, message: messages[code] ?? 'This document could not be opened.', action: 'open-original' };
 }
-function closedState() { return Object.freeze({ status: 'closed', type: null, documentRef: null, context: null, page: 1, pages: null, scale: 1, fitWidth: true, error: null, sessionId: null }); }
+function closedState() { return Object.freeze({ status: 'closed', type: null, documentRef: null, context: null, page: 1, pages: null, scale: 1, fitWidth: true, displayUrl: null, error: null, sessionId: null }); }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function cryptoRandomId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`; }

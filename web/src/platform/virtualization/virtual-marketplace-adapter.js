@@ -31,10 +31,10 @@ export class VirtualMarketplaceAdapter {
 
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 
-  replace({ rows, total, version, preserveAnchor = false }) {
+  replace({ rows, total, version, queryKey = null, preserveAnchor = false }) {
     if (!Array.isArray(rows)) throw new PlatformError('invalid_rows', 'Virtualized rows must be an array');
     const priorAnchor = preserveAnchor ? this.captureAnchor() : null;
-    this.resultVersion = version;
+    this.resultVersion = queryKey ?? version;
     this.totalCount = Math.max(rows.length, Number(total) || 0);
     this.items = dedupe(rows);
     this.itemByKey = new Map(this.items.map((row, index) => [keyOf(row), { row, index }]));
@@ -47,28 +47,17 @@ export class VirtualMarketplaceAdapter {
     this.emit('replace');
   }
 
-  appendPage(offset, rows, version = this.resultVersion) {
-    if (version !== this.resultVersion) return false;
+  appendPage(offset, rows, identity = this.resultVersion) {
+    if (identity !== this.resultVersion) return false;
     if (this.loadedPages.has(offset)) return false;
     const priorAnchor = this.captureAnchor();
     this.loadedPages.set(offset, dedupe(rows));
-    const merged = [];
-    const seen = new Set();
-    for (const [, page] of [...this.loadedPages].sort((a, b) => a[0] - b[0])) {
-      for (const row of page) {
-        const key = keyOf(row);
-        if (!seen.has(key)) { seen.add(key); merged.push(row); }
-      }
-    }
-    this.items = merged;
-    this.itemByKey = new Map(this.items.map((row, index) => [keyOf(row), { row, index }]));
     while (this.loadedPages.size > this.options.maxRetainedPages) {
-      const first = this.loadedPages.keys().next().value;
-      if (first === 0) {
-        const entries = [...this.loadedPages.keys()];
-        this.loadedPages.delete(entries[1]);
-      } else this.loadedPages.delete(first);
+      const removable = [...this.loadedPages.keys()].find(pageOffset => pageOffset !== 0 && pageOffset !== offset);
+      if (removable == null) break;
+      this.loadedPages.delete(removable);
     }
+    this.rebuildItemsFromPages();
     this.rebuildOffsets();
     this.restoreAnchor(priorAnchor);
     this.emit('append');
@@ -80,12 +69,26 @@ export class VirtualMarketplaceAdapter {
     if (this.pageRequests.has(offset)) return this.pageRequests.get(offset);
     const request = Promise.resolve(loader(offset, this.options.pageSize))
       .then(result => {
-        this.appendPage(offset, result.rows, result.version);
+        this.appendPage(offset, result.rows, result.queryKey ?? result.version);
         return result.rows;
       })
       .finally(() => this.pageRequests.delete(offset));
     this.pageRequests.set(offset, request);
     return request;
+  }
+
+
+  rebuildItemsFromPages() {
+    const merged = [];
+    const seen = new Set();
+    for (const [, page] of [...this.loadedPages].sort((a, b) => a[0] - b[0])) {
+      for (const row of page) {
+        const key = keyOf(row);
+        if (!seen.has(key)) { seen.add(key); merged.push(row); }
+      }
+    }
+    this.items = merged;
+    this.itemByKey = new Map(this.items.map((row, index) => [keyOf(row), { row, index }]));
   }
 
   setViewport(scrollTop, height) {

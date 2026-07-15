@@ -11,6 +11,7 @@ const DEFAULTS = Object.freeze({
   syncFallbackLimit: 10_000,
   pageSize: 120,
   maxQueuedRequests: 2,
+  maxWorkerRestarts: 1,
 });
 
 /** Worker-first deterministic filtering over a compact immutable index. */
@@ -24,6 +25,7 @@ export class MarketplaceQueryEngine {
     this.requestVersion = 0;
     this.pending = new Map();
     this.crashCount = 0;
+    this.workerRestarts = 0;
     this.mode = 'uninitialized';
   }
 
@@ -38,10 +40,7 @@ export class MarketplaceQueryEngine {
       this.worker = null;
     }
     if (this.worker) {
-      this.mode = 'worker';
-      this.worker.onmessage = event => this.handleWorkerMessage(event.data);
-      this.worker.onerror = () => this.handleWorkerCrash();
-      this.worker.postMessage({ type: 'initialize', generationId, rows: this.rows });
+      this.attachWorker(this.worker);
     } else {
       this.mode = 'sync';
       if (this.rows.length > this.options.syncFallbackLimit) {
@@ -95,8 +94,26 @@ export class MarketplaceQueryEngine {
     for (const deferred of this.pending.values()) deferred.reject(new PlatformError('worker_crashed', 'Marketplace worker crashed'));
     this.pending.clear();
     this.disposeWorker();
+    if (this.workerRestarts < this.options.maxWorkerRestarts) {
+      try {
+        const replacement = this.workerFactory?.();
+        if (replacement) {
+          this.workerRestarts += 1;
+          this.attachWorker(replacement);
+          return;
+        }
+      } catch {}
+    }
     if (this.rows.length <= this.options.syncFallbackLimit) this.mode = 'sync';
     else this.mode = 'failed';
+  }
+
+  attachWorker(worker) {
+    this.worker = worker;
+    this.mode = 'worker';
+    worker.onmessage = event => this.handleWorkerMessage(event.data);
+    worker.onerror = () => this.handleWorkerCrash();
+    worker.postMessage({ type: 'initialize', generationId: this.generationId, rows: this.rows });
   }
 
   disposeWorker() {
@@ -111,6 +128,7 @@ export class MarketplaceQueryEngine {
     this.rows = [];
     this.generationId = null;
     this.mode = 'disposed';
+    this.workerRestarts = 0;
   }
 }
 
@@ -137,11 +155,26 @@ export function executeQuery(rows, request, version = 0, generationId = 'fixture
   return Object.freeze({
     generationId,
     version,
+    queryKey: queryIdentity(request),
     total: selected.length,
     offset,
     nextOffset: offset + page.length < selected.length ? offset + page.length : null,
     expandedProductId,
     rows: page,
+  });
+}
+
+
+function queryIdentity(request) {
+  return JSON.stringify({
+    search: request.search.toLocaleLowerCase(),
+    vendors: [...request.vendors].sort(),
+    lineages: [...request.lineages].sort(),
+    minTotalThc: request.minTotalThc, maxTotalThc: request.maxTotalThc,
+    minWeight: request.minWeight, maxWeight: request.maxWeight,
+    minPrice: request.minPrice, maxPrice: request.maxPrice,
+    minPpg: request.minPpg, maxPpg: request.maxPpg,
+    sort: request.sort,
   });
 }
 

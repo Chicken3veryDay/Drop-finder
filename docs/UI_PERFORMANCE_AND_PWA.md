@@ -1,73 +1,87 @@
 # DropFinder UI performance, documents, and PWA platform
 
-## Scope
+## Scope and public interfaces
 
-This workstream provides headless platform capabilities for the issue #8 marketplace and the issue #5 capability registry. It deliberately does not own marketplace markup, shell styling, catalog generation, or vendor/document discovery.
+This isolated workstream supplies headless platform capabilities for issue #8 through issue #5's versioned registration seam. It does not own marketplace markup, catalog generation, seller research, or global design tokens.
 
-Public modules:
+- `CatalogGenerationClient`: manifest-first atomic activation, schema/generation/hash validation, abortable bounded fetches, concurrent-request deduplication, persistent last-complete fallback, and bounded detail LRU.
+- `MarketplaceQueryEngine`: one-time compact-index transfer to a dedicated worker, deterministic search/filter/sort, stable pagination identity, stale-response rejection, one bounded worker restart, and an honest limited synchronous fallback.
+- `VirtualMarketplaceAdapter`: variable-height measurement, bounded rendered windows and retained pages, duplicate suppression, stable scroll anchors, focus retention, and complete-result accessibility counts.
+- `DocumentViewerCapability`: real lazy PDF.js rendering with a dedicated worker, images, external-only HTML, unsupported fallbacks, bounded bytes/pages/scale, render cancellation, resource release, focus trapping/restoration, and scroll locking.
+- `PwaGenerationCoordinator`: typed service-worker registration and quiet complete-generation update events without forced reloads.
+- `createSyntheticCatalog`: deterministic 1,000/10,000/50,000-product fixtures with four variants and mixed optional detail/document metadata.
 
-- `CatalogGenerationClient`: atomic manifest/index activation, generation consistency, request cancellation and deduplication, bounded retries, bounded detail-shard LRU, and last-complete cache fallback.
-- `MarketplaceQueryEngine`: versioned worker protocol, deterministic filters/sorts, active-variant selection, stale-result rejection, and a limited synchronous fallback.
-- `VirtualMarketplaceAdapter`: variable-height measurement, anchor preservation, bounded windows, page deduplication, focus retention, and complete-result accessibility counts.
-- `DocumentViewerCapability`: lazy PDF.js loading through an injected loader, bounded fetch/page/render state, cancellation, focus trap, scroll lock, focus restoration, images, external HTML, and original-link fallback states.
-- `PwaGenerationCoordinator`: typed service-worker registration and complete-generation update events without forced reloads.
+All registration descriptors use `PLATFORM_CONTRACT_VERSION = 1`. Catalog manifests currently require schema version 4.
 
-All public contracts use `PLATFORM_CONTRACT_VERSION = 1`. Catalog data currently expects schema version 4.
+## Catalog and generation contract
 
-## Catalog publication contract
+A v4 manifest contains an immutable `generation_id`, compact index descriptor, declared byte counts and SHA-256 hashes, plus optional vendor and detail descriptors. Index, vendor, detail, and document metadata must agree on that generation. The client never publishes a new generation until its manifest and index validate, never combines detail data from a different generation, and preserves current rows while a quiet refresh runs.
 
-A manifest must include:
-
-```json
-{
-  "schema_version": 4,
-  "generation_id": "immutable-generation-id",
-  "index": {"url": "catalog-index.json", "bytes": 1234, "sha256": "..."},
-  "details": {
-    "product-id": {"url": "details/00.json", "bytes": 1234, "sha256": "..."}
-  }
-}
-```
-
-Every index/detail/vendor response must carry the same `generation_id` in its JSON envelope. The service worker additionally honors `X-DropFinder-Generation`. A mixed generation returns an explicit failure rather than silently combining snapshots.
-
-The static service worker keeps immutable shell assets separately from generated data. A new generation is prepared in a new cache, validated as complete, announced with `generation-ready`, and activated only after an application message. One prior complete generation remains until replacement activation. Detail shards are demand-cached and capped. Documents are cached only after explicit opening and only below 20 MiB.
+The browser cache stores only the last validated complete generation. Missing, malformed, oversized, aborted, hash-mismatched, and generation-mismatched assets fail with concise typed errors. Detail requests are deduplicated and capped at 64 retained shards by default.
 
 ## Query semantics
 
-Search is limited to vendor and strain. Supported lineage values are `indica`, `indica_hybrid`, `hybrid`, `sativa_hybrid`, `sativa`, and `unknown`.
+Search covers vendor and strain only. Supported lineages are `indica`, `indica_hybrid`, `hybrid`, `sativa_hybrid`, `sativa`, and `unknown`. Supported sorts are the exact marketplace set: price, price per gram, Total THC, strain name, and vendor name in both directions.
 
-Supported sorts are:
+The active variant within selected bounds is chosen by lowest price per gram, then lower total price, lower weight, and stable variant ID. Product and variant IDs provide deterministic final tie-breaks. A stable `queryKey` excludes page offset and request version so bounded endless pages from the same filter/sort can be combined without accepting stale pages from another query.
 
-- `lowest_price`, `highest_price`
-- `lowest_ppg`, `highest_ppg`
-- `highest_total_thc`, `lowest_total_thc`
-- `strain_az`, `strain_za`
-- `vendor_az`, `vendor_za`
+## PWA consistency
 
-The active variant is selected within weight/price/PPG bounds by lowest PPG, then lower total price, lower weight, and stable variant ID. Product ID and variant ID provide final stable sort tie-breaks. No fuzzy matching, recommendation, hidden score, or relevance ranking is present.
+`cloud_pages/app-shell.json` provides relative application-shell metadata. The service worker:
 
-## Performance budgets
+- caches shell metadata and relative assets separately from generated data;
+- prepares v4 manifest/index/vendor data in a generation-specific cache;
+- supports the current legacy `catalog.json` and `status.json` pair atomically during migration;
+- automatically activates only the first complete generation;
+- announces later complete generations and waits for explicit application activation;
+- keeps the active and one prior complete generation until replacement verification;
+- rejects cross-generation detail shards;
+- demand-caches at most 96 detail shards and 12 explicitly opened documents;
+- refuses oversized, opaque, private, cookie-bearing, or `no-store` document responses;
+- avoids install-time document precaching and forced reload loops.
 
-Run from `web/`:
+The manifest uses shopper marketplace wording, relative `start_url`/`scope`, dark-only colors, and no source-health/dashboard language.
+
+## Document security and limits
+
+`pdfjs-dist` is pinned to `6.1.200`. `pdfjs-loader.js` imports PDF.js only on first PDF open and configures the separately emitted PDF worker. The default limits are 20 MiB, 80 pages, scale 0.5 to 3, and device pixel ratio 2. Closing or replacing a document aborts network work, cancels rendering, destroys the PDF loading task, releases page resources, revokes image object URLs, unlocks scrolling, and restores invoking-control focus.
+
+Arbitrary seller HTML is never embedded. It is external-only. Unsupported, encrypted, malformed, oversized, unavailable, or blocked documents expose one concise original-document fallback. No proxy or analytics service receives document bytes.
+
+## Repeatable validation
+
+From `web/`:
 
 ```bash
 npm ci
 npm run validate
+npm run test:e2e:install
+npm run test:e2e
 ```
 
-The deterministic benchmark builds 1,000, 10,000, and 50,000 product compact indexes with four variants each. After warmup, seven samples are measured. CI safety ceilings are 100 ms at 1,000 and 10,000 rows and 250 ms at 50,000 rows for the combined query fixture. The virtualized window must remain at or below 20 rows for the benchmark viewport.
+`npm run validate` executes syntax/type checks, 20 unit/resilience tests, deterministic performance fixtures, a Vite production build, and chunk analysis. The current environment-qualified local run on Node 22/Linux passed with 11 maximum rendered rows at every size. Representative p95 results were:
 
-These are environment-qualified Node compute measurements, not claims about integrated paint or scrolling. Integrated browser checks belong to the Playwright suite after issues #5 and #8 are combined. The branch records Playwright as unavailable rather than manufacturing a passing shell URL.
+| Products | Combined query | Rapid typing | All sorts | Retained heap |
+|---:|---:|---:|---:|---:|
+| 1,000 | 0.48 ms | 3.05 ms | 2.79 ms | 2.15 MiB |
+| 10,000 | 2.28 ms | 18.22 ms | 16.37 ms | 19.43 MiB |
+| 50,000 | 12.11 ms | 155.48 ms | 141.00 ms | 85.84 MiB |
 
-## Document limits and security
+CI safety ceilings remain 100 ms at 10,000 products, 250 ms at 50,000 products, and 20 rendered rows. Parse time, fixture generation, scrolling-window work, expansion, catalog activation, detail first/cache-hit latency, and document-controller open time are also recorded. These Node compute measurements are not misrepresented as browser paint or frame timing.
 
-PDF.js is loaded only on first PDF open through `loadPdfJs`. The integrator should inject a pinned local PDF.js ESM build and worker path. The controller caps input at 20 MiB, 80 pages, scale 0.5 to 3, and device-pixel ratio 2. It cancels outstanding render tasks and destroys the PDF document when replaced or closed.
+The production build emits a roughly 35 KiB initial platform entry and separate lazy PDF.js chunks. Chunk analysis fails if PDF.js enters the initial marketplace entry or if the PDF worker is absent.
 
-Arbitrary HTML is never framed. It is classified `external-only`. Unsupported, encrypted, malformed, oversized, missing, or blocked documents produce one concise error with `open-original`. No proxy or analytics endpoint receives document bytes.
+## Browser, accessibility, and resilience evidence
 
-## Accessibility and resilience
+The self-contained Playwright harness uses the real worker, virtual adapter, pinned two-page PDF fixture, service worker, and headless document controller. It runs Chromium, Firefox, WebKit, and a mobile Chromium profile for:
 
-The virtualization contract reports the complete result count independently of rendered rows. Focused rows are scrolled into the retained window. The document controller provides Escape close, focus trapping, scroll lock without scrollbar jump, and focus restoration.
+- bounded endless scrolling over 10,000 products;
+- rapid search cancellation, exact sort, and weight changes;
+- expansion/collapse focus and scroll-anchor preservation;
+- real two-page PDF render, navigation, zoom, Escape close, and focus restoration;
+- unsupported-document fallback;
+- quiet service-worker updates without reload;
+- offline reload after complete shell caching;
+- axe-core scans of the shell, marketplace feed, and document dialog.
 
-The integration Playwright spec covers DOM bounds, rapid-query publication, document focus behavior, and offline reload. The final integrator must add axe-core scans against the issue #5 shell, filters, feed, expanded row, and dialog because those DOM elements do not exist in this isolated workstream.
+The managed local container blocks local URLs in its preinstalled Chromium and cannot resolve Playwright's browser CDN, so local browser execution is recorded as unavailable rather than passed. GitHub Actions installs the official browser binaries and runs the complete suite on the exact pushed commit.

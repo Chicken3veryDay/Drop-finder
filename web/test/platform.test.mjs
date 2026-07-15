@@ -7,6 +7,9 @@ import { VirtualMarketplaceAdapter } from '../src/platform/virtualization/virtua
 import { DocumentViewerCapability, classifyDocument } from '../src/platform/documents/document-viewer-capability.js';
 import { PwaGenerationCoordinator } from '../src/platform/pwa/pwa-generation-coordinator.js';
 import { registerPlatformCapabilities } from '../src/features/platform/register-platform-capabilities.js';
+import { loadPdfJsRuntime } from '../src/platform/documents/pdfjs-loader.js';
+import { createSyntheticCatalog } from '../src/platform/testing/fixture-factory.js';
+import { readFile } from 'node:fs/promises';
 
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
@@ -75,6 +78,19 @@ test('query engine chooses active variant by ppg then price, weight, stable id',
   assert.equal(result.rows[0].weight, 14);
   assert.equal(result.expandedProductId, 'p1');
   assert.deepEqual(result.rows.map(row => row.productId), ['p0', 'p1', 'p2', 'p3', 'p4']);
+});
+
+test('query pages share a stable identity while offsets and request versions change', async () => {
+  const engine = new MarketplaceQueryEngine({ workerFactory: () => null, syncFallbackLimit: 100 });
+  await engine.initialize('g1', fixtureProducts(40));
+  const first = await engine.query({ sort: 'lowest_ppg', offset: 0, limit: 10 });
+  const second = await engine.query({ sort: 'lowest_ppg', offset: 10, limit: 10 });
+  assert.notEqual(first.version, second.version);
+  assert.equal(first.queryKey, second.queryKey);
+  const adapter = new VirtualMarketplaceAdapter();
+  adapter.replace({ rows: first.rows, total: first.total, version: first.version, queryKey: first.queryKey });
+  assert.equal(adapter.appendPage(10, second.rows, second.queryKey), true);
+  assert.equal(adapter.items.length, 20);
 });
 
 test('query engine supersedes rapid synchronous queries', async () => {
@@ -162,4 +178,102 @@ test('feature registration exports all five versioned capabilities', () => {
   });
   assert.equal(Object.keys(capabilities).length, 5);
   assert.deepEqual([...registered.keys()], ['platform.catalog', 'platform.query', 'platform.virtualization', 'platform.documents', 'platform.pwa']);
+});
+
+
+test('catalog client rejects oversized and hash-mismatched assets', async () => {
+  const index = JSON.stringify({ generation_id: 'g1', products: [] });
+  const manifest = { schema_version: 4, generation_id: 'g1', index: { url: 'https://x/index.json', bytes: index.length, sha256: '0'.repeat(64) } };
+  const client = new CatalogGenerationClient({
+    manifestUrl: 'https://x/manifest.json', maxRetries: 0, maxIndexBytes: 1_024,
+    fetchImpl: async input => String(input).includes('manifest')
+      ? new Response(JSON.stringify(manifest), { headers: { 'content-type': 'application/json' } })
+      : new Response(index, { headers: { 'content-length': String(index.length) } }),
+  });
+  await assert.rejects(client.initialize(), error => error.code === 'hash_mismatch');
+
+  const oversized = new CatalogGenerationClient({
+    manifestUrl: 'https://x/manifest.json', maxRetries: 0, maxIndexBytes: 8,
+    fetchImpl: async input => String(input).includes('manifest')
+      ? new Response(JSON.stringify({ ...manifest, index: { url: 'https://x/index.json', bytes: 100 } }))
+      : new Response(index),
+  });
+  await assert.rejects(oversized.initialize(), error => error.code === 'asset_oversized');
+});
+
+test('catalog client honors abort signals before publication', async () => {
+  const controller = new AbortController();
+  const client = new CatalogGenerationClient({
+    manifestUrl: 'https://x/manifest.json', maxRetries: 0,
+    fetchImpl: async (_input, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    }),
+  });
+  const pending = client.initialize({ signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, error => error.name === 'AbortError');
+  assert.equal(client.snapshot(), null);
+});
+
+test('worker engine restarts once after a crash and reinitializes compact rows', async () => {
+  class FakeWorker {
+    constructor() { this.messages = []; }
+    postMessage(message) { this.messages.push(message); }
+    terminate() { this.terminated = true; }
+  }
+  const workers = [];
+  const engine = new MarketplaceQueryEngine({ workerFactory: () => { const worker = new FakeWorker(); workers.push(worker); return worker; } });
+  await engine.initialize('g1', fixtureProducts(4));
+  assert.equal(workers.length, 1);
+  workers[0].onerror(new Error('boom'));
+  assert.equal(workers.length, 2);
+  assert.equal(engine.mode, 'worker');
+  assert.equal(workers[1].messages[0].type, 'initialize');
+  engine.dispose();
+});
+
+test('virtual adapter evicts old pages from retained rows', () => {
+  const adapter = new VirtualMarketplaceAdapter({ maxRetainedPages: 3 });
+  adapter.replace({ rows: [{ productId: 'base' }], total: 20, version: 1 });
+  adapter.appendPage(1, [{ productId: 'p1' }]);
+  adapter.appendPage(2, [{ productId: 'p2' }]);
+  adapter.appendPage(3, [{ productId: 'p3' }]);
+  assert.equal(adapter.loadedPages.size, 3);
+  assert.equal(adapter.items.some(row => row.productId === 'p1'), false);
+  assert.deepEqual(adapter.items.map(row => row.productId), ['base', 'p2', 'p3']);
+});
+
+test('document viewer reports oversized and malformed PDFs honestly', async () => {
+  const oversized = new DocumentViewerCapability({
+    maxBytes: 2,
+    fetchImpl: async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-length': '3' } }),
+  });
+  await oversized.open({ url: 'https://x/large.pdf', mimeType: 'application/pdf' });
+  assert.equal(oversized.snapshot().status, 'error');
+  assert.equal(oversized.snapshot().error.code, 'document_oversized');
+
+  const malformed = new DocumentViewerCapability({
+    fetchImpl: async () => new Response(new Uint8Array([1, 2, 3])),
+    loadPdfJs: async () => ({ getDocument: () => ({ promise: Promise.reject(new Error('bad pdf')) }) }),
+  });
+  await malformed.open({ url: 'https://x/bad.pdf', mimeType: 'application/pdf' });
+  assert.equal(malformed.snapshot().status, 'error');
+  assert.equal(malformed.snapshot().error.action, 'open-original');
+});
+
+test('real PDF.js runtime parses the pinned multi-page local fixture', async () => {
+  const bytes = new Uint8Array(await readFile(new URL('../tests/e2e/fixtures/sample.pdf', import.meta.url)));
+  const pdfjs = await loadPdfJsRuntime();
+  const task = pdfjs.getDocument({ data: bytes, isEvalSupported: false, useWorkerFetch: false });
+  const pdf = await task.promise;
+  assert.equal(pdf.numPages, 2);
+  await task.destroy();
+});
+
+test('synthetic fixture factory is deterministic and includes four variants', () => {
+  const first = createSyntheticCatalog(5, { seed: 42 });
+  const second = createSyntheticCatalog(5, { seed: 42 });
+  assert.deepEqual(first, second);
+  assert.equal(first[0].variants.length, 4);
+  assert.equal(first[0].documents.length, 1);
 });
