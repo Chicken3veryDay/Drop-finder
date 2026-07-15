@@ -8,6 +8,7 @@ export default defineConfig({
   ...(isE2eServer ? { server: { hmr: false } } : {}),
   optimizeDeps: {
     include: ['pdfjs-dist/legacy/build/pdf.mjs'],
+    ...(isE2eServer ? { noDiscovery: true } : {}),
   },
   build: {
     outDir: 'dist-platform',
