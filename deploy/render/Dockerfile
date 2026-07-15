@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DROPFINDER_SCRIPTS_DIR=/app/scripts \
     DROPFINDER_HOSTING_MODE=render_autonomous_service \
     DROPFINDER_ASGI_APP=render_space_app:app \
+    DROPFINDER_STATE_MIGRATION_SCRIPT=/app/migrate_runtime_state.py \
     DROPFINDER_WORKER_SCRIPT=autonomous_worker_v6.py \
     DROPFINDER_MERGER_SCRIPT=autonomous_merge_complete.py \
     DROPFINDER_REQUIRED_COMPARISON_CONTRACT=exact_price_weight_ppg_thca_stock_image_v1 \
@@ -29,6 +30,7 @@ WORKDIR /app
 
 COPY --chown=user:user deploy/huggingface-space/space_app.py /app/space_app.py
 COPY --chown=user:user deploy/render/render_space_app.py /app/render_space_app.py
+COPY --chown=user:user deploy/render/migrate_runtime_state.py /app/migrate_runtime_state.py
 COPY --chown=user:user deploy/huggingface-space/hf_state.py /app/hf_state.py
 COPY --chown=user:user deploy/huggingface-space/hf_supervisor.py /app/hf_supervisor.py
 COPY --chown=user:user scripts/cloud_scan.py /app/scripts/cloud_scan.py
@@ -62,6 +64,7 @@ RUN mkdir -p /app/runtime/data /app/runtime/logs /app/runtime/runs \
     && python -m py_compile \
        /app/space_app.py \
        /app/render_space_app.py \
+       /app/migrate_runtime_state.py \
        /app/hf_state.py \
        /app/hf_supervisor.py \
        /app/scripts/*.py \
