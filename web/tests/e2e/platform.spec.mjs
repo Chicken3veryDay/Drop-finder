@@ -48,11 +48,28 @@ test('preserves keyboard focus and scroll anchor when a virtual row expands and 
   const viewport = page.locator('#viewport');
   await viewport.evaluate(element => { element.scrollTop = 2_000; element.dispatchEvent(new Event('scroll')); });
   await expect(page.locator('#main')).toHaveAttribute('data-layout-stable', 'true', { timeout: 45_000 });
-  const candidate = page.locator('[data-marketplace-row]').nth(4);
-  const productId = await candidate.getAttribute('data-product-id');
+  const productId = await page.evaluate(() => {
+    const viewportElement = document.querySelector('#viewport');
+    const bounds = viewportElement.getBoundingClientRect();
+    const center = bounds.top + bounds.height / 2;
+    const candidates = [...document.querySelectorAll('[data-marketplace-row]')]
+      .map(row => {
+        const box = row.getBoundingClientRect();
+        return {
+          id: row.dataset.productId,
+          visible: box.bottom > bounds.top && box.top < bounds.bottom,
+          distance: Math.abs((box.top + box.bottom) / 2 - center),
+        };
+      })
+      .filter(candidate => candidate.visible && candidate.id)
+      .sort((a, b) => a.distance - b.distance);
+    return candidates[0]?.id ?? null;
+  });
   expect(productId).toBeTruthy();
   const row = page.locator(`[data-product-id="${productId}"]`);
   const expand = row.getByRole('button', { name: 'Expand' });
+  await expand.evaluate(element => element.focus({ preventScroll: true }));
+  await expect(expand).toBeFocused();
   const before = await viewport.evaluate(element => element.scrollTop);
   await expand.press('Enter');
   const collapse = row.getByRole('button', { name: 'Collapse' });
