@@ -28,9 +28,83 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  final-profile-migration:
+    if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ui-rewrite/03-vendor-compliance-labs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rebase and normalize profile contract
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git rebase origin/main
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          path = Path('data/vendor_profiles.json')
+          payload = json.loads(path.read_text(encoding='utf-8'))
+          replacements = {
+              'identity_verification_checkout_only': 'identity_verification_conditional',
+              'no_observable_age_gate': 'no_observed_gate',
+          }
+          changed = 0
+          evidence_count = 0
+          for profile in payload.get('vendors', []):
+              age = profile.get('age_verification', {})
+              classification = age.get('classification')
+              if classification in replacements:
+                  age['classification'] = replacements[classification]
+                  changed += 1
+              for evidence in profile.get('evidence', []):
+                  evidence_count += 1
+                  if evidence.get('status') == 'observed':
+                      evidence['status'] = 'current'
+                      changed += 1
+          if evidence_count == 0:
+              raise SystemExit('no evidence records found')
+          if changed == 0:
+              raise SystemExit('profile contract was already normalized unexpectedly')
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps({'vendors': len(payload.get('vendors', [])), 'evidence_records': evidence_count, 'changes': changed}, sort_keys=True))
+          PY
+      - name: Validate exact rebased tree
+        run: |
+          python -m compileall -q scripts/vendor_adapters tests/test_vendor_adapters.py
+          python -m scripts.vendor_adapters.cli verify
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python -m scripts.vendor_adapters.cli parse \
+            --candidate tests/fixtures/vendor_adapters/candidate.json \
+            --document tests/fixtures/vendor_adapters/text_coa.pdf \
+            --content-type application/pdf \
+            --output /tmp/parsed-lab.json
+          python - <<'PY'
+          import json
+          row = json.load(open('/tmp/parsed-lab.json'))
+          assert row['parse_status'] == 'parsed'
+          assert row['cannabinoids']['thca'] == 27.45
+          PY
+          python scripts/cloud_scan_v2.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_merge.py --self-test
+      - name: Commit normalized profiles and publish rebased branch
+        run: |
+          git add data/vendor_profiles.json
+          git diff --cached --check
+          git commit -m "fix(issue7): normalize vendor evidence contract"
+          git push --force-with-lease origin HEAD:ui-rewrite/03-vendor-compliance-labs
+
   deterministic:
     runs-on: ubuntu-latest
     timeout-minutes: 10
