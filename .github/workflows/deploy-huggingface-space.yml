@@ -2,6 +2,8 @@ name: Deploy DropFinder to Hugging Face Space
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 */3 * * *"
   push:
     branches: [deploy/full-stack-hf]
     paths:
@@ -17,7 +19,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       HF_SPACE_REPO: Cgptmichaccount/dropfinder-os
       SPACE_URL: https://cgptmichaccount-dropfinder-os.hf.space
@@ -29,46 +31,85 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Assemble bundle and embed verified production seed
+      - name: Build normalized static release
         run: |
           set -euo pipefail
-          python scripts/build_huggingface_bundle.py --output /tmp/dropfinder-space
-          mkdir -p /tmp/dropfinder-space/web/data
+          rm -rf /tmp/dropfinder-static
+          mkdir -p /tmp/dropfinder-static/data
+          cp cloud_pages/index.html cloud_pages/sw.js cloud_pages/manifest.webmanifest cloud_pages/icon.svg /tmp/dropfinder-static/
+          cat > /tmp/dropfinder-static/README.md <<'EOF'
+          ---
+          title: DropFinder
+          emoji: "🌿"
+          colorFrom: blue
+          colorTo: green
+          sdk: static
+          app_file: index.html
+          pinned: false
+          license: mit
+          ---
+
+          # DropFinder
+
+          Autonomous, normalized THCA flower comparison catalog.
+          EOF
           for name in catalog status runtime quarantine rejections; do
             curl --silent --show-error --fail --retry 5 --retry-all-errors \
               --connect-timeout 20 --max-time 120 \
               "https://dropfinder-os.onrender.com/api/$name" \
-              -o "/tmp/dropfinder-space/web/data/$name.json"
+              -o "/tmp/dropfinder-static/data/$name.json"
           done
-          DROPFINDER_RUNTIME_DIR=/tmp/dropfinder-space/web \
+          DROPFINDER_RUNTIME_DIR=/tmp/dropfinder-static \
           DROPFINDER_SCRIPTS_DIR="$GITHUB_WORKSPACE/scripts" \
             python deploy/render/migrate_runtime_state.py
-          python -m py_compile /tmp/dropfinder-space/*.py /tmp/dropfinder-space/scripts/*.py
-          python /tmp/dropfinder-space/scripts/catalog_normalization.py --self-test
-          python /tmp/dropfinder-space/scripts/autonomous_merge_complete.py --self-test
-          node --check /tmp/dropfinder-space/browser-app.js
+          python scripts/catalog_normalization.py --self-test
           python - <<'PY'
           import json, re
           from pathlib import Path
-          root = Path('/tmp/dropfinder-space/web/data')
-          catalog = json.loads((root/'catalog.json').read_text())
-          status = json.loads((root/'status.json').read_text())
-          runtime = json.loads((root/'runtime.json').read_text())
+          root = Path('/tmp/dropfinder-static')
+          catalog = json.loads((root/'data/catalog.json').read_text())
+          status = json.loads((root/'data/status.json').read_text())
+          runtime = json.loads((root/'data/runtime.json').read_text())
           products = catalog.get('products') or []
           assert len(products) >= 25
+          assert int(status.get('healthy_sources') or 0) >= 4
           assert catalog.get('normalization_contract') == 'dropfinder-product-normalization-v1'
           assert status.get('normalization_contract') == 'dropfinder-product-normalization-v1'
           assert runtime.get('normalization_contract') == 'dropfinder-product-normalization-v1'
-          bad = []
+          assert status.get('services', {}).get('final_normalizer') == 'healthy'
           weight = re.compile(r'\b\d+(?:\.\d+)?\s*(?:g|grams?|oz|ounces?)\b', re.I)
+          failures = []
           for row in products:
               name = str(row.get('name') or '')
-              if weight.search(name) or 'thca' in name.lower() or any(x in name for x in ('|','_','•','·')):
-                  bad.append({'id': row.get('id'), 'name': name})
-          assert not bad, bad[:20]
-          print(json.dumps({'seed_products': len(products), 'seed_sources': status.get('healthy_sources')}, indent=2))
+              grams = row.get('grams')
+              expected = f'{grams:.3f}'.rstrip('0').rstrip('.') + ' g' if isinstance(grams, (int, float)) and grams > 0 else None
+              failed = []
+              if not name or row.get('display_name') != name: failed.append('display_name')
+              if not row.get('raw_name'): failed.append('raw_name')
+              if weight.search(name): failed.append('weight_in_name')
+              if 'thca' in name.lower() or 'thc-a' in name.lower(): failed.append('thca_in_name')
+              if any(x in name for x in ('|','_','•','·')): failed.append('source_separator_in_name')
+              if row.get('package_label') != expected: failed.append('package_label')
+              if row.get('variant') != expected: failed.append('variant_label')
+              if row.get('normalization_contract') != 'dropfinder-product-normalization-v1': failed.append('normalization_contract')
+              if failed: failures.append({'id': row.get('id'), 'name': name, 'failed': failed})
+          assert not failures, failures[:20]
+          html = (root/'index.html').read_text()
+          required = ('content-visibility:auto','requestIdleCallback','loading="lazy"','decoding="async"','fetchpriority="low"','products on this page','setTimeout(render,75)')
+          assert all(token in html for token in required)
+          assert all(token not in html for token in ('loadMore','pageSize','pagination'))
+          print(json.dumps({'products': len(products), 'sources': status.get('healthy_sources'), 'normalization_failures': len(failures)}, indent=2))
           PY
-      - name: Create or update public Docker Space
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          html = Path('/tmp/dropfinder-static/index.html').read_text()
+          scripts = re.findall(r'<script>(.*?)</script>', html, re.S)
+          assert len(scripts) == 1
+          Path('/tmp/dropfinder-static-app.js').write_text(scripts[0])
+          PY
+          node --check /tmp/dropfinder-static-app.js
+      - name: Create or update free public Static Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -79,23 +120,97 @@ jobs:
           from huggingface_hub import HfApi
           api = HfApi(token=os.environ['HF_TOKEN'])
           repo_id = os.environ['HF_SPACE_REPO']
-          api.create_repo(repo_id=repo_id, repo_type='space', space_sdk='docker', private=False, exist_ok=True)
+          api.create_repo(repo_id=repo_id, repo_type='space', space_sdk='static', private=False, exist_ok=True)
           api.upload_folder(
               repo_id=repo_id,
               repo_type='space',
-              folder_path='/tmp/dropfinder-space',
-              commit_message='Deploy normalized one-page DropFinder',
+              folder_path='/tmp/dropfinder-static',
+              commit_message='Publish normalized one-page DropFinder catalog',
               delete_patterns=['*'],
           )
           print(repo_id)
           PY
-      - name: Wait for and verify public Space
+      - name: Verify public Static Space
         run: |
           set -euo pipefail
-          python scripts/verify_huggingface_release.py \
-            --url "$SPACE_URL" \
-            --output deployment/huggingface-deployment.json
-      - name: Record verified Space receipt
+          python - <<'PY'
+          import json, os, re, time, urllib.request
+          from collections import Counter
+          from datetime import datetime, timezone
+          from pathlib import Path
+          base = os.environ['SPACE_URL'].rstrip('/')
+          def fetch(path, as_json=True):
+              req = urllib.request.Request(base+path, headers={'User-Agent':'DropFinder-Static-Verifier/1.0','Accept-Encoding':'identity'})
+              with urllib.request.urlopen(req, timeout=120) as response:
+                  raw = response.read().decode('utf-8','replace')
+              return json.loads(raw) if as_json else raw
+          last = None
+          for _ in range(80):
+              try:
+                  catalog = fetch('/data/catalog.json')
+                  if catalog.get('normalization_contract') == 'dropfinder-product-normalization-v1' and len(catalog.get('products') or []) >= 25:
+                      break
+              except Exception as exc:
+                  last = exc
+              time.sleep(10)
+          else:
+              raise RuntimeError(f'Static Space did not publish verified catalog: {last}')
+          status = fetch('/data/status.json')
+          runtime = fetch('/data/runtime.json')
+          page = fetch('/', False)
+          sw = fetch('/sw.js', False)
+          products = catalog.get('products') or []
+          counts = Counter()
+          failures = []
+          weight = re.compile(r'\b\d+(?:\.\d+)?\s*(?:g|grams?|oz|ounces?)\b', re.I)
+          for row in products:
+              name = str(row.get('name') or '')
+              failed = []
+              if row.get('display_name') != name or not name: failed.append('display_name')
+              if not row.get('raw_name'): failed.append('raw_name')
+              if weight.search(name): failed.append('weight_in_name')
+              if 'thca' in name.lower() or 'thc-a' in name.lower(): failed.append('thca_in_name')
+              if any(x in name for x in ('|','_','•','·')): failed.append('source_separator_in_name')
+              if failed:
+                  counts.update(failed)
+                  failures.append({'id':row.get('id'),'source_id':row.get('source_id'),'name':name,'failed':failed})
+          checks = {
+              'product_floor': len(products) >= 25,
+              'source_floor': int(status.get('healthy_sources') or 0) >= 4,
+              'catalog_count': catalog.get('product_count') == len(products),
+              'catalog_normalization': catalog.get('normalization_contract') == 'dropfinder-product-normalization-v1',
+              'status_normalization': status.get('normalization_contract') == 'dropfinder-product-normalization-v1',
+              'runtime_normalization': runtime.get('normalization_contract') == 'dropfinder-product-normalization-v1',
+              'final_normalizer': status.get('services',{}).get('final_normalizer') == 'healthy',
+              'all_names_normalized': not failures,
+              'one_page': 'products on this page' in page and all(x not in page for x in ('loadMore','pageSize','pagination')),
+              'chunked_render': 'requestIdleCallback' in page and 'insertAdjacentHTML' in page,
+              'containment': 'content-visibility:auto' in page and 'contain-intrinsic-size:' in page,
+              'lazy_images': 'loading="lazy"' in page and 'decoding="async"' in page and 'fetchpriority="low"' in page,
+              'fast_cache': 'dropfinder-cloud-v6' in sw and 'event.waitUntil(refresh.catch' in sw,
+          }
+          failed_checks = [name for name, passed in checks.items() if not passed]
+          report = {
+              'schema_version':'dropfinder-huggingface-static-deployment-v1',
+              'status':'healthy' if not failed_checks else 'invalid',
+              'verified_at':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'provider':'huggingface_static_space',
+              'service_url':base,
+              'product_count':len(products),
+              'source_count':status.get('healthy_sources'),
+              'normalization_contract':catalog.get('normalization_contract'),
+              'field_failure_count':len(failures),
+              'field_failure_counts':dict(sorted(counts.items())),
+              'field_failure_examples':failures[:100],
+              'checks':checks,
+              'failed_checks':failed_checks,
+              'sample_names':[{'source_id':r.get('source_id'),'raw_name':r.get('raw_name'),'display_name':r.get('display_name'),'package_label':r.get('package_label')} for r in products[:80]],
+          }
+          Path('deployment/huggingface-deployment.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          if failed_checks: raise RuntimeError(f'failed checks: {failed_checks}')
+          PY
+      - name: Record verified Static Space receipt
         if: always()
         run: |
           set -euo pipefail
@@ -110,7 +225,7 @@ jobs:
             cp /tmp/huggingface-deployment.json deployment/huggingface-deployment.json
             git add deployment/huggingface-deployment.json
             if git diff --cached --quiet; then recorded=true; break; fi
-            git commit -m "deploy: record verified Hugging Face Space [skip ci]"
+            git commit -m "deploy: record verified Hugging Face Static Space [skip ci]"
             if git pull --rebase origin deploy/full-stack-hf && git push origin HEAD:deploy/full-stack-hf; then
               recorded=true; break
             fi
