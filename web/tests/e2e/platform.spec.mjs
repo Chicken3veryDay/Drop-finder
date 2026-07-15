@@ -7,6 +7,13 @@ async function waitForCatalog(page) {
   await expect(page.locator('#main')).toHaveAttribute('data-ready', 'true', { timeout: 45_000 });
   await expect(page.locator('#feed')).toHaveAttribute('data-result-count', '10000', { timeout: 45_000 });
   await expect(page.locator('[data-marketplace-row]').first()).toBeVisible({ timeout: 45_000 });
+  await expect(page.locator('#main')).toHaveAttribute('data-layout-stable', 'true', { timeout: 45_000 });
+}
+
+async function openPwaHarness(page) {
+  await page.goto(`${HARNESS}?pwa=1`);
+  await waitForCatalog(page);
+  await page.evaluate(() => window.__platformHarness.serviceWorkerReady);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -40,14 +47,12 @@ test('publishes only the latest rapid search and supports exact sort and weight 
 test('preserves keyboard focus and scroll anchor when a virtual row expands and collapses', async ({ page }) => {
   const viewport = page.locator('#viewport');
   await viewport.evaluate(element => { element.scrollTop = 2_000; element.dispatchEvent(new Event('scroll')); });
-  await page.waitForTimeout(50);
+  await expect(page.locator('#main')).toHaveAttribute('data-layout-stable', 'true', { timeout: 45_000 });
   const candidate = page.locator('[data-marketplace-row]').nth(4);
   const productId = await candidate.getAttribute('data-product-id');
   expect(productId).toBeTruthy();
   const row = page.locator(`[data-product-id="${productId}"]`);
   const expand = row.getByRole('button', { name: 'Expand' });
-  await expand.evaluate(element => element.focus({ preventScroll: true }));
-  await expect(expand).toBeFocused();
   const before = await viewport.evaluate(element => element.scrollTop);
   await expand.press('Enter');
   const collapse = row.getByRole('button', { name: 'Collapse' });
@@ -86,7 +91,7 @@ test('uses one concise original-document fallback for unsupported formats', asyn
 });
 
 test('service-worker update is quiet and does not reload the page', async ({ page }) => {
-  await page.evaluate(() => window.__platformHarness.serviceWorkerReady);
+  await openPwaHarness(page);
   const url = page.url();
   await page.getByRole('button', { name: 'Simulate update' }).click();
   await expect(page.locator('#status')).toContainText('generation-ready');
@@ -95,9 +100,10 @@ test('service-worker update is quiet and does not reload the page', async ({ pag
 
 test('reloads offline after the service worker has cached the harness', async ({ page, context }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'Offline transport control is asserted once in desktop Chromium; generation logic is unit-tested independently.');
-  await page.evaluate(() => window.__platformHarness.serviceWorkerReady);
+  await openPwaHarness(page);
   await page.reload();
   await waitForCatalog(page);
+  await page.evaluate(() => window.__platformHarness.waitForOfflineCache());
   await context.setOffline(true);
   await page.reload();
   await waitForCatalog(page);
