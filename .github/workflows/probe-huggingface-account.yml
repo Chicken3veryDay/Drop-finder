@@ -1,0 +1,83 @@
+name: Probe Hugging Face deployment access
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/huggingface-access-probe-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Probe token identity and Space access
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO: Cgptmichaccount/dropfinder-os
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'huggingface_hub>=0.34,<2'
+          python - <<'PY'
+          import json
+          import os
+          import traceback
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from huggingface_hub import HfApi
+
+          report = {
+              'schema_version': 'dropfinder-huggingface-access-probe-v1',
+              'checked_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'target_repo': os.environ['HF_SPACE_REPO'],
+              'token_present': bool(os.environ.get('HF_TOKEN', '').strip()),
+          }
+          try:
+              api = HfApi(token=os.environ['HF_TOKEN'])
+              identity = api.whoami()
+              report['identity_name'] = identity.get('name') if isinstance(identity, dict) else None
+              report['identity_type'] = identity.get('type') if isinstance(identity, dict) else None
+              report['organizations'] = [row.get('name') for row in identity.get('orgs', []) if isinstance(row, dict)] if isinstance(identity, dict) else []
+              url = api.create_repo(
+                  repo_id=os.environ['HF_SPACE_REPO'],
+                  repo_type='space',
+                  space_sdk='docker',
+                  private=False,
+                  exist_ok=True,
+              )
+              report['create_or_access_repo'] = True
+              report['repo_url'] = str(url)
+              info = api.repo_info(repo_id=os.environ['HF_SPACE_REPO'], repo_type='space')
+              report['repo_id'] = getattr(info, 'id', None)
+              report['repo_private'] = getattr(info, 'private', None)
+              report['status'] = 'healthy'
+          except Exception as exc:
+              report['status'] = 'failed'
+              report['error_type'] = type(exc).__name__
+              report['error'] = str(exc)[:4000]
+              report['traceback_tail'] = traceback.format_exc()[-6000:]
+          Path('deployment/huggingface-access-probe.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps({k: v for k, v in report.items() if k != 'traceback_tail'}, indent=2, sort_keys=True))
+          PY
+      - name: Record diagnostic
+        run: |
+          set -euo pipefail
+          cp deployment/huggingface-access-probe.json /tmp/huggingface-access-probe.json
+          git fetch origin deploy/full-stack-hf
+          git reset --hard origin/deploy/full-stack-hf
+          cp /tmp/huggingface-access-probe.json deployment/huggingface-access-probe.json
+          git config user.name "DropFinder HF Access Probe"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment/huggingface-access-probe.json
+          git commit -m "ci: record Hugging Face access probe [skip ci]"
+          git pull --rebase origin deploy/full-stack-hf
+          git push origin HEAD:deploy/full-stack-hf
