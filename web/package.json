@@ -11,7 +11,7 @@
     "build": "vite build",
     "analyze:chunks": "node scripts/performance/analyze-chunks.mjs",
     "pwa:manifest": "node scripts/pwa/generate-shell-manifest.mjs",
-    "dev:e2e": "vite --host 0.0.0.0 --port 4173 --strictPort",
+    "dev:e2e": "node tests/e2e/run-vite.mjs",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium firefox webkit",
     "validate": "npm run typecheck && npm test && npm run benchmark && npm run build && npm run analyze:chunks"
