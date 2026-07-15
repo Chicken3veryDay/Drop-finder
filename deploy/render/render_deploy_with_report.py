@@ -25,6 +25,33 @@ def redact(value: str) -> str:
     return result
 
 
+def apply_render_api_retries() -> None:
+    original = render_deploy.RenderAPI.request
+
+    def resilient_request(self, method: str, path: str, payload=None):
+        attempts = 5 if method.upper() == "GET" else 1
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return original(self, method, path, payload)
+            except (TimeoutError, OSError) as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    raise
+                delay = min(20, attempt * 3)
+                print(
+                    f"Render API transient {method} {path} failure "
+                    f"({type(exc).__name__}); retry {attempt}/{attempts - 1} in {delay}s",
+                    flush=True,
+                )
+                time.sleep(delay)
+        if last_error:
+            raise last_error
+        raise RuntimeError("Render API retry loop ended unexpectedly")
+
+    render_deploy.RenderAPI.request = resilient_request
+
+
 def apply_free_tier_compatibility() -> None:
     original = render_deploy.service_details
 
@@ -128,6 +155,7 @@ def apply_quality_safe_scan_retention() -> None:
 def main() -> int:
     error_path = Path("deployment/render-deployment-error.json")
     try:
+        apply_render_api_retries()
         apply_free_tier_compatibility()
         apply_complete_catalog_floor()
         render_complete_verifier.apply()
@@ -138,12 +166,13 @@ def main() -> int:
         return code
     except Exception as exc:
         report = {
-            "schema_version": "dropfinder-render-deployment-error-v4",
+            "schema_version": "dropfinder-render-deployment-error-v5",
             "status": "failed",
             "failed_at": utc_now(),
             "error_type": type(exc).__name__,
             "error": redact(str(exc))[:8000],
             "traceback": redact(traceback.format_exc())[-12000:],
+            "render_api_get_retries_enabled": True,
             "complete_data_verifier_enabled": True,
             "normalization_verifier_enabled": True,
             "quality_safe_retention_enabled": True,
