@@ -3,13 +3,18 @@ import AxeBuilder from '@axe-core/playwright';
 
 const HARNESS = '/tests/e2e/fixtures/harness.html';
 
+async function waitForCatalog(page) {
+  await expect(page.locator('#main')).toHaveAttribute('data-ready', 'true', { timeout: 45_000 });
+  await expect(page.locator('#feed')).toHaveAttribute('data-result-count', '10000', { timeout: 45_000 });
+  await expect(page.locator('[data-marketplace-row]').first()).toBeVisible({ timeout: 45_000 });
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto(HARNESS);
-  await expect(page.locator('#main')).toHaveAttribute('data-ready', 'true', { timeout: 45_000 });
+  await waitForCatalog(page);
 });
 
 test('loads a large catalog and keeps rendered rows bounded during endless scrolling', async ({ page }) => {
-  await expect(page.locator('#feed')).toHaveAttribute('aria-setsize', '10000');
   for (let index = 0; index < 24; index += 1) {
     await page.locator('#viewport').evaluate(element => { element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
     await page.waitForTimeout(25);
@@ -40,12 +45,12 @@ test('preserves keyboard focus and scroll anchor when a virtual row expands and 
   const before = await viewport.evaluate(element => element.scrollTop);
   await button.click();
   await expect(page.getByRole('button', { name: 'Collapse' }).first()).toBeFocused();
-  const expanded = page.locator('[data-marketplace-row][aria-expanded="true"]');
+  const expanded = page.locator('[data-marketplace-row][data-expanded="true"]');
   await expect(expanded).toHaveCount(1);
   const after = await viewport.evaluate(element => element.scrollTop);
   expect(Math.abs(after - before)).toBeLessThan(260);
   await page.getByRole('button', { name: 'Collapse' }).first().click();
-  await expect(page.locator('[data-marketplace-row][aria-expanded="true"]')).toHaveCount(0);
+  await expect(page.locator('[data-marketplace-row][data-expanded="true"]')).toHaveCount(0);
 });
 
 test('renders the real two-page PDF, navigates, zooms, closes, and restores focus', async ({ page }) => {
@@ -54,8 +59,8 @@ test('renders the real two-page PDF, navigates, zooms, closes, and restores focu
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await expect(page.locator('#pdf-canvas')).toBeVisible();
-  expect(await page.locator('#pdf-canvas').evaluate(element => element.width)).toBeGreaterThan(0);
   await expect(page.locator('#page-status')).toContainText('Page 1 of 2');
+  expect(await page.locator('#pdf-canvas').evaluate(element => element.width)).toBeGreaterThan(0);
   await page.getByRole('button', { name: 'Next page' }).click();
   await expect(page.locator('#page-status')).toContainText('Page 2 of 2');
   await page.getByRole('button', { name: 'Zoom in' }).click();
@@ -86,10 +91,10 @@ test('reloads offline after the service worker has cached the harness', async ({
   test.skip(testInfo.project.name !== 'chromium', 'Offline transport control is asserted once in desktop Chromium; generation logic is unit-tested independently.');
   await page.evaluate(() => window.__platformHarness.serviceWorkerReady);
   await page.reload();
-  await expect(page.locator('#main')).toHaveAttribute('data-ready', 'true', { timeout: 45_000 });
+  await waitForCatalog(page);
   await context.setOffline(true);
   await page.reload();
-  await expect(page.locator('#main')).toHaveAttribute('data-ready', 'true', { timeout: 45_000 });
+  await waitForCatalog(page);
   await context.setOffline(false);
 });
 
@@ -101,6 +106,7 @@ test('has no serious automated accessibility violations in the shell and marketp
 test('has no serious automated accessibility violations in the document dialog', async ({ page }) => {
   await page.getByRole('button', { name: 'Open COA' }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.locator('#page-status')).toContainText('Page 1 of 2');
   const results = await new AxeBuilder({ page }).include('#dialog').analyze();
   expect(results.violations.filter(violation => ['serious', 'critical'].includes(violation.impact))).toEqual([]);
 });
