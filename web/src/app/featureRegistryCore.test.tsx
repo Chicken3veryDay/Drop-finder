@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
+import type { CapabilityRegistrationTarget } from "./capabilityRegistry";
 import { FEATURE_API_VERSION, type FeatureModule } from "./featureContract";
 import { resolveFeatureModules } from "./featureRegistryCore";
 
@@ -58,5 +59,38 @@ describe("resolveFeatureModules", () => {
     });
     expect(registry.slots.search).toBeUndefined();
     expect(registry.diagnostics).toContainEqual(expect.objectContaining({ code: "duplicate-slot" }));
+  });
+
+  it("adapts the exact issue #8 primary-v1 module shape to a composite marketplace root", () => {
+    const LegacyMarketplace = (): ReactNode => <div>Legacy marketplace</div>;
+    const registry = resolveFeatureModules({
+      marketplace: {
+        default: {
+          id: "marketplace",
+          kind: "primary",
+          version: 1,
+          mount: LegacyMarketplace,
+          capabilities: ["desktop", "mobile", "documents", "keyboard"],
+        },
+      },
+    });
+
+    expect(registry.primaryMarketplace?.id).toBe("marketplace");
+    expect(registry.slots.marketplaceRoot).toBeDefined();
+    expect(registry.diagnostics).toContainEqual(expect.objectContaining({ code: "legacy-module-adapted" }));
+  });
+
+  it("runs issue #9 style capability registrars without treating them as malformed modules", () => {
+    const catalog = { id: "catalog" };
+    const registry = resolveFeatureModules({
+      platform: {
+        registerPlatformCapabilities(target: CapabilityRegistrationTarget) {
+          target.registerCapability("platform.catalog", { contractVersion: 1, instance: catalog });
+        },
+      },
+    });
+
+    expect(registry.capabilities.getCapability("platform.catalog", 1)).toBe(catalog);
+    expect(registry.diagnostics.some((diagnostic) => diagnostic.code === "malformed-module")).toBe(false);
   });
 });

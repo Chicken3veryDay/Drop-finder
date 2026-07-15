@@ -15,9 +15,17 @@ export const AppShell = ({ registry }: AppShellProps): ReactNode => {
   const [searchValue, setSearchValue] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [portalElement, setPortalElement] = useState<HTMLDivElement | null>(null);
-  const { search: SearchSlot, filters: FiltersSlot, resultHeader: ResultHeaderSlot, marketplaceSurface: MarketplaceSlot, overlay: OverlaySlot } = registry.slots;
+  const {
+    marketplaceRoot: MarketplaceRoot,
+    search: SearchSlot,
+    filters: FiltersSlot,
+    resultHeader: ResultHeaderSlot,
+    marketplaceSurface: MarketplaceSlot,
+    overlay: OverlaySlot,
+  } = registry.slots;
 
   useEffect(() => {
+    if (MarketplaceRoot) return;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target)) {
         event.preventDefault();
@@ -30,7 +38,7 @@ export const AppShell = ({ registry }: AppShellProps): ReactNode => {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [searchValue]);
+  }, [MarketplaceRoot, searchValue]);
 
   const handleSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
     if (event.key !== "Escape") return;
@@ -42,6 +50,7 @@ export const AppShell = ({ registry }: AppShellProps): ReactNode => {
   const developmentError = import.meta.env.DEV && !registry.primaryMarketplace
     ? "Marketplace module unavailable."
     : null;
+  const capabilities = registry.capabilities;
 
   return (
     <div className="app-shell">
@@ -53,40 +62,46 @@ export const AppShell = ({ registry }: AppShellProps): ReactNode => {
       <main className="marketplace" aria-labelledby="marketplace-title">
         <h1 id="marketplace-title" className="visually-hidden">Dropfinder Marketplace</h1>
 
-        <section className="search-region" aria-label="Marketplace search">
-          {SearchSlot ? (
-            <SearchSlot value={searchValue} onValueChange={setSearchValue} inputRef={searchRef} />
-          ) : (
-            <Field
-              ref={searchRef}
-              label="Search strains and vendors"
-              type="search"
-              name="marketplace-search"
-              autoComplete="off"
-              placeholder="Search strains or vendors"
-              value={searchValue}
-              onChange={(event) => setSearchValue(event.currentTarget.value)}
-              onKeyDown={handleSearchKeyDown}
-            />
-          )}
-        </section>
+        {MarketplaceRoot ? (
+          <MarketplaceRoot capabilities={capabilities} />
+        ) : (
+          <>
+            <section className="search-region" aria-label="Marketplace search">
+              {SearchSlot ? (
+                <SearchSlot value={searchValue} onValueChange={setSearchValue} inputRef={searchRef} capabilities={capabilities} />
+              ) : (
+                <Field
+                  ref={searchRef}
+                  label="Search strains and vendors"
+                  type="search"
+                  name="marketplace-search"
+                  autoComplete="off"
+                  placeholder="Search strains or vendors"
+                  value={searchValue}
+                  onChange={(event) => setSearchValue(event.currentTarget.value)}
+                  onKeyDown={handleSearchKeyDown}
+                />
+              )}
+            </section>
 
-        <section id="filter-bar-slot" className="filter-region" aria-label="Marketplace filters">
-          {FiltersSlot ? <FiltersSlot searchValue={searchValue} /> : null}
-        </section>
+            <section id="filter-bar-slot" className="filter-region" aria-label="Marketplace filters">
+              {FiltersSlot ? <FiltersSlot searchValue={searchValue} capabilities={capabilities} /> : null}
+            </section>
 
-        <section id="result-header-slot" className="result-header-region" aria-label="Marketplace result summary" aria-live="polite">
-          {ResultHeaderSlot ? <ResultHeaderSlot searchValue={searchValue} /> : null}
-        </section>
+            <section id="result-header-slot" className="result-header-region" aria-label="Marketplace result summary" aria-live="polite">
+              {ResultHeaderSlot ? <ResultHeaderSlot searchValue={searchValue} capabilities={capabilities} /> : null}
+            </section>
 
-        <section id="marketplace-surface-slot" className="result-region" aria-label="Marketplace results">
-          {MarketplaceSlot ? <MarketplaceSlot searchValue={searchValue} /> : null}
-          {developmentError ? <p className="inline-error" role="alert">{developmentError}</p> : null}
-        </section>
+            <section id="marketplace-surface-slot" className="result-region" aria-label="Marketplace results">
+              {MarketplaceSlot ? <MarketplaceSlot searchValue={searchValue} capabilities={capabilities} /> : null}
+              {developmentError ? <p className="inline-error" role="alert">{developmentError}</p> : null}
+            </section>
+          </>
+        )}
       </main>
 
       <ModalPortalHost ref={setPortalElement} />
-      {OverlaySlot ? <OverlaySlot portalElement={portalElement} /> : null}
+      {OverlaySlot ? <OverlaySlot portalElement={portalElement} capabilities={capabilities} /> : null}
     </div>
   );
 };

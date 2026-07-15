@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import baseCss from "../styles/base.css?raw";
+import type { CapabilityRegistrationTarget } from "./capabilityRegistry";
 import { FEATURE_API_VERSION } from "./featureContract";
 import { resolveFeatureModules } from "./featureRegistryCore";
 import { AppShell } from "./AppShell";
@@ -48,5 +49,40 @@ describe("AppShell", () => {
   it("provides a focus-visible rule rather than removing keyboard focus", () => {
     expect(baseCss).toContain(".focus-ring:focus-visible");
     expect(baseCss).toContain("--focus-ring");
+  });
+
+  it("mounts an issue #8 composite marketplace without duplicating foundation search and filter regions", () => {
+    const LegacyMarketplace = ({ products }: { products: readonly unknown[] }) => (
+      <section aria-label="Integrated marketplace">
+        <label htmlFor="legacy-search">Search vendor or strain</label>
+        <input id="legacy-search" type="search" />
+        <p>{products.length} integrated products</p>
+      </section>
+    );
+    const compatibilityRegistry = resolveFeatureModules({
+      data: {
+        registerFeatureCapabilities(target: CapabilityRegistrationTarget) {
+          target.registerCapability("marketplace.props", {
+            contractVersion: 1,
+            instance: { products: [{ id: "one" }] },
+          });
+        },
+      },
+      marketplace: {
+        default: {
+          id: "marketplace",
+          kind: "primary",
+          version: 1,
+          mount: LegacyMarketplace,
+          capabilities: ["desktop", "mobile", "documents", "keyboard"],
+        },
+      },
+    });
+
+    render(<AppShell registry={compatibilityRegistry} />);
+    expect(screen.getByRole("searchbox", { name: "Search vendor or strain" })).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox", { name: "Search strains and vendors" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Marketplace filters" })).not.toBeInTheDocument();
+    expect(screen.getByText("1 integrated products")).toBeInTheDocument();
   });
 });

@@ -2,7 +2,8 @@
 
 Status: foundation contract for issues #5 through #9  
 Frontend API version: `1.0.0`  
-Catalog schema version: `1.0.0`
+Runtime capability contract: versioned per capability  
+Catalog contract version: `1.0.0`
 
 ## Product direction
 
@@ -16,23 +17,23 @@ The user-facing vocabulary is fixed:
 | Strain Type | Lineage |
 | THCA | Total THC |
 
-Total THC is displayed as a rounded whole percent. Raw THCA and delta-9 THC values remain available only in typed internal data for calculation, provenance, validation, and later document work.
+Total THC is displayed as a rounded whole percent. Raw THCA and delta-9 THC values remain internal for calculation, provenance, and validation.
 
 The following are intentionally absent: light mode, theme switching, Settings, Vendors, Favorites, Comparisons, scraping controls, gradients, glass effects, giant cards, hero copy, marketing banners, AI summaries, editorial layouts, terminal styling, security-operations styling, filler statistics, source-health drawers, refresh buttons, tutorial prose, and persistent explanatory status copy.
 
 ## Build and publication contract
 
-The source application lives in `web/` and is built with React, TypeScript, and Vite. It publishes into the existing `cloud_pages/` tree.
+The source application lives in `web/` and publishes into the existing `cloud_pages/` tree.
 
-- `base` is `./`; generated URLs must remain relative for GitHub Pages and raw.githack branch subpaths.
+- Vite `base` is `./` so GitHub Pages and raw.githack branch subpaths remain valid.
 - Hashed JavaScript and CSS are emitted under `cloud_pages/assets/`.
-- Vite runs with `emptyOutDir: false`.
-- `web/scripts/build.mjs` snapshots `cloud_pages/data/`, `manifest.webmanifest`, `icon.svg`, and `sw.js`, builds the app, and fails if any protected file changes.
-- `web/scripts/verify-publication.mjs` verifies the catalog/status/runtime files, PWA files, generated index, relative paths, and hashed assets.
-- The existing Python retrieval, classification, admission, atomic `gh-pages` publication, verification, and rollback sequence remains authoritative.
-- The frontend requires no credentials, application server, or external hosting service.
+- Vite uses `emptyOutDir: false`.
+- `web/scripts/build.mjs` snapshots `cloud_pages/data/`, `manifest.webmanifest`, `icon.svg`, and `sw.js`, then fails if the frontend build changes any protected file.
+- `web/scripts/verify-publication.mjs` verifies catalog/status/runtime data, PWA files, the generated index, relative paths, and hashed assets.
+- Existing Python retrieval, admission, atomic `gh-pages` publication, verification, and rollback remain authoritative.
+- The frontend requires no credentials, server, or external hosting service.
 
-Deterministic commands, run from `web/`:
+Deterministic commands from `web/`:
 
 ```bash
 npm ci
@@ -43,11 +44,18 @@ npm run build
 npm run verify:publication
 ```
 
-## Feature module registration
+## Feature discovery
 
-Sibling workstreams add modules beneath `web/src/features/<feature-id>/index.ts` or `index.tsx`. They do not edit foundation registry files. Vite discovers modules at build time through `import.meta.glob`.
+Sibling workstreams add isolated files beneath `web/src/features/<feature-id>/`. Vite discovers:
 
-A module exports either the feature object as `default` or as a named `feature` export. Use `defineFeature` so TypeScript checks the contract.
+- `index.ts`, `index.tsx`, `index.js`, `index.jsx`, or `index.mjs`;
+- `register-*.ts`, `register-*.tsx`, `register-*.js`, `register-*.jsx`, or `register-*.mjs`.
+
+Registrar-only files are not treated as malformed feature modules.
+
+## Canonical feature module
+
+A canonical module exports the feature object as `default` or as named `feature` and should use `defineFeature`.
 
 ```tsx
 import { defineFeature, FEATURE_API_VERSION } from "../../app/featureContract";
@@ -59,83 +67,103 @@ export default defineFeature({
   kind: "marketplace",
   order: 100,
   capabilities: ["marketplace.surface"],
-  slots: {
-    marketplaceSurface: MarketplaceSurface,
-  },
+  slots: { marketplaceSurface: MarketplaceSurface },
 });
 ```
 
-### Module fields
+Module fields:
 
 - `apiVersion`: exactly `1.0.0`.
-- `id`: stable lowercase identifier using letters, digits, dots, or dashes.
+- `id`: stable lowercase dotted or dashed identifier.
 - `kind`: `marketplace` or `enhancer`.
-- `order`: non-negative integer. Modules sort by order and then ID.
-- `capabilities`: unique declarations from the typed capability list.
+- `order`: non-negative integer; modules sort by order and then ID.
+- `capabilities`: unique declarations from the typed list.
 - `slots`: renderable React components for supported shell mount points.
 
-Supported capabilities:
+Supported marketplace capabilities are `marketplace.root`, `marketplace.surface`, `marketplace.search`, `marketplace.filters`, and `marketplace.result-header`.
 
-- `marketplace.surface`
-- `marketplace.search`
-- `marketplace.filters`
-- `marketplace.result-header`
-- `platform.document-overlay`
-- `platform.virtualization`
-- `platform.pwa-status`
-- `platform.mobile-rendering`
+Supported platform declarations are `platform.catalog`, `platform.query`, `platform.documents`, `platform.document-overlay`, `platform.virtualization`, `platform.pwa`, `platform.pwa-status`, and `platform.mobile-rendering`.
 
 Supported slots:
 
-| Slot | Expected owner | Purpose |
-| --- | --- | --- |
-| `search` | primary marketplace | Optional replacement for the foundation search field |
-| `filters` | primary marketplace | Horizontal marketplace filter controls |
-| `resultHeader` | primary marketplace | Result count and compact list header |
-| `marketplaceSurface` | primary marketplace | Required primary result surface |
-| `overlay` | enhancer | Document or platform overlay mounted against the portal host |
+| Slot | Purpose |
+| --- | --- |
+| `marketplaceRoot` | Whole-marketplace compatibility surface that owns search, filters, summary, and results |
+| `search` | Optional replacement for the foundation search field |
+| `filters` | Horizontal marketplace filters |
+| `resultHeader` | Result count and compact list header |
+| `marketplaceSurface` | Primary result surface in the decomposed shell |
+| `overlay` | Document or platform overlay mounted against the portal host |
 
-A marketplace module must declare and implement `marketplace.surface`. A component supplied for a capability-bound slot must declare the matching capability.
+A primary marketplace must implement either `marketplace.root` or `marketplace.surface`. A root provider may not also supply decomposed marketplace slots because that would duplicate search and filters.
 
-The registry fails closed:
+Every slot receives the read-only runtime capability registry through a `capabilities` prop.
+
+The module registry fails closed:
 
 - malformed modules are rejected;
-- every copy of a duplicated ID is rejected;
-- if multiple primary marketplace modules exist, all primary modules are rejected;
+- all copies of a duplicated ID are rejected;
+- multiple primary marketplaces are all rejected;
 - a slot with multiple providers is left unmounted;
-- unsupported capabilities and capability/slot mismatches are rejected.
+- unsupported declarations and capability/slot mismatches are rejected.
 
-The foundation renders no blank dashboard, placeholder card, or filler copy when a feature is absent. Development builds may show one concise unavailable-module error. Production remains structurally empty until the primary marketplace module is present.
+## Issue #8 primary-v1 compatibility
+
+The completed issue #8 branch exports this isolated shape:
+
+```ts
+{
+  id: "marketplace",
+  kind: "primary",
+  version: 1,
+  mount: MarketplaceFeature,
+  capabilities: ["desktop", "mobile", "documents", "keyboard"]
+}
+```
+
+The foundation adapts that exact shape to `marketplace.root`. When a root is mounted, the foundation does not render its own search, filters, result header, or result surface, preventing duplicate controls.
+
+The compatibility wrapper passes:
+
+- `products: []` by default;
+- the read-only capability registry as `capabilities`;
+- any version-1 object registered as `marketplace.props`, which overrides the empty data defaults.
+
+A final integrator should register `marketplace.props` through a small adapter that maps issue #6 catalog output and issue #9 platform capabilities into issue #8's `MarketplaceFeatureProps`. The foundation intentionally does not guess across incompatible async/sync interfaces.
+
+## Runtime capability registration
+
+The preferred registrar export is `registerFeatureCapabilities(registry)`. The issue #9 compatibility export `registerPlatformCapabilities(registry)` is also supported.
+
+The target implements:
+
+```ts
+interface CapabilityRegistrationTarget {
+  registerCapability<T>(
+    name: string,
+    descriptor: { contractVersion: number | string; instance: T },
+  ): boolean;
+}
+```
+
+Canonical names currently reserved for integration are:
+
+- `marketplace.props`
+- `platform.catalog`
+- `platform.query`
+- `platform.virtualization`
+- `platform.documents`
+- `platform.pwa`
+
+Consumers use `getCapability(name, expectedVersion)`. A version mismatch returns `undefined`. Duplicate providers disable the capability entirely rather than allowing import order to choose a winner. Malformed or throwing registrars become diagnostics and do not crash the shell. Registrars must finish synchronously during build-time discovery.
 
 ## Shared catalog contract
 
 Canonical types and validators are exported from `web/src/contracts/index.ts`.
 
-### Manifest and paging
+`CatalogManifest` contains schema/catalog versions, generation time, index metadata, and deterministic page metadata. `CatalogPage` binds page metadata to validated marketplace products.
 
-`CatalogManifest` contains:
-
-- schema and catalog versions;
-- generation time;
-- catalog index URL, digest, generation time, page count, and product count;
-- deterministic page metadata with IDs, URLs, digests, counts, and first/last product keys.
-
-`CatalogPage` binds page metadata to validated marketplace products.
-
-### Marketplace product
-
-`MarketplaceProduct` groups one canonical product/strain identity under one vendor. It contains:
-
-- vendor product ID, canonical strain ID, and canonical product ID;
-- vendor ID/name, favicon, age-gate classification, and evidence;
-- Strain Name and six-value Lineage;
-- at least one `InStockVariant`;
-- calculated Total THC and internal raw cannabinoid values;
-- rating and review count;
-- effects;
-- grow environment;
-- COA and terpene document mappings;
-- evidence and provenance.
+`MarketplaceProduct` groups one canonical product/strain under one vendor and contains vendor identity/evidence, Strain Name, six-value Lineage, one or more in-stock variants, calculated Total THC with raw internal values, rating/review count, effects, grow environment, documents, and evidence.
 
 Lineage values are:
 
@@ -160,65 +188,35 @@ stock: {
 }
 ```
 
-Runtime validation rejects any other stock state. Out-of-stock data can exist upstream, but it cannot enter the frontend-visible product contract by accident.
-
-Every in-stock variant includes weight, current price, optional original price, optional discount percent, price per gram, product URL, optional image URL, document IDs, batch IDs, explicit stock evidence, and field evidence. Money uses integer cents and `USD` to avoid display drift.
+Runtime validation rejects every other stock state. Every variant includes weight, current/original pricing, optional discount, price per gram, product/image URLs, document and batch IDs, stock evidence, and field evidence. Money uses integer cents and `USD`.
 
 ### Total THC
 
-`TotalThcMeasurement` supports:
-
-- a source-reported Total THC value;
-- a calculated value using `thca * 0.877 + delta9_thc`;
-- unavailable data with explicit nulls.
-
-`roundedDisplayPercent` must equal `Math.round(calculatedPercent)` when a calculated value exists. Raw THCA, delta-9 THC, reported Total THC, method, formula, and provenance remain internal and typed.
+`TotalThcMeasurement` supports a source-reported Total THC value, a calculation using `thca * 0.877 + delta9_thc`, or explicit unavailable data. `roundedDisplayPercent` must equal `Math.round(calculatedPercent)` when a calculated value exists.
 
 ### Documents
 
-`ProductDocumentRecord` supports `coa` and `terpene` documents. Every record maps to a vendor, product, zero or more variants, zero or more batches, publication time, and evidence. Document rendering and PDF parsing belong to later workstreams.
+`ProductDocumentRecord` supports `coa` and `terpene` records mapped to vendor, product, variants, batches, publication time, and evidence. Rendering and parsing remain sibling responsibilities.
 
 ## Design system contract
 
-The design system is CSS-variable based. It does not depend on a themed component library.
+The CSS-variable system covers dark neutral surfaces and text hierarchy, focus/error/subdued states, six resting/hover Lineage tints, responsive type and spacing, compact control/row dimensions, tabular numerals, reduced motion, increased contrast, and visible keyboard focus. It introduces no gradients or decorative shadows.
 
-Tokens cover:
-
-- dark neutral canvas, surfaces, borders, and text hierarchy;
-- focus, error, and subdued states;
-- resting and hover tints for all six Lineage values;
-- responsive type and spacing scales;
-- compact control and row dimensions;
-- tabular numerals;
-- reduced motion;
-- increased contrast and visible keyboard focus.
-
-Rows remain neutral by default. A Lineage tint is restrained at rest and clearer on hover. No token introduces gradients or decorative shadows.
-
-Reusable primitives are deliberately limited to visually hidden text, a visible-focus icon button, an accessible field wrapper, and a modal portal host.
+Reusable primitives remain limited to visually hidden text, a visible-focus icon button, an accessible field wrapper, and a modal portal host.
 
 ## Shell and keyboard contract
 
-The shell contains:
+The decomposed shell contains the lowercase `dropfinder` wordmark, `Marketplace`, full-width search, filters, result header, result surface, and overlay host. `/` focuses foundation search and Escape clears then leaves it.
 
-- a lowercase `dropfinder` wordmark;
-- the active `Marketplace` section;
-- a full-width search region;
-- a horizontal filter mount;
-- a result summary/header mount;
-- a marketplace surface mount;
-- an overlay portal host.
-
-Pressing `/` focuses search when the current target is not editable. Pressing `Escape` clears a non-empty focused search; pressing it again leaves the field. Shortcut hints remain visually hidden because the interface does not need permanent instruction copy.
+A composite `marketplaceRoot` owns those interactions itself. The foundation disables its duplicate global search shortcut in that mode.
 
 ## Parallel ownership
 
-Issue #5 owns foundation and contract files. Sibling issues should create isolate feature directories and import the stable contracts rather than changing foundation files.
+Issue #5 owns foundation and contract files. Siblings should add isolated feature/platform files and use these seams rather than modifying foundation files.
 
-- Marketplace rows and behavior: add a primary marketplace feature.
-- Vendor research and catalog enrichment: produce data matching the shared contracts.
-- COA and terpene viewing: add a document overlay enhancer.
-- Virtualization: add an enhancer capability without replacing product semantics.
-- Mobile rendering: add a mobile enhancer or module-owned responsive implementation after desktop behavior is complete.
+- Issue #6 produces shopper data and a `marketplace.props` adapter input.
+- Issue #7 produces vendor/document evidence.
+- Issue #8 supplies the primary marketplace root.
+- Issue #9 registers platform capabilities.
 
-No sibling should add Settings, Favorites, Vendors, Comparisons, scraping/operator UI, or reintroduce legacy terminology.
+No sibling should add Settings, Favorites, Vendors, Comparisons, scraping/operator UI, or legacy user-facing terminology.
