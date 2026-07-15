@@ -211,6 +211,43 @@ def main() -> None:
 function generationCacheName(id) { return `dropfinder-data-${String(id).replace(/[^a-z0-9._-]/gi, '_')}`; }''',
     )
 
+    # Keep reproducibility outputs out of the production commit. The application
+    # shell and catalog publication remain tracked; local dependency caches,
+    # test evidence, and isolated platform bundles do not.
+    ignore_entries = [
+        "__pycache__/",
+        "*.py[cod]",
+        ".pytest_cache/",
+        ".mypy_cache/",
+        "node_modules/",
+        "web/node_modules/",
+        "web/dist/",
+        "web/dist-platform/",
+        "web/public/",
+        "web/playwright-report/",
+        "web/test-results/",
+        "web/coverage/",
+        "web/.vite/",
+        "*.tsbuildinfo",
+    ]
+    gitignore = ROOT / ".gitignore"
+    existing = gitignore.read_text(encoding="utf-8").splitlines() if gitignore.exists() else []
+    merged = existing + [entry for entry in ignore_entries if entry not in existing]
+    gitignore.write_text("\n".join(merged).rstrip() + "\n", encoding="utf-8")
+
+    # The composer and staging scripts have completed their one-time job. They
+    # must not remain as dead production workflows that refer to removed input.
+    obsolete_paths = [
+        ROOT / ".github/workflows/ui-rewrite-compose.yml",
+        ROOT / "scripts/ui_rewrite_merge.py",
+        ROOT / "scripts/ui_rewrite_finalize.py",
+        Path(__file__),
+    ]
+    for obsolete in obsolete_paths:
+        if not obsolete.exists():
+            raise RuntimeError(f"Expected integration scaffold is missing: {obsolete}")
+        obsolete.unlink()
+
 
 if __name__ == "__main__":
     main()
