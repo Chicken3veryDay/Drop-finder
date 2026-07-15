@@ -70,6 +70,7 @@ def validate_profiles(payload: dict[str, Any]) -> list[str]:
         "no_observed_gate",
         "uncertain",
     }
+    allowed_scopes = {"browsing", "checkout", "delivery", "first_order", "every_order", "unknown"}
     allowed_availability = {"public", "partial", "not_observed", "inaccessible", "unsupported", "uncertain"}
     allowed_evidence = {"current", "conflicting", "inaccessible", "stale"}
     vendors = payload.get("vendors")
@@ -93,9 +94,10 @@ def validate_profiles(payload: dict[str, Any]) -> list[str]:
         else:
             if age.get("classification") not in allowed_age:
                 errors.append(f"{vendor_id}: invalid age classification")
-            for field in ("scope", "summary"):
-                if not age.get(field):
-                    errors.append(f"{vendor_id}: age_verification.{field} missing")
+            if age.get("scope") not in allowed_scopes:
+                errors.append(f"{vendor_id}: invalid age verification scope")
+            if not age.get("summary"):
+                errors.append(f"{vendor_id}: age_verification.summary missing")
         labs = profile.get("labs")
         if not isinstance(labs, dict):
             errors.append(f"{vendor_id}: labs missing")
