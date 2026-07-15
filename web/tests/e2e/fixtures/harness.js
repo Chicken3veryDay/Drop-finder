@@ -3,8 +3,6 @@ import { VirtualMarketplaceAdapter } from '../../../src/platform/virtualization/
 import { DocumentViewerCapability } from '../../../src/platform/documents/document-viewer-capability.js';
 import { PwaGenerationCoordinator } from '../../../src/platform/pwa/pwa-generation-coordinator.js';
 import { createSyntheticCatalog } from '../../../src/platform/testing/fixture-factory.js';
-// Prime Vite's worker wrapper during harness startup without instantiating or fetching the PDF worker.
-import 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?worker';
 
 const main = document.querySelector('#main');
 const viewport = document.querySelector('#viewport');
