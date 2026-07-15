@@ -42,7 +42,7 @@ Pass the platform `MarketplaceQueryCapability`, `DocumentViewerCapability`, and 
 - `/` focuses search. Escape clears search first, then blurs it. Enter and Space toggle rows.
 - Reduced motion, forced colors, visible focus, result announcements, focus restoration, and modal focus trapping are included.
 
-The complete responsive contract and acceptance matrix are documented in [`docs/MOBILE_DESKTOP_PARITY_BUILD_SPEC.md`](../../../docs/MOBILE_DESKTOP_PARITY_BUILD_SPEC.md).
+The complete responsive contract and acceptance matrix are documented in [`docs/MOBILE_DESKTOP_PARITY_BUILD_SPEC.md`](../../../../docs/MOBILE_DESKTOP_PARITY_BUILD_SPEC.md).
 
 ## Local validation
 
