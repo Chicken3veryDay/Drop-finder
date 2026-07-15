@@ -113,7 +113,8 @@ jobs:
           node --check /tmp/dropfinder-index.js
           node --check deploy/huggingface-space/operator.js
           grep -q "dropfinder-cloud-v6" cloud_pages/sw.js
-          grep -q "stale" cloud_pages/sw.js
+          grep -q "event.waitUntil(refresh.catch" cloud_pages/sw.js
+          grep -q "return cached" cloud_pages/sw.js
       - name: Record validation result
         run: |
           set -euo pipefail
@@ -154,13 +155,24 @@ jobs:
           )
           PY
           cp deployment/render-validation.json /tmp/render-validation.json
-          git fetch origin deploy/full-stack-hf
-          git reset --hard origin/deploy/full-stack-hf
-          cp /tmp/render-validation.json deployment/render-validation.json
           git config user.name "DropFinder Render Validator"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deployment/render-validation.json
-          if ! git diff --cached --quiet; then
+          recorded=false
+          for attempt in 1 2 3 4 5; do
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/render-validation.json deployment/render-validation.json
+            git add deployment/render-validation.json
+            if git diff --cached --quiet; then
+              recorded=true
+              break
+            fi
             git commit -m "deploy: record normalization and performance validation [skip ci]"
-            git push origin HEAD:deploy/full-stack-hf
-          fi
+            if git push origin HEAD:deploy/full-stack-hf; then
+              recorded=true
+              break
+            fi
+            git reset --hard HEAD~1
+            sleep $((attempt * 2))
+          done
+          test "$recorded" = true
