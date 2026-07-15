@@ -1,4 +1,4 @@
-const CACHE = 'dropfinder-e2e-root-v4';
+const CACHE = 'dropfinder-e2e-root-v5';
 const SHELL = [
   '/tests/e2e/fixtures/harness.html',
   '/tests/e2e/fixtures/harness.js',
@@ -20,7 +20,7 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== location.origin) return;
-  if (url.pathname.startsWith('/node_modules/')) {
+  if (url.pathname.includes('/pdfjs-dist/') || url.pathname.includes('/.vite/deps/pdfjs-dist_')) {
     event.respondWith(fetch(event.request));
     return;
   }
