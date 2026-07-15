@@ -16,6 +16,7 @@ Availability = Literal["public", "partial", "not_observed", "inaccessible", "uns
 EvidenceStatus = Literal["current", "conflicting", "inaccessible", "stale"]
 DocumentKind = Literal["coa", "terpene_report", "combined_lab_report", "legal_document", "unknown"]
 ParseStatus = Literal["parsed", "partial", "unsupported_scanned", "unsupported_format", "invalid", "unavailable"]
+ParseConfidence = Literal["high", "medium", "low", "none"]
 MappingScope = Literal["variant", "weight", "batch", "product", "vendor", "unmatched"]
 
 
@@ -89,6 +90,9 @@ class ParsedLabRecord:
     terpenes: dict[str, float] = field(default_factory=dict)
     total_cannabinoids: float | None = None
     total_terpenes: float | None = None
+    confidence: ParseConfidence = "none"
+    field_provenance: dict[str, dict[str, Any]] = field(default_factory=dict)
+    warnings: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
     provenance: dict[str, Any] = field(default_factory=dict)
 
