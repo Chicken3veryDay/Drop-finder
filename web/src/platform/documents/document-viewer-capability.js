@@ -1,9 +1,5 @@
 import { PlatformError, abortError } from '../contracts.js';
-import {
-  createPdfJsCompatibilityWorker,
-  disposePdfJsRuntimeWorker,
-  loadPdfJsRuntime,
-} from './pdfjs-loader.js';
+import { loadPdfJsRuntime } from './pdfjs-loader.js';
 
 const DEFAULTS = Object.freeze({
   maxBytes: 20 * 1024 * 1024,
@@ -12,8 +8,7 @@ const DEFAULTS = Object.freeze({
   maxScale: 3,
   initialScale: 1,
   maxRetainedCanvases: 2,
-  workerStartupTimeoutMs: 3_000,
-  compatibilityStartupTimeoutMs: 12_000,
+  workerStartupTimeoutMs: 15_000,
 });
 
 /** Headless, cancellable document capability consumed by issue #8's overlay. */
@@ -22,7 +17,6 @@ export class DocumentViewerCapability {
     this.options = { ...DEFAULTS, ...options };
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
     this.loadPdfJs = options.loadPdfJs ?? (() => loadPdfJsRuntime({ workerSrc: options.pdfWorkerUrl }));
-    this.createCompatibilityWorker = options.createCompatibilityWorker ?? createPdfJsCompatibilityWorker;
     this.state = closedState();
     this.listeners = new Set();
     this.session = null;
@@ -47,7 +41,6 @@ export class DocumentViewerCapability {
       pdf: null,
       renderTask: null,
       objectUrl: null,
-      compatibilityWorker: null,
     };
     this.setState({
       status: 'loading', type, documentRef, context, page: 1, pages: null,
@@ -76,44 +69,18 @@ export class DocumentViewerCapability {
     const pdfjs = await this.loadPdfJs();
     if (signal.aborted || sessionId !== this.session?.id) return;
 
-    let task = pdfjs.getDocument({
-      data: bytes.slice(),
+    const task = pdfjs.getDocument({
+      data: bytes,
       isEvalSupported: false,
       useWorkerFetch: false,
     });
     this.session.loadingTask = task;
-    let pdf;
-    try {
-      pdf = await settleWithin(
-        task.promise,
-        this.options.workerStartupTimeoutMs,
-        signal,
-        'document_worker_timeout',
-      );
-    } catch (error) {
-      if (error?.code !== 'document_worker_timeout') throw error;
-      void task.destroy?.().catch?.(() => {});
-      disposePdfJsRuntimeWorker();
-      const compatibilityWorker = await this.createCompatibilityWorker(pdfjs);
-      if (signal.aborted || sessionId !== this.session?.id) {
-        compatibilityWorker.destroy();
-        return;
-      }
-      this.session.compatibilityWorker = compatibilityWorker;
-      task = pdfjs.getDocument({
-        data: bytes,
-        worker: compatibilityWorker.worker,
-        isEvalSupported: false,
-        useWorkerFetch: false,
-      });
-      this.session.loadingTask = task;
-      pdf = await settleWithin(
-        task.promise,
-        this.options.compatibilityStartupTimeoutMs,
-        signal,
-        'document_compatibility_timeout',
-      );
-    }
+    const pdf = await settleWithin(
+      task.promise,
+      this.options.workerStartupTimeoutMs,
+      signal,
+      'document_worker_timeout',
+    );
 
     if (signal.aborted || sessionId !== this.session?.id) {
       await pdf.destroy?.();
@@ -121,8 +88,6 @@ export class DocumentViewerCapability {
     }
     if (pdf.numPages > this.options.maxPages) {
       await pdf.destroy();
-      this.session.compatibilityWorker?.destroy();
-      this.session.compatibilityWorker = null;
       throw new PlatformError('document_too_many_pages', 'Document has too many pages');
     }
     this.session.pdf = pdf;
@@ -189,7 +154,6 @@ export class DocumentViewerCapability {
       try { session.renderTask?.cancel?.(); } catch {}
       try { await session.loadingTask?.destroy?.(); } catch {}
       try { await session.pdf?.cleanup?.(); } catch {}
-      try { session.compatibilityWorker?.destroy?.(); } catch {}
       if (session.objectUrl) URL.revokeObjectURL(session.objectUrl);
     }
     this.unlockScroll();
@@ -248,7 +212,6 @@ function conciseDocumentError(error) {
     document_too_many_pages: 'This document has too many pages to open here.',
     document_unavailable: 'This document could not be loaded.',
     document_worker_timeout: 'This document worker could not start.',
-    document_compatibility_timeout: 'This document could not be prepared in this browser.',
     malformed: 'This document could not be read.',
   };
   return { code, message: messages[code] ?? 'This document could not be opened.', action: 'open-original' };
