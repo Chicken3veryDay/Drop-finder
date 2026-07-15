@@ -99,6 +99,23 @@ class ParserTests(unittest.TestCase):
         self.assertIn(record.parse_status, {"unsupported_scanned", "unsupported_format"})
         self.assertFalse(record.cannabinoids)
 
+    def test_direct_total_thc_is_distinct_from_delta_9(self):
+        record = parse_structured_html(
+            "<table><tr><td>Total THC</td><td>24.31%</td></tr><tr><td>Delta 9 THC</td><td>0.19%</td></tr></table>",
+            self.candidate,
+        )
+        self.assertEqual(record.cannabinoids["total_thc"], 24.31)
+        self.assertEqual(record.cannabinoids["delta_9_thc"], 0.19)
+
+    def test_impossible_percentages_are_rejected_with_warning(self):
+        record = parse_structured_html(
+            "<table><tr><td>THCA</td><td>150%</td></tr><tr><td>Myrcene</td><td>-2%</td></tr></table>",
+            self.candidate,
+        )
+        self.assertNotIn("thca", record.cannabinoids)
+        self.assertNotIn("myrcene", record.terpenes)
+        self.assertTrue(any("impossible percentage" in item for item in record.limitations))
+
     def test_stable_document_ids_ignore_timestamps(self):
         first = stable_document_id("v", "https://x/a.pdf", "coa", "p", "v1", "b1")
         second = stable_document_id("v", "https://x/a.pdf", "coa", "p", "v1", "b1")
@@ -160,6 +177,19 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(validate_profiles(payload), [])
         identity = [p for p in payload["vendors"] if p["age_verification"]["classification"].startswith("identity_verification")]
         self.assertEqual(identity, [], "no vendor may be labeled identity verification without direct evidence")
+
+    def test_machine_readable_profile_contract_uses_issue_enums(self):
+        payload = json.loads(PROFILES.read_text())
+        allowed_age = {
+            "identity_verification_required", "identity_verification_conditional",
+            "self_attestation_21_plus", "no_observed_gate", "uncertain",
+        }
+        allowed_evidence = {"current", "conflicting", "inaccessible", "stale"}
+        for profile in payload["vendors"]:
+            self.assertIn(profile["age_verification"]["classification"], allowed_age)
+            self.assertTrue(profile["verified_at"])
+            for evidence in profile["evidence"]:
+                self.assertIn(evidence["status"], allowed_evidence)
 
     def test_public_artifacts_do_not_leak_private_paths(self):
         patterns = ("/mnt/data", "C:\\Users\\", "file://", "127.0.0.1", "169.254.169.254")
