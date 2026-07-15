@@ -37,14 +37,22 @@ def main() -> None:
         "  }, [asyncQueryEngine, expandedProductId, products, filters, sort]);",
     )
 
-    # The isolated marketplace branch used a minimal ambient React declaration so
-    # its standalone test runner could compile without the foundation package.
-    # Once the real React types are installed, that declaration shadows the
-    # complete module and must not survive integration.
-    react_shim = WEB / "src/features/marketplace/test/react-shim.d.ts"
-    if not react_shim.exists():
-        raise RuntimeError("Expected isolated marketplace React type shim is missing")
-    react_shim.unlink()
+    # The isolated marketplace branch used ambient React/Node declarations and
+    # node:test so it could validate without the foundation package. In the
+    # integrated frontend those declarations shadow the real packages, and the
+    # tests belong to Vitest alongside the other TypeScript unit suites.
+    test_root = WEB / "src/features/marketplace/test"
+    for shim_name in ("react-shim.d.ts", "node-shim.d.ts"):
+        shim = test_root / shim_name
+        if not shim.exists():
+            raise RuntimeError(f"Expected isolated marketplace shim is missing: {shim_name}")
+        shim.unlink()
+    for test_name in ("marketplace-core.test.ts", "marketplace-hardening.test.ts"):
+        replace(
+            test_root / test_name,
+            'import test from "node:test";',
+            'import { it as test } from "vitest";',
+        )
 
     eslint = WEB / "eslint.config.js"
     text = eslint.read_text(encoding="utf-8")
