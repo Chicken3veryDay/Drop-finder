@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Probe token identity, repository, runtime, and public hosts
+      - name: Discover Static Space runtime and delivery routes
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_REPO: Cgptmichaccount/dropfinder-os
@@ -28,65 +28,73 @@ jobs:
           set -euo pipefail
           python -m pip install --disable-pip-version-check 'huggingface_hub>=0.34,<2'
           python - <<'PY'
-          import json
-          import os
-          import traceback
-          import urllib.error
-          import urllib.request
+          import json, os, re, traceback, urllib.error, urllib.request
           from datetime import datetime, timezone
           from pathlib import Path
           from huggingface_hub import HfApi
 
           repo_id = os.environ['HF_SPACE_REPO']
           account, name = repo_id.split('/', 1)
+          page_url = f'https://huggingface.co/spaces/{repo_id}'
           candidates = [
               f'https://{account.lower()}-{name.lower()}.hf.space',
-              f'https://huggingface.co/spaces/{repo_id}',
+              page_url,
+              f'https://huggingface.co/spaces/{repo_id}/resolve/main/index.html',
+              f'https://huggingface.co/spaces/{repo_id}/resolve/main/data/catalog.json',
+              f'https://huggingface.co/spaces/{repo_id}/raw/main/index.html',
           ]
           report = {
-              'schema_version': 'dropfinder-huggingface-access-probe-v2',
+              'schema_version': 'dropfinder-huggingface-access-probe-v3',
               'checked_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               'target_repo': repo_id,
-              'token_present': bool(os.environ.get('HF_TOKEN', '').strip()),
               'candidate_urls': candidates,
           }
           try:
               api = HfApi(token=os.environ['HF_TOKEN'])
               identity = api.whoami()
-              report['identity_name'] = identity.get('name') if isinstance(identity, dict) else None
-              report['identity_type'] = identity.get('type') if isinstance(identity, dict) else None
               info = api.repo_info(repo_id=repo_id, repo_type='space')
-              report['repo_id'] = getattr(info, 'id', None)
-              report['repo_private'] = getattr(info, 'private', None)
-              report['repo_sha'] = getattr(info, 'sha', None)
-              report['repo_sdk'] = getattr(info, 'sdk', None)
               runtime = api.get_space_runtime(repo_id=repo_id)
-              report['runtime_stage'] = str(getattr(runtime, 'stage', '') or '')
-              report['runtime_hardware'] = str(getattr(runtime, 'hardware', '') or '')
-              report['runtime_requested_hardware'] = str(getattr(runtime, 'requested_hardware', '') or '')
-              report['runtime_raw'] = {key: value for key, value in vars(runtime).items() if key not in {'raw'}} if hasattr(runtime, '__dict__') else str(runtime)
-              report['status'] = 'healthy'
+              report.update(
+                  identity_name=identity.get('name') if isinstance(identity, dict) else None,
+                  repo_id=getattr(info, 'id', None),
+                  repo_private=getattr(info, 'private', None),
+                  repo_sha=getattr(info, 'sha', None),
+                  repo_sdk=getattr(info, 'sdk', None),
+                  runtime_stage=str(getattr(runtime, 'stage', '') or ''),
+                  runtime_raw=vars(runtime) if hasattr(runtime, '__dict__') else str(runtime),
+                  status='healthy',
+              )
           except Exception as exc:
-              report['status'] = 'failed'
-              report['error_type'] = type(exc).__name__
-              report['error'] = str(exc)[:4000]
-              report['traceback_tail'] = traceback.format_exc()[-6000:]
-          http_results = []
+              report.update(status='failed', error_type=type(exc).__name__, error=str(exc)[:4000], traceback_tail=traceback.format_exc()[-6000:])
+
+          results = []
+          discovered = set()
           for url in candidates:
               row = {'url': url}
               try:
-                  request = urllib.request.Request(url, headers={'User-Agent':'DropFinder-HF-Host-Probe/1.0','Accept-Encoding':'identity'})
-                  with urllib.request.urlopen(request, timeout=45) as response:
-                      body = response.read(2000).decode('utf-8','replace')
-                      row.update(status_code=int(response.status), final_url=response.geturl(), content_type=response.headers.get('Content-Type'), body_prefix=body[:500])
+                  request = urllib.request.Request(url, headers={'User-Agent':'DropFinder-HF-Route-Probe/1.0','Accept-Encoding':'identity'})
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      body = response.read(2_000_000).decode('utf-8','replace')
+                      row.update(status_code=int(response.status), final_url=response.geturl(), content_type=response.headers.get('Content-Type'), content_length=len(body), body_prefix=body[:500])
+                      for found in re.findall(r'https?://[^"\'<>\\ ]+', body):
+                          if 'hf.space' in found or '/spaces/' in found:
+                              discovered.add(found.rstrip('),;'))
+                      if url.endswith('catalog.json'):
+                          try:
+                              payload = json.loads(body)
+                              row['catalog_contract'] = payload.get('normalization_contract')
+                              row['product_count'] = len(payload.get('products') or [])
+                          except Exception:
+                              pass
               except urllib.error.HTTPError as exc:
                   row.update(status_code=int(exc.code), error=f'HTTP {exc.code}', final_url=exc.geturl())
               except Exception as exc:
                   row.update(status_code=0, error=f'{type(exc).__name__}: {exc}'[:1000])
-              http_results.append(row)
-          report['http_results'] = http_results
+              results.append(row)
+          report['http_results'] = results
+          report['discovered_urls'] = sorted(discovered)[:100]
           Path('deployment/huggingface-access-probe.json').write_text(json.dumps(report, indent=2, sort_keys=True, default=str) + '\n', encoding='utf-8')
-          print(json.dumps({k: v for k, v in report.items() if k not in {'traceback_tail','runtime_raw'}}, indent=2, sort_keys=True, default=str))
+          print(json.dumps({k:v for k,v in report.items() if k not in {'runtime_raw','traceback_tail'}}, indent=2, sort_keys=True, default=str))
           PY
       - name: Record diagnostic
         run: |
@@ -94,17 +102,15 @@ jobs:
           cp deployment/huggingface-access-probe.json /tmp/huggingface-access-probe.json
           git config user.name "DropFinder HF Access Probe"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          recorded=false
           for attempt in 1 2 3 4 5; do
             git fetch origin deploy/full-stack-hf
             git reset --hard origin/deploy/full-stack-hf
             cp /tmp/huggingface-access-probe.json deployment/huggingface-access-probe.json
             git add deployment/huggingface-access-probe.json
-            if git diff --cached --quiet; then recorded=true; break; fi
-            git commit -m "ci: record Hugging Face runtime probe [skip ci]"
-            if git pull --rebase origin deploy/full-stack-hf && git push origin HEAD:deploy/full-stack-hf; then recorded=true; break; fi
+            if git diff --cached --quiet; then exit 0; fi
+            git commit -m "ci: record Hugging Face route probe [skip ci]"
+            if git pull --rebase origin deploy/full-stack-hf && git push origin HEAD:deploy/full-stack-hf; then exit 0; fi
             git rebase --abort 2>/dev/null || true
-            git reset --hard origin/deploy/full-stack-hf
             sleep $((attempt * 2))
           done
-          test "$recorded" = true
+          exit 1
