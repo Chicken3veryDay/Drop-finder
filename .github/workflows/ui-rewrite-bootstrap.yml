@@ -69,7 +69,9 @@ jobs:
       - id: build
         name: Build integrated application
         working-directory: web
-        run: npm run build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee /tmp/dropfinder-integration-build.log
 
       - id: pwa
         name: Generate and verify application shell
@@ -141,6 +143,7 @@ jobs:
             web/test-results
             web/dist-platform
             cloud_pages/data/catalog-v4
+            /tmp/dropfinder-integration-build.log
           if-no-files-found: ignore
           retention-days: 14
 
@@ -161,21 +164,23 @@ jobs:
           PUSH_OUTCOME: ${{ steps.push.outcome }}
         run: |
           set -euo pipefail
+          cp /tmp/dropfinder-integration-build.log /tmp/bootstrap-build.log 2>/dev/null || true
           git fetch origin main ui-rewrite/06-full-integration
           git reset --hard origin/ui-rewrite/06-full-integration
           git clean -fdx
           mkdir -p .integration
+          cp /tmp/bootstrap-build.log .integration/BUILD_FAILURE.log 2>/dev/null || true
           python - <<'PY'
           import json, os
+          from pathlib import Path
           keys = ['COMPOSE','CATALOG','LOCKFILE','INSTALL','BUILD','PWA','COMMIT','PYTHON','FRONTEND','BROWSERS','EXACT','PUSH']
           payload = {key.lower(): os.environ[f'{key}_OUTCOME'] for key in keys}
           payload['run_id'] = os.environ['GITHUB_RUN_ID']
           payload['source_head'] = os.environ['GITHUB_SHA']
-          Path = __import__('pathlib').Path
           Path('.integration/BOOTSTRAP_FAILURE.json').write_text(json.dumps(payload, indent=2) + '\n')
           PY
           git config user.name "DropFinder Integration Bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .integration/BOOTSTRAP_FAILURE.json
+          git add .integration/BOOTSTRAP_FAILURE.json .integration/BUILD_FAILURE.log
           git commit -m "Record integration bootstrap failure ${GITHUB_RUN_ID}"
           git push --force origin HEAD:ui-rewrite/06-failure-evidence
