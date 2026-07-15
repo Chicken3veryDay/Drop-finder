@@ -1,8 +1,11 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
+const isE2eServer = process.env.DROPFINDER_E2E === '1';
+
 export default defineConfig({
   base: './',
+  ...(isE2eServer ? { server: { hmr: false } } : {}),
   optimizeDeps: {
     include: ['pdfjs-dist/legacy/build/pdf.mjs'],
   },
