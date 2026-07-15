@@ -53,10 +53,10 @@ async function runQuery({ preserveAnchor = false, append = false, offset = 0 } =
     expandedProductId = result.expandedProductId;
     if (append) virtual.appendPage(offset, result.rows, result.queryKey);
     else virtual.replace({ rows: result.rows, total: result.total, version: result.version, queryKey: result.queryKey, preserveAnchor });
-    feed.setAttribute('aria-setsize', String(result.total));
+    feed.dataset.resultCount = String(result.total);
     main.dataset.queryVersion = String(result.version);
     main.dataset.queryCurrent = 'true';
-    status.textContent = `${result.total.toLocaleString()} results`; 
+    status.textContent = `${result.total.toLocaleString()} results`;
   } catch (error) {
     if (error?.name !== 'AbortError') status.textContent = `Query failed: ${error.message}`;
   }
@@ -67,19 +67,28 @@ function renderRows() {
   if (focused) lastFocusedDescriptor = { key: focused.dataset.productId, action: document.activeElement.dataset.action };
   const windowState = virtual.window();
   feed.replaceChildren();
-  const top = document.createElement('div'); top.className = 'spacer'; top.style.height = `${windowState.topSpacer}px`; feed.append(top);
+  feed.style.paddingTop = `${windowState.topSpacer}px`;
+  feed.style.paddingBottom = `${windowState.bottomSpacer}px`;
   windowState.items.forEach((row, localIndex) => {
+    const expanded = expandedProductId === row.productId;
+    const detailsId = `details-${row.productId}`;
     const article = document.createElement('article');
-    article.className = 'row'; article.dataset.marketplaceRow = ''; article.dataset.productId = row.productId;
-    article.setAttribute('role', 'article'); article.setAttribute('aria-posinset', String(windowState.start + localIndex + 1)); article.setAttribute('aria-setsize', String(windowState.totalCount));
-    article.setAttribute('aria-expanded', String(expandedProductId === row.productId));
-    article.innerHTML = `<div><h2>${escapeHtml(row.strain)}</h2><p>${escapeHtml(row.vendor)} · ${row.lineage}</p></div><div><strong>$${row.price.toFixed(2)}</strong><p>${row.weight} g · $${row.ppg.toFixed(2)}/g · ${row.totalThc?.toFixed(1) ?? '—'}% THC</p></div><div class="actions"><button type="button" data-action="expand">${expandedProductId === row.productId ? 'Collapse' : 'Expand'}</button><button type="button" data-action="document">Open COA</button></div>`;
-    if (expandedProductId === row.productId) {
-      const details = document.createElement('div'); details.className = 'details'; details.textContent = `Expanded details for ${row.strain}. Variant ${row.variantId}.`; article.append(details);
-    }
+    article.className = 'row';
+    article.dataset.marketplaceRow = '';
+    article.dataset.productId = row.productId;
+    article.dataset.expanded = String(expanded);
+    article.setAttribute('aria-posinset', String(windowState.start + localIndex + 1));
+    article.setAttribute('aria-setsize', String(windowState.totalCount));
+    article.innerHTML = `<div><h2>${escapeHtml(row.strain)}</h2><p>${escapeHtml(row.vendor)} · ${row.lineage}</p></div><div><strong>$${row.price.toFixed(2)}</strong><p>${row.weight} g · $${row.ppg.toFixed(2)}/g · ${row.totalThc?.toFixed(1) ?? '—'}% THC</p></div><div class="actions"><button type="button" data-action="expand" aria-expanded="${expanded}" aria-controls="${detailsId}">${expanded ? 'Collapse' : 'Expand'}</button><button type="button" data-action="document">Open COA</button></div>`;
+    const details = document.createElement('div');
+    details.className = 'details';
+    details.id = detailsId;
+    details.hidden = !expanded;
+    details.textContent = `Expanded details for ${row.strain}. Variant ${row.variantId}.`;
+    article.append(details);
     article.querySelector('[data-action="expand"]').addEventListener('click', event => {
-      expandedProductId = expandedProductId === row.productId ? null : row.productId;
-      virtual.measure(row.productId, expandedProductId === row.productId ? 220 : 96);
+      expandedProductId = expanded ? null : row.productId;
+      virtual.measure(row.productId, expanded ? 96 : 220);
       renderRows();
       requestAnimationFrame(() => articleFor(row.productId)?.querySelector('[data-action="expand"]')?.focus());
       event.stopPropagation();
@@ -88,7 +97,6 @@ function renderRows() {
     feed.append(article);
     requestAnimationFrame(() => virtual.measure(row.productId, article.getBoundingClientRect().height));
   });
-  const bottom = document.createElement('div'); bottom.className = 'spacer'; bottom.style.height = `${windowState.bottomSpacer}px`; feed.append(bottom);
   if (lastFocusedDescriptor) requestAnimationFrame(() => articleFor(lastFocusedDescriptor.key)?.querySelector(`[data-action="${lastFocusedDescriptor.action}"]`)?.focus({ preventScroll: true }));
   main.dataset.renderedRows = String(windowState.renderedCount);
 }
@@ -105,11 +113,12 @@ sort.addEventListener('change', () => runQuery());
 weight.addEventListener('change', () => runQuery());
 
 async function openPdf(row, invoker) {
-  overlay.hidden = false;
   document.querySelector('#document-title').textContent = `${row.strain} COA`;
   document.querySelector('#open-original').href = './sample.pdf';
-  await viewer.open({ id: `coa-${row.productId}`, url: './sample.pdf', mimeType: 'application/pdf' }, { productId: row.productId, variantId: row.variantId, invoker });
+  const opening = viewer.open({ id: `coa-${row.productId}`, url: './sample.pdf', mimeType: 'application/pdf' }, { productId: row.productId, variantId: row.variantId, invoker });
+  overlay.hidden = false;
   dialog.focus();
+  await opening;
 }
 async function renderDocument(state) {
   pageStatus.textContent = state.pages ? `Page ${state.page} of ${state.pages}` : 'Loading document';
@@ -129,8 +138,11 @@ document.querySelector('#zoom-in').addEventListener('click', () => { viewer.zoom
 document.querySelector('#zoom-out').addEventListener('click', () => { viewer.zoomOut(); void renderDocument(viewer.snapshot()); });
 document.querySelector('#fit-width').addEventListener('click', () => { viewer.setFitWidth(true); void renderDocument(viewer.snapshot()); });
 document.querySelector('#unsupported').addEventListener('click', async event => {
-  overlay.hidden = false; document.querySelector('#document-title').textContent = 'Unsupported document';
-  await viewer.open({ url: './unknown.bin', mimeType: 'application/octet-stream' }, { invoker: event.currentTarget }); dialog.focus();
+  document.querySelector('#document-title').textContent = 'Unsupported document';
+  const opening = viewer.open({ url: './unknown.bin', mimeType: 'application/octet-stream' }, { invoker: event.currentTarget });
+  overlay.hidden = false;
+  dialog.focus();
+  await opening;
 });
 document.querySelector('#simulate-update').addEventListener('click', () => navigator.serviceWorker.controller?.postMessage({ type: 'simulate-update', generationId: 'e2e-generation-2' }));
 document.addEventListener('keydown', event => { if (!overlay.hidden) viewer.handleKeyDown(event, dialog); });
@@ -142,7 +154,7 @@ await runQuery();
 main.dataset.ready = 'true';
 window.__platformHarness = {
   engine, virtual, viewer, pwa, eventLog,
-  stats: () => ({ renderedRows: Number(main.dataset.renderedRows), queryVersion: Number(main.dataset.queryVersion), total: Number(feed.getAttribute('aria-setsize')) }),
+  stats: () => ({ renderedRows: Number(main.dataset.renderedRows), queryVersion: Number(main.dataset.queryVersion), total: Number(feed.dataset.resultCount) }),
   serviceWorkerReady: navigator.serviceWorker?.ready,
 };
 
