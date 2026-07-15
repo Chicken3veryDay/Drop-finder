@@ -1,0 +1,46 @@
+name: Mobile Parity Publication Artifact
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/mobile-parity-publication-artifact.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-parity-publication-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build deterministic publication
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          npm run pwa:manifest
+          npm run pwa:check
+          npm run verify:publication
+      - name: Upload publication files
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-parity-publication
+          path: |
+            cloud_pages/index.html
+            cloud_pages/app-shell.json
+            cloud_pages/assets
+          if-no-files-found: error
+          retention-days: 1
