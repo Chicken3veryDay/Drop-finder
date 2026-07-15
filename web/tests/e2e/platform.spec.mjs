@@ -18,6 +18,15 @@ async function openPwaHarness(page) {
   await page.evaluate(() => window.__platformHarness.serviceWorkerReady);
 }
 
+async function waitForPdfReady(page) {
+  await expect(page.locator('#page-status')).toContainText('Page 1 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
+  await expect(page.locator('#pdf-canvas')).toBeVisible({ timeout: DOCUMENT_READY_TIMEOUT });
+  await expect.poll(
+    async () => page.locator('#pdf-canvas').evaluate(element => element.width),
+    { timeout: DOCUMENT_READY_TIMEOUT },
+  ).toBeGreaterThan(0);
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto(HARNESS);
   await waitForCatalog(page);
@@ -89,9 +98,7 @@ test('renders the real two-page PDF, navigates, zooms, closes, and restores focu
   await opener.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(page.locator('#pdf-canvas')).toBeVisible();
-  await expect(page.locator('#page-status')).toContainText('Page 1 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
-  expect(await page.locator('#pdf-canvas').evaluate(element => element.width)).toBeGreaterThan(0);
+  await waitForPdfReady(page);
   await page.getByRole('button', { name: 'Next page' }).click();
   await expect(page.locator('#page-status')).toContainText('Page 2 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
   await page.getByRole('button', { name: 'Zoom in' }).click();
@@ -139,7 +146,7 @@ test('has no serious automated accessibility violations in the document dialog',
   test.setTimeout(DOCUMENT_TEST_TIMEOUT);
   await page.getByRole('button', { name: 'Open COA' }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.locator('#page-status')).toContainText('Page 1 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
+  await waitForPdfReady(page);
   const results = await new AxeBuilder({ page }).include('#dialog').analyze();
   expect(results.violations.filter(violation => ['serious', 'critical'].includes(violation.impact))).toEqual([]);
 });
