@@ -4,9 +4,11 @@ Canonical repository: `Chicken3veryDay/Drop-finder`
 
 ## Live phone application
 
-The credential-free phone application is published from the generated `gh-pages` branch:
+The credential-free phone application is published from the generated `gh-pages` branch and served through the repository's canonical GitHub Pages URL:
 
-`https://raw.githack.com/Chicken3veryDay/Drop-finder/gh-pages/index.html`
+`https://chicken3veryday.github.io/Drop-finder/`
+
+Do not advertise `raw.githack.com` or other raw-file CDN wrappers as the live application URL. They may cache an obsolete publication independently of the current `gh-pages` branch.
 
 The current publication receipt is stored in `deployment/cdn.json`. Treat that receipt, `cloud_pages/data/status.json`, and `cloud_pages/data/runtime.json` as the source of truth for deployment health.
 
@@ -29,7 +31,7 @@ This is a static progressive web application backed by scheduled GitHub Actions 
 3. Preserve workflow `contents: write` permission, concurrency fencing, per-source timeouts, sanitizer rules, zero-degraded admission, and publication verification.
 4. Run the affected Python self-tests and compile checks before committing.
 5. Observe the autonomous workflow through completion.
-6. Verify the new `gh-pages` catalog, status, runtime, and deployment receipt agree on product/source counts and report zero degraded active sources.
+6. Verify the GitHub Pages URL, new `gh-pages` catalog, status, runtime, and deployment receipt agree on product/source counts and report zero degraded active sources.
 7. Roll back by reverting the source commit on `main`; the next successful workflow publication replaces the generated branch atomically.
 
 ## Security rules
