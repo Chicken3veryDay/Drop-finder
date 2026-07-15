@@ -56,14 +56,25 @@ jobs:
             --output cloud_pages/data \
             --verify-only
 
-      - id: freeze
-        name: Freeze dependencies and generated application shell
+      - id: lockfile
+        name: Generate unified frozen lockfile
+        working-directory: web
+        run: npm install --package-lock-only --ignore-scripts
+
+      - id: install
+        name: Verify frozen frontend install
+        working-directory: web
+        run: npm ci
+
+      - id: build
+        name: Build integrated application
+        working-directory: web
+        run: npm run build
+
+      - id: pwa
+        name: Generate and verify application shell
         working-directory: web
         run: |
-          set -euo pipefail
-          npm install --package-lock-only --ignore-scripts
-          npm ci
-          npm run build
           npm run pwa:manifest
           npm run pwa:check
 
@@ -138,7 +149,10 @@ jobs:
         env:
           COMPOSE_OUTCOME: ${{ steps.compose.outcome }}
           CATALOG_OUTCOME: ${{ steps.catalog.outcome }}
-          FREEZE_OUTCOME: ${{ steps.freeze.outcome }}
+          LOCKFILE_OUTCOME: ${{ steps.lockfile.outcome }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          PWA_OUTCOME: ${{ steps.pwa.outcome }}
           COMMIT_OUTCOME: ${{ steps.commit.outcome }}
           PYTHON_OUTCOME: ${{ steps.python.outcome }}
           FRONTEND_OUTCOME: ${{ steps.frontend.outcome }}
@@ -153,11 +167,11 @@ jobs:
           mkdir -p .integration
           python - <<'PY'
           import json, os
-          from pathlib import Path
-          keys = ['COMPOSE','CATALOG','FREEZE','COMMIT','PYTHON','FRONTEND','BROWSERS','EXACT','PUSH']
+          keys = ['COMPOSE','CATALOG','LOCKFILE','INSTALL','BUILD','PWA','COMMIT','PYTHON','FRONTEND','BROWSERS','EXACT','PUSH']
           payload = {key.lower(): os.environ[f'{key}_OUTCOME'] for key in keys}
           payload['run_id'] = os.environ['GITHUB_RUN_ID']
           payload['source_head'] = os.environ['GITHUB_SHA']
+          Path = __import__('pathlib').Path
           Path('.integration/BOOTSTRAP_FAILURE.json').write_text(json.dumps(payload, indent=2) + '\n')
           PY
           git config user.name "DropFinder Integration Bot"
