@@ -13,21 +13,10 @@ const desktopFieldLabels = [
 ];
 
 const assertNoDocumentOverflow = async (page) => {
-  await expect.poll(async () => page.evaluate(() => ({
-    viewport: window.innerWidth,
-    document: document.documentElement.scrollWidth,
-    body: document.body.scrollWidth,
-  }))).toMatchObject({
-    viewport: expect.any(Number),
-    document: expect.any(Number),
-    body: expect.any(Number),
-  });
-
-  const overflow = await page.evaluate(() => Math.max(
+  await expect.poll(async () => page.evaluate(() => Math.max(
     document.documentElement.scrollWidth,
     document.body.scrollWidth,
-  ) - window.innerWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
+  ) - window.innerWidth)).toBeLessThanOrEqual(1);
 };
 
 test('integrated marketplace loads catalog-v4 and preserves bounded accessible interaction', async ({ page }) => {
