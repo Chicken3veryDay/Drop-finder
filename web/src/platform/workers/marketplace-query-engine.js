@@ -164,7 +164,6 @@ export function executeQuery(rows, request, version = 0, generationId = 'fixture
   });
 }
 
-
 function queryIdentity(request) {
   return JSON.stringify({
     search: request.search.toLocaleLowerCase(),
@@ -274,7 +273,11 @@ function between(value, min, max) {
   if (value == null) return min == null && max == null;
   return (min == null || value >= min) && (max == null || value <= max);
 }
-function finiteOrNull(value) { const n = Number(value); return Number.isFinite(n) ? n : null; }
+function finiteOrNull(value) {
+  if (value == null || (typeof value === 'string' && value.trim() === '')) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
 function numberCompare(a, b) { return (a ?? Number.POSITIVE_INFINITY) - (b ?? Number.POSITIVE_INFINITY); }
 function valueCompare(a, b) { return typeof a === 'number' || typeof b === 'number' ? numberCompare(a, b) : stableCompare(String(a), String(b)); }
 function queueMicrotaskPromise(fn) { return new Promise((resolve, reject) => queueMicrotask(() => { try { resolve(fn()); } catch (error) { reject(error); } })); }
