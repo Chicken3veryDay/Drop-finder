@@ -7,12 +7,13 @@ from typing import Any, Literal
 
 AgeGateClassification = Literal[
     "identity_verification_required",
-    "identity_verification_checkout_only",
+    "identity_verification_conditional",
     "self_attestation_21_plus",
-    "no_observable_age_gate",
+    "no_observed_gate",
     "uncertain",
 ]
 Availability = Literal["public", "partial", "not_observed", "inaccessible", "unsupported", "uncertain"]
+EvidenceStatus = Literal["current", "conflicting", "inaccessible", "stale"]
 DocumentKind = Literal["coa", "terpene_report", "combined_lab_report", "legal_document", "unknown"]
 ParseStatus = Literal["parsed", "partial", "unsupported_scanned", "unsupported_format", "invalid", "unavailable"]
 MappingScope = Literal["variant", "weight", "batch", "product", "vendor", "unmatched"]
@@ -29,7 +30,7 @@ class Provenance:
     discovery_method: str
     observed_at: str
     source_type: str = "public_web"
-    evidence_status: str = "observed"
+    evidence_status: EvidenceStatus = "current"
     notes: str = ""
 
 
