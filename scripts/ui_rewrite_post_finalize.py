@@ -64,12 +64,41 @@ def main() -> None:
     };
   }, [refresh]);''',
     )
+    replace(
+        provider,
+        '''  return <div ref={ref} data-virtual-product={productId}>{children}</div>;''',
+        '''  return <div ref={ref} data-virtual-product={productId} role="listitem">{children}</div>;''',
+    )
+    replace(
+        provider,
+        '''      className="df-virtual-viewport"
+      onScroll={onScroll}
+      aria-rowcount={windowState.totalCount}
+    >''',
+        '''      className="df-virtual-viewport"
+      onScroll={onScroll}
+      role="list"
+      aria-label={`Marketplace results, ${windowState.totalCount} products`}
+    >''',
+    )
 
     marketplace = WEB / "src/features/marketplace/MarketplaceFeature.tsx"
     replace(
         marketplace,
         "  }, [asyncQueryEngine, products, filters, sort]);",
         "  }, [asyncQueryEngine, expandedProductId, products, filters, sort]);",
+    )
+    replace(
+        marketplace,
+        '''    <article className={`df-product df-lineage-${row.product.lineage}`} data-expanded={expanded || undefined} role="listitem">''',
+        '''    <article className={`df-product df-lineage-${row.product.lineage}`} data-expanded={expanded || undefined}>''',
+    )
+
+    marketplace_css = WEB / "src/features/marketplace/marketplace.css"
+    replace(
+        marketplace_css,
+        "  --df-subtle: var(--color-text-subtle, #6f7680);",
+        "  --df-subtle: #7a828d;",
     )
 
     # The isolated marketplace branch used ambient React/Node declarations and
