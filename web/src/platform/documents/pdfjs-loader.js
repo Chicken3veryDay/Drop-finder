@@ -1,4 +1,4 @@
-/** Lazy-loads PDF.js and binds one explicit dedicated module worker. */
+/** Lazy-loads pinned PDF.js and binds one explicit dedicated module worker. */
 let sharedWorker = null;
 let sharedWorkerIdentity = null;
 let sharedRuntime = null;
@@ -15,14 +15,17 @@ export async function loadPdfJsRuntime(options = {}) {
       sharedWorker = worker;
       sharedWorkerIdentity = identity;
       sharedRuntime = pdfjs;
-      worker.addEventListener('error', () => {
+      const release = () => {
         if (sharedWorker !== worker) return;
         if (sharedRuntime?.GlobalWorkerOptions.workerPort === worker) {
           sharedRuntime.GlobalWorkerOptions.workerPort = null;
         }
+        worker.terminate?.();
         sharedWorker = null;
         sharedWorkerIdentity = null;
-      }, { once: true });
+      };
+      worker.addEventListener('error', release, { once: true });
+      worker.addEventListener('messageerror', release, { once: true });
     }
     pdfjs.GlobalWorkerOptions.workerPort = sharedWorker;
   }
@@ -33,33 +36,6 @@ async function createBundledWorker() {
   const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?worker');
   const PdfJsWorker = workerModule.default;
   return new PdfJsWorker({ name: 'dropfinder-pdfjs' });
-}
-
-/**
- * Creates PDF.js's compatibility worker on the main thread through a
- * MessageChannel. This is used only after a real worker fails its bounded
- * startup window, matching PDF.js's own fake-worker architecture.
- */
-export async function createPdfJsCompatibilityWorker(pdfjs) {
-  if (typeof MessageChannel === 'undefined') {
-    throw new Error('MessageChannel is unavailable');
-  }
-  const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs');
-  const channel = new MessageChannel();
-  workerModule.WorkerMessageHandler.initializeFromPort(channel.port1);
-  const worker = new pdfjs.PDFWorker({
-    name: 'dropfinder-pdfjs-compatibility',
-    port: channel.port2,
-  });
-  await worker.promise;
-  return {
-    worker,
-    destroy() {
-      worker.destroy();
-      channel.port1.close?.();
-      channel.port2.close?.();
-    },
-  };
 }
 
 export function disposePdfJsRuntimeWorker() {
