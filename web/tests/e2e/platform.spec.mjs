@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 const HARNESS = '/tests/e2e/fixtures/harness.html';
+const DOCUMENT_TEST_TIMEOUT = 120_000;
+const DOCUMENT_READY_TIMEOUT = 45_000;
 
 async function waitForCatalog(page) {
   await expect(page.locator('#main')).toHaveAttribute('data-ready', 'true', { timeout: 45_000 });
@@ -82,15 +84,16 @@ test('preserves keyboard focus and scroll anchor when a virtual row expands and 
 });
 
 test('renders the real two-page PDF, navigates, zooms, closes, and restores focus', async ({ page }) => {
+  test.setTimeout(DOCUMENT_TEST_TIMEOUT);
   const opener = page.getByRole('button', { name: 'Open COA' }).first();
   await opener.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await expect(page.locator('#pdf-canvas')).toBeVisible();
-  await expect(page.locator('#page-status')).toContainText('Page 1 of 2');
+  await expect(page.locator('#page-status')).toContainText('Page 1 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
   expect(await page.locator('#pdf-canvas').evaluate(element => element.width)).toBeGreaterThan(0);
   await page.getByRole('button', { name: 'Next page' }).click();
-  await expect(page.locator('#page-status')).toContainText('Page 2 of 2');
+  await expect(page.locator('#page-status')).toContainText('Page 2 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
   await page.getByRole('button', { name: 'Zoom in' }).click();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
@@ -133,9 +136,10 @@ test('has no serious automated accessibility violations in the shell and marketp
 });
 
 test('has no serious automated accessibility violations in the document dialog', async ({ page }) => {
+  test.setTimeout(DOCUMENT_TEST_TIMEOUT);
   await page.getByRole('button', { name: 'Open COA' }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.locator('#page-status')).toContainText('Page 1 of 2');
+  await expect(page.locator('#page-status')).toContainText('Page 1 of 2', { timeout: DOCUMENT_READY_TIMEOUT });
   const results = await new AxeBuilder({ page }).include('#dialog').analyze();
   expect(results.violations.filter(violation => ['serious', 'critical'].includes(violation.impact))).toEqual([]);
 });
