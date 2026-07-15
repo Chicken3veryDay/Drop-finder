@@ -77,12 +77,33 @@ jobs:
             --input cloud_pages/data/catalog.json \
             --output /tmp/dropfinder-catalog-v4 \
             --verify-only
-      - name: Frozen frontend validation
+      - name: Install frozen frontend dependencies
         working-directory: web
-        run: |
-          npm ci
-          npm run validate
-          npm run pwa:check
+        run: npm ci
+      - name: Lint frontend
+        working-directory: web
+        run: npm run lint
+      - name: Typecheck frontend
+        working-directory: web
+        run: npm run typecheck
+      - name: Test frontend contracts and platform
+        working-directory: web
+        run: npm test
+      - name: Run frontend performance benchmark
+        working-directory: web
+        run: npm run benchmark
+      - name: Build and verify static publication
+        working-directory: web
+        run: npm run build
+      - name: Build platform bundle
+        working-directory: web
+        run: npm run build:platform
+      - name: Analyze platform chunks
+        working-directory: web
+        run: npm run analyze:chunks
+      - name: Verify PWA shell contract
+        working-directory: web
+        run: npm run pwa:check
       - name: Validate PWA files and privacy boundary
         run: |
           test -s cloud_pages/index.html
