@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   Fragment,
   useCallback,
@@ -132,6 +133,7 @@ const objectValue = (value: unknown): Record<string, unknown> | null =>
 
 const stringValue = (value: unknown): string => typeof value === "string" ? value.trim() : "";
 const numberValue = (value: unknown): number | null => {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
@@ -263,7 +265,9 @@ const enrichProduct = (
 ): MarketplaceProduct => {
   const product = detailProduct(payload, current.id);
   if (!product) return current;
-  const details = Array.isArray(product.variants) ? product.variants.map(objectValue).filter(Boolean) : [];
+  const details = Array.isArray(product.variants)
+    ? product.variants.map(objectValue).filter((value): value is Record<string, unknown> => value !== null)
+    : [];
   const byId = new Map(details.map((variant) => [stringValue(variant?.variant_id ?? variant?.id), variant]));
   return {
     ...current,
@@ -361,7 +365,7 @@ function MeasuredRow({
     observer.observe(element);
     return () => observer.disconnect();
   }, [model, productId]);
-  return <div ref={ref} data-virtual-product={productId}>{children}</div>;
+  return <div ref={ref} data-virtual-product={productId} role="listitem">{children}</div>;
 }
 
 function VirtualizedMarketplace({
@@ -419,7 +423,6 @@ function VirtualizedMarketplace({
       ref={viewportRef}
       className="df-virtual-viewport"
       onScroll={onScroll}
-      aria-rowcount={windowState.totalCount}
     >
       <div style={{ height: windowState.topSpacer }} aria-hidden="true" />
       {windowState.items.map((item) => (
@@ -567,6 +570,7 @@ export function IntegratedMarketplaceProvider({
       setProducts(nextProducts);
     } catch (caught) {
       if (!mounted.current || signal?.aborted) return;
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "Marketplace data could not be loaded.");
     } finally {
       if (mounted.current && !signal?.aborted) {
@@ -578,11 +582,13 @@ export function IntegratedMarketplaceProvider({
 
   useEffect(() => {
     mounted.current = true;
-    const controller = new AbortController();
-    void refresh(false, controller.signal);
+    // CatalogGenerationClient deduplicates initialization through one shared
+    // promise. Aborting the first StrictMode mount would poison the second
+    // mount with the same AbortError, so startup is guarded by mounted state
+    // instead of tying the shared generation request to component cleanup.
+    void refresh(false);
     return () => {
       mounted.current = false;
-      controller.abort();
     };
   }, [refresh]);
 

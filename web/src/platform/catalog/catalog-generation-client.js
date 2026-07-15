@@ -1,8 +1,8 @@
 import { PlatformError, assertGenerationEnvelope, abortError } from '../contracts.js';
 
 const DEFAULTS = Object.freeze({
-  manifestUrl: './data/catalog-manifest-v4.json',
-  schemaVersion: 4,
+  manifestUrl: './data/catalog-v4/manifest.json',
+  schemaVersion: null,
   staleMs: 5 * 60_000,
   maxRetries: 2,
   maxDetailShards: 64,
@@ -82,14 +82,17 @@ export class CatalogGenerationClient {
       cache: 'no-store',
     });
     const manifest = assertGenerationEnvelope(await manifestResponse.json(), this.options.schemaVersion);
-    const indexUrl = new URL(manifest.index.url, manifestResponse.url || new URL(this.options.manifestUrl, locationHref()).href).href;
+    const manifestUrl = manifestResponse.url || new URL(this.options.manifestUrl, locationHref()).href;
+    const publicationBaseUrl = publicationBase(manifestUrl);
+    const descriptor = manifest.compact_index ?? manifest.index;
+    const indexUrl = resolvePublicationUrl(descriptor.path ?? descriptor.url, manifestUrl, publicationBaseUrl);
     const indexResponse = await this.fetchBounded(indexUrl, {
       signal,
-      maxBytes: Math.min(manifest.index.bytes ?? this.options.maxIndexBytes, this.options.maxIndexBytes),
+      maxBytes: Math.min(descriptor.bytes ?? this.options.maxIndexBytes, this.options.maxIndexBytes),
       cache: 'no-store',
     });
     const indexText = await indexResponse.text();
-    await verifyHash(indexText, manifest.index.sha256);
+    await verifyHash(indexText, descriptor.sha256);
     let index;
     try { index = JSON.parse(indexText); }
     catch (cause) { throw new PlatformError('malformed_index', 'Catalog index is malformed', cause); }
@@ -103,6 +106,8 @@ export class CatalogGenerationClient {
       generationId: manifest.generation_id,
       manifest,
       index,
+      manifestUrl,
+      publicationBaseUrl,
       activatedAt: Date.now(),
       source: 'network',
     });
@@ -111,16 +116,28 @@ export class CatalogGenerationClient {
   async loadDetail(productId, { signal, prefetch = false } = {}) {
     const generation = this.active;
     if (!generation) throw new PlatformError('not_initialized', 'Catalog generation is not initialized');
-    const descriptor = generation.manifest.details?.[productId] ?? generation.index.detail_shards?.[productId];
+    const legacy = generation.manifest.details?.[productId] ?? generation.index.detail_shards?.[productId];
+    const product = generation.index.products.find(row => String(row.product_id ?? row.id ?? '') === String(productId));
+    const shard = Number(product?.detail_shard);
+    const shardName = Number.isInteger(shard) ? `${String(shard).padStart(3, '0')}.json` : null;
+    const catalog = shardName
+      ? generation.manifest.product_detail_shards?.find(row => String(row.path ?? row.url ?? '').endsWith(`/${shardName}`))
+      : null;
+    const descriptor = legacy ?? catalog;
     if (!descriptor) throw new PlatformError('detail_missing', 'Product details are unavailable');
-    const cacheKey = `${generation.generationId}:${descriptor.url}`;
+    const detailUrl = resolvePublicationUrl(
+      descriptor.url ?? descriptor.path,
+      generation.manifestUrl ?? locationHref(),
+      generation.publicationBaseUrl ?? locationHref(),
+    );
+    const cacheKey = `${generation.generationId}:${detailUrl}`;
     if (this.detailLru.has(cacheKey)) {
       const hit = this.detailLru.get(cacheKey);
       this.detailLru.delete(cacheKey);
       this.detailLru.set(cacheKey, hit);
       return hit;
     }
-    const response = await this.fetchDeduped(cacheKey, descriptor.url, {
+    const response = await this.fetchDeduped(cacheKey, detailUrl, {
       signal,
       maxBytes: Math.min(descriptor.bytes ?? this.options.maxDetailBytes, this.options.maxDetailBytes),
       cache: prefetch ? 'force-cache' : 'default',
@@ -241,6 +258,31 @@ function delay(ms, signal) {
     signal?.addEventListener('abort', () => { clearTimeout(timer); reject(abortError()); }, { once: true });
   });
 }
+
+function publicationBase(manifestUrl) {
+  try {
+    const parsed = new URL(manifestUrl, locationHref());
+    const marker = '/data/catalog-v4/';
+    const index = parsed.pathname.lastIndexOf(marker);
+    if (index >= 0) {
+      parsed.pathname = parsed.pathname.slice(0, index + 1);
+      parsed.search = '';
+      parsed.hash = '';
+      return parsed.href;
+    }
+    return new URL('./', parsed).href;
+  } catch {
+    return locationHref();
+  }
+}
+
+function resolvePublicationUrl(value, manifestUrl, publicationBaseUrl) {
+  const path = String(value ?? '');
+  if (/^https?:\/\//i.test(path)) return path;
+  if (path.startsWith('./') || path.startsWith('../')) return new URL(path, manifestUrl).href;
+  return new URL(path, publicationBaseUrl).href;
+}
+
 
 function locationHref() {
   return globalThis.location?.href ?? 'https://dropfinder.invalid/';

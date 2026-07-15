@@ -30,7 +30,7 @@ import {
   type NumericRange,
   type SortOption,
 } from "./marketplace-core.js";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import "./marketplace.css";
 
 const EMPTY_DETAIL: MarketplaceProductDetail = {
@@ -384,7 +384,7 @@ function MarketplaceRow({
   };
 
   return (
-    <article className={`df-product df-lineage-${row.product.lineage}`} data-expanded={expanded || undefined} role="listitem">
+    <article className={`df-product df-lineage-${row.product.lineage}`} data-expanded={expanded || undefined}>
       <div
         className="df-row"
         role="button"
@@ -426,6 +426,7 @@ export function MarketplaceFeature({
   loadDetail,
   documentViewer,
   queryEngine,
+  asyncQueryEngine,
   virtualization,
   initialSort = "lowest_price_per_gram",
 }: MarketplaceFeatureProps) {
@@ -439,11 +440,74 @@ export function MarketplaceFeature({
     returnFocus: HTMLElement | null;
   } | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const query = useMemo(
+  const syncQuery = useMemo(
     () => queryEngine?.query(products, filters, sort) ?? queryMarketplace(products, filters, sort),
     [products, filters, sort, queryEngine],
   );
+  const [asyncQuery, setAsyncQuery] = useState({
+    rows: [] as readonly MarketplaceRowProjection[],
+    total: 0,
+    nextOffset: null as number | null,
+  });
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const loadMorePending = useRef(false);
+  const queryRevision = useRef(0);
+  const query = asyncQueryEngine ? asyncQuery : syncQuery;
   const vendors = useMemo(() => uniqueVendors(products), [products]);
+
+  useEffect(() => {
+    if (!asyncQueryEngine) return;
+    const revision = ++queryRevision.current;
+    const controller = new AbortController();
+    setQueryLoading(true);
+    setQueryError(null);
+    void asyncQueryEngine.query(products, filters, sort, {
+      offset: 0,
+      limit: 120,
+      expandedProductId,
+      signal: controller.signal,
+    }).then((result) => {
+      if (revision === queryRevision.current && !controller.signal.aborted) setAsyncQuery(result);
+    }).catch((caught: unknown) => {
+      if (
+        revision === queryRevision.current &&
+        !controller.signal.aborted &&
+        !(caught instanceof DOMException && caught.name === "AbortError")
+      ) {
+        setQueryError(caught instanceof Error ? caught.message : "Marketplace query failed.");
+      }
+    }).finally(() => {
+      if (revision === queryRevision.current && !controller.signal.aborted) setQueryLoading(false);
+    });
+    return () => controller.abort();
+  }, [asyncQueryEngine, expandedProductId, products, filters, sort]);
+
+  const loadMore = useCallback(() => {
+    if (!asyncQueryEngine || asyncQuery.nextOffset === null || loadMorePending.current) return;
+    loadMorePending.current = true;
+    const offset = asyncQuery.nextOffset;
+    void asyncQueryEngine.query(products, filters, sort, {
+      offset,
+      limit: 120,
+      expandedProductId,
+    }).then((result) => {
+      setAsyncQuery((current) => ({
+        rows: [...current.rows, ...result.rows],
+        total: result.total,
+        nextOffset: result.nextOffset,
+      }));
+    }).catch((caught: unknown) => {
+      if (!(caught instanceof DOMException && caught.name === "AbortError")) {
+        setQueryError(caught instanceof Error ? caught.message : "Additional results could not be loaded.");
+      }
+    }).finally(() => {
+      loadMorePending.current = false;
+    });
+  }, [asyncQuery, asyncQueryEngine, expandedProductId, filters, products, sort]);
+
+  const effectiveLoading = loading || queryLoading;
+  const effectiveError = error || queryError;
 
   useEffect(() => {
     setExpandedProductId((current) => keepExpandedProduct(current, query.rows));
@@ -571,14 +635,14 @@ export function MarketplaceFeature({
         <span>Weight</span><span>Price</span><span>Price/g</span><span>Rating</span>
       </div>
 
-      {loading && query.rows.length === 0 ? <SkeletonRows /> : null}
-      {error && query.rows.length === 0 ? (
+      {effectiveLoading && query.rows.length === 0 ? <SkeletonRows /> : null}
+      {effectiveError && query.rows.length === 0 ? (
         <div className="df-state" role="alert">
-          <p>{error}</p>
+          <p>{effectiveError}</p>
           {onRetry ? <button type="button" onClick={onRetry}>Retry</button> : null}
         </div>
       ) : null}
-      {!loading && !error && query.rows.length === 0 ? (
+      {!loading && !effectiveError && query.rows.length === 0 ? (
         <div className="df-state">
           <p>No products match these filters.</p>
           <button type="button" onClick={clearFilters}>Clear filters</button>
@@ -590,9 +654,11 @@ export function MarketplaceFeature({
           {virtualization
             ? virtualization.render({
                 rows: query.rows,
+                total: query.total,
                 expandedProductId,
                 renderRow,
                 renderExpanded: renderRow,
+                onEndReached: loadMore,
               })
             : query.rows.map(renderRow)}
         </div>

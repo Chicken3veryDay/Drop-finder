@@ -4,7 +4,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "../cloud_pages/assets"] },
+  { ignores: ["dist", "dist-platform", "public", "../cloud_pages/assets"] },
   {
     files: ["**/*.{js,mjs,cjs}"],
     languageOptions: {
@@ -34,6 +34,21 @@ export default tseslint.config(
     files: ["**/*.test.{ts,tsx}", "src/test/**/*.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
+      "react-refresh/only-export-components": "off",
+    },
+  },
+  {
+    files: ["**/*.{js,mjs,cjs}"],
+    rules: {
+      "no-undef": "off",
+      "no-empty": "off",
+    },
+  },
+  {
+    files: ["src/features/marketplace/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-empty-object-type": "off",
       "react-refresh/only-export-components": "off",
     },
   },

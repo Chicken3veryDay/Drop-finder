@@ -79,6 +79,16 @@ const adaptLegacyMarketplaceModule = (
   const LegacyMarketplaceRoot = ({ capabilities }: MarketplaceRootSlotProps) => {
     const supplied = capabilities.getCapability<unknown>("marketplace.props", 1);
     const suppliedProps = isRecord(supplied) ? supplied : {};
+    const Provider = suppliedProps.Provider;
+    if (isComponent(Provider)) {
+      return createElement(
+        Provider as ComponentType<{
+          mount: typeof Mount;
+          capabilities: MarketplaceRootSlotProps["capabilities"];
+        }>,
+        { mount: Mount, capabilities },
+      );
+    }
     const products = Array.isArray(suppliedProps.products) ? suppliedProps.products : [];
     return createElement(Mount, { ...suppliedProps, products, capabilities });
   };

@@ -4,7 +4,7 @@ const APP_CACHE = `dropfinder-app-${SW_VERSION}`;
 const META_CACHE = 'dropfinder-generation-meta-v1';
 const DOCUMENT_CACHE = 'dropfinder-opened-documents-v1';
 const SHELL_MANIFEST = './app-shell.json';
-const FALLBACK_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
+const FALLBACK_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './data/catalog.json', './data/status.json', './data/runtime.json'];
 const MAX_DETAIL_ENTRIES = 96;
 const MAX_DOCUMENT_ENTRIES = 12;
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -139,14 +139,20 @@ async function prepareGeneration(generationId, seedUrl, seedResponse, seedPayloa
   preparing = { id: generationId, cacheName };
   const cache = await caches.open(cacheName);
   await safeCachePut(cache, seedUrl, seedResponse);
-  const manifestResponse = seedUrl.includes('catalog-manifest-v4.json')
+  const realCatalogV4 = seedUrl.includes('/data/catalog-v4/');
+  const manifestResponse = seedUrl.includes('catalog-manifest-v4.json') || seedUrl.endsWith('/catalog-v4/manifest.json')
     ? await cache.match(seedUrl, { ignoreSearch: true })
-    : await fetch(new URL('./catalog-manifest-v4.json', seedUrl), { cache: 'no-store' });
+    : await fetch(new URL(realCatalogV4 ? './manifest.json' : './catalog-manifest-v4.json', seedUrl), { cache: 'no-store' });
   if (!manifestResponse?.ok) { preparing = null; return; }
-  const manifest = seedPayload?.index ? seedPayload : await manifestResponse.clone().json();
-  if (manifest.generation_id !== generationId || manifest.schema_version !== 4 || !manifest.index?.url) { preparing = null; return; }
-  const required = [new URL(manifest.index.url, seedUrl).href];
-  for (const descriptor of Object.values(manifest.vendors || {})) if (descriptor?.url) required.push(new URL(descriptor.url, seedUrl).href);
+  const manifest = seedPayload?.index || seedPayload?.compact_index ? seedPayload : await manifestResponse.clone().json();
+  const descriptor = manifest.compact_index ?? manifest.index;
+  const supportedSchema = manifest.schema_version === 4 || manifest.schema_version === 'dropfinder-catalog-manifest-v4';
+  if (manifest.generation_id !== generationId || !supportedSchema || !(descriptor?.url || descriptor?.path)) { preparing = null; return; }
+  const publicationBase = catalogPublicationBase(seedUrl);
+  const required = [new URL(descriptor.path ?? descriptor.url, publicationBase).href];
+  const vendorDescriptor = manifest.vendor_profiles;
+  if (vendorDescriptor?.url || vendorDescriptor?.path) required.push(new URL(vendorDescriptor.path ?? vendorDescriptor.url, publicationBase).href);
+  for (const vendor of Object.values(manifest.vendors || {})) if (vendor?.url || vendor?.path) required.push(new URL(vendor.path ?? vendor.url, publicationBase).href);
   const responses = await Promise.all(required.map(url => fetch(url, { cache: 'no-store' })));
   const identities = await Promise.all(responses.map(response => response.ok ? readGenerationIdentity(response.clone()) : { generationId: null }));
   if (responses.some(response => !response.ok) || identities.some(identity => identity.generationId !== generationId)) {
@@ -248,9 +254,20 @@ async function trimCache(cache, max, predicate) {
   const keys = (await cache.keys()).filter(request => predicate(request.url));
   await Promise.all(keys.slice(0, Math.max(0, keys.length - max)).map(request => cache.delete(request)));
 }
+function catalogPublicationBase(url) {
+  const parsed = new URL(url);
+  const marker = '/data/catalog-v4/';
+  const index = parsed.pathname.lastIndexOf(marker);
+  if (index >= 0) {
+    parsed.pathname = parsed.pathname.slice(0, index + 1);
+    parsed.search = '';
+    parsed.hash = '';
+  }
+  return parsed.href;
+}
 function generationCacheName(id) { return `dropfinder-data-${String(id).replace(/[^a-z0-9._-]/gi, '_')}`; }
 function isHashedAsset(path) { return /\.[a-f0-9]{8,}\.(?:js|css|woff2?|png|svg|webp)$/i.test(path); }
-function isManifestOrIndex(path) { return /(?:catalog-manifest-v4|catalog-index|vendor-profiles|catalog|status)\.json$/i.test(path); }
+function isManifestOrIndex(path) { return /(?:catalog-manifest-v4|catalog-index|vendor-profiles|catalog|status)\.json$/i.test(path) || /\/catalog-v4\/(?:manifest|index)\.json$/i.test(path); }
 function isLegacyCatalogMember(path) { return /\/(?:catalog|status)\.json$/i.test(path) && !path.includes('catalog-manifest-v4'); }
 function isDetailShard(path) { return /(?:details?|shards?)\/.*\.json$/i.test(path); }
 async function cacheFirst(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request, { ignoreSearch: true }); if (hit) return hit; const response = await fetch(request); if (response.ok) await safeCachePut(cache, request, response.clone()); return response; }

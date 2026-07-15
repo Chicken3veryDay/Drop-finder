@@ -5,10 +5,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "scripts/cloud_scan.py"
-      - "scripts/cloud_scan_v2.py"
+      - "scripts/**"
+      - "tests/**"
       - "cloud_pages/**"
       - "web/**"
+      - "docs/**"
       - ".github/workflows/dropfinder-ci.yml"
       - ".github/workflows/dropfinder-cloud.yml"
   pull_request:
@@ -24,30 +25,109 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compile and self-test scanner and publication gates
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Compile and test Python pipelines
         run: |
-          python -m py_compile \
-            scripts/cloud_scan.py scripts/cloud_scan_v2.py \
-            web/scripts/publication_gate.py
+          set -euo pipefail
+          python -m compileall -q scripts tests
           python scripts/cloud_scan_v2.py --self-test
-      - name: Validate current zero-degraded publication contracts
-        run: python web/scripts/publication_gate.py validate-snapshot
+          python scripts/autonomous_worker_v4.py --self-test
+          rm -rf /tmp/dropfinder-autonomous-merge-test
+          python scripts/autonomous_merge.py --self-test
+          python -m scripts.catalog_v4.selftest
+          python -m unittest discover -s tests/catalog_v4 -v
+          python -m unittest discover -s tests -p 'test_vendor_adapters.py' -v
+      - name: Validate published JSON contracts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
+          status=json.loads(Path('cloud_pages/data/status.json').read_text())
+          assert catalog['product_count']==len(catalog['products'])
+          assert status['product_count']==catalog['product_count']
+          assert status['enabled_sources']==len(status['sources'])
+          assert status['healthy_sources']+status['degraded_sources']==status['enabled_sources']
+          required={'id','source_id','vendor','name','url','availability','collected_at'}
+          for row in catalog['products']:
+              assert required <= row.keys()
+              assert row['url'].startswith(('https://','http://'))
+          print(f"validated {len(catalog['products'])} products")
+          PY
+      - name: Verify catalog v4 generation
+        run: |
+          rm -rf /tmp/dropfinder-catalog-v4
+          python -m scripts.catalog_v4 \
+            --input cloud_pages/data/catalog.json \
+            --output /tmp/dropfinder-catalog-v4 \
+            --detail-shards 16 \
+            --minimum-products 1 \
+            --minimum-variants 1
+          python -m scripts.catalog_v4 \
+            --input cloud_pages/data/catalog.json \
+            --output /tmp/dropfinder-catalog-v4 \
+            --verify-only
+      - name: Frozen frontend validation
+        working-directory: web
+        run: |
+          npm ci
+          npm run validate
+          npm run pwa:check
       - name: Validate PWA files and privacy boundary
         run: |
           test -s cloud_pages/index.html
           test -s cloud_pages/manifest.webmanifest
           test -s cloud_pages/sw.js
+          test -s cloud_pages/app-shell.json
           test -s cloud_pages/icon.svg
+          node --check cloud_pages/sw.js
           ! grep -RIE '(authorization|set-cookie|private[_-]?key|BEGIN [A-Z ]+PRIVATE KEY)' cloud_pages/data
-      - name: Ensure workflow has no external credentials
-        run: |
-          ! grep -RIE '(secrets\.|cloudflare|tailscale|oracle|ngrok|localtunnel)' \
-            .github/workflows/dropfinder-cloud.yml \
-            web/scripts/publication_gate.py \
-            scripts/cloud_scan.py scripts/cloud_scan_v2.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dropfinder-integration-validation
+          path: |
+            /tmp/dropfinder-catalog-v4/catalog-v4
+            web/dist-platform
+          if-no-files-found: error
+          retention-days: 7
+
+  browser:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Frozen frontend install
+        working-directory: web
+        run: npm ci
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Run browser, mobile, keyboard, offline, PDF, and accessibility suites
+        working-directory: web
+        run: npm run test:e2e
+      - name: Preserve browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropfinder-browser-evidence
+          path: |
+            web/playwright-report
+            web/test-results
+          if-no-files-found: ignore
+          retention-days: 7

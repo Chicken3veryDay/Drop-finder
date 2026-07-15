@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 export const LINEAGES = [
   "indica",
   "indica_leaning_hybrid",
@@ -122,16 +124,37 @@ export interface MarketplaceQueryCapability {
   ): MarketplaceQueryResult;
 }
 
+export interface MarketplaceAsyncQueryPage extends MarketplaceQueryResult {
+  nextOffset: number | null;
+}
+
+export interface MarketplaceAsyncQueryOptions {
+  offset: number;
+  limit: number;
+  expandedProductId: string | null;
+  signal?: AbortSignal;
+}
+
+export interface MarketplaceAsyncQueryCapability {
+  query(
+    products: readonly MarketplaceProduct[],
+    filters: MarketplaceFilters,
+    sort: SortOption,
+    options: MarketplaceAsyncQueryOptions,
+  ): Promise<MarketplaceAsyncQueryPage>;
+}
+
 export interface VirtualMarketplaceAdapterProps {
   rows: readonly MarketplaceRowProjection[];
+  total: number;
   expandedProductId: string | null;
-  renderRow(row: MarketplaceRowProjection): unknown;
-  renderExpanded(row: MarketplaceRowProjection): unknown;
+  renderRow(row: MarketplaceRowProjection): ReactNode;
+  renderExpanded(row: MarketplaceRowProjection): ReactNode;
   onEndReached?: (() => void) | undefined;
 }
 
 export interface VirtualMarketplaceAdapter {
-  render(props: VirtualMarketplaceAdapterProps): unknown;
+  render(props: VirtualMarketplaceAdapterProps): ReactNode;
 }
 
 export interface MarketplaceFeatureProps {
@@ -144,6 +167,7 @@ export interface MarketplaceFeatureProps {
   loadDetail?: ((productId: string, signal: AbortSignal) => Promise<MarketplaceProductDetail>) | undefined;
   documentViewer?: DocumentViewerCapability | undefined;
   queryEngine?: MarketplaceQueryCapability | undefined;
+  asyncQueryEngine?: MarketplaceAsyncQueryCapability | undefined;
   virtualization?: VirtualMarketplaceAdapter | undefined;
   initialSort?: SortOption;
 }
