@@ -34,6 +34,7 @@ jobs:
             deploy/render/render_complete_verifier.py \
             deploy/render/render_deploy_with_report.py \
             deploy/render/render_space_app.py \
+            deploy/render/migrate_runtime_state.py \
             deploy/huggingface-space/space_app.py \
             deploy/huggingface-space/hf_state.py \
             deploy/huggingface-space/hf_supervisor.py \
@@ -64,11 +65,16 @@ jobs:
           test -s deploy/render/Dockerfile
           grep -q 'plan.*free' deploy/render/render_deploy.py
           grep -q 'DROPFINDER_ASGI_APP=render_space_app:app' deploy/render/Dockerfile
+          grep -q 'DROPFINDER_STATE_MIGRATION_SCRIPT=/app/migrate_runtime_state.py' deploy/render/Dockerfile
           grep -q 'DROPFINDER_WORKER_SCRIPT=autonomous_worker_v6.py' deploy/render/Dockerfile
           grep -q 'DROPFINDER_MERGER_SCRIPT=autonomous_merge_complete.py' deploy/render/Dockerfile
           grep -q 'DROPFINDER_REQUIRED_COMPARISON_CONTRACT=exact_price_weight_ppg_thca_stock_image_v1' deploy/render/Dockerfile
           grep -q 'DROPFINDER_REQUIRED_NORMALIZATION_CONTRACT=dropfinder-product-normalization-v1' deploy/render/Dockerfile
+          grep -q 'COPY.*migrate_runtime_state.py.*/app/migrate_runtime_state.py' deploy/render/Dockerfile
           grep -q 'COPY.*catalog_normalization.py.*/app/scripts/catalog_normalization.py' deploy/render/Dockerfile
+          grep -q '_migrate_restored_state' deploy/huggingface-space/hf_supervisor.py
+          grep -q 'quality_safe_retention_enabled' deploy/render/render_deploy_with_report.py
+          grep -q 'publication_retained' deploy/render/render_deploy_with_report.py
           grep -q 'normalization_failures' deploy/render/render_space_app.py
           grep -q 'normalization_failures' deploy/render/render_complete_verifier.py
           grep -q 'content-visibility:auto' cloud_pages/index.html
@@ -115,11 +121,12 @@ jobs:
               break
             fi
             git commit -m "deploy: record normalized Render service result [skip ci]"
-            if git push origin HEAD:deploy/full-stack-hf; then
+            if git pull --rebase origin deploy/full-stack-hf && git push origin HEAD:deploy/full-stack-hf; then
               recorded=true
               break
             fi
-            git reset --hard HEAD~1
+            git rebase --abort 2>/dev/null || true
+            git reset --hard origin/deploy/full-stack-hf
             sleep $((attempt * 2))
           done
           test "$recorded" = true
