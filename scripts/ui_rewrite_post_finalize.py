@@ -37,6 +37,15 @@ def main() -> None:
         "  }, [asyncQueryEngine, expandedProductId, products, filters, sort]);",
     )
 
+    # The isolated marketplace branch used a minimal ambient React declaration so
+    # its standalone test runner could compile without the foundation package.
+    # Once the real React types are installed, that declaration shadows the
+    # complete module and must not survive integration.
+    react_shim = WEB / "src/features/marketplace/test/react-shim.d.ts"
+    if not react_shim.exists():
+        raise RuntimeError("Expected isolated marketplace React type shim is missing")
+    react_shim.unlink()
+
     eslint = WEB / "eslint.config.js"
     text = eslint.read_text(encoding="utf-8")
     text = text.replace(
