@@ -1,0 +1,27 @@
+{
+  "name": "dropfinder-platform-workstream",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20.16.0 || >=22.3.0" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "node scripts/typecheck.mjs",
+    "benchmark": "node scripts/performance/benchmark.mjs",
+    "build": "vite build",
+    "analyze:chunks": "node scripts/performance/analyze-chunks.mjs",
+    "pwa:manifest": "node scripts/pwa/generate-shell-manifest.mjs",
+    "dev:e2e": "vite --host 0.0.0.0 --port 4173 --strictPort",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps chromium firefox webkit",
+    "validate": "npm run typecheck && npm test && npm run benchmark && npm run build && npm run analyze:chunks"
+  },
+  "dependencies": {
+    "pdfjs-dist": "5.4.624"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.61.1",
+    "vite": "8.1.4"
+  }
+}

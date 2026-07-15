@@ -8,6 +8,9 @@ on:
       - "scripts/cloud_scan.py"
       - "scripts/cloud_scan_v2.py"
       - "cloud_pages/**"
+      - "web/**"
+      - "docs/UI_PERFORMANCE_AND_PWA.md"
+      - "docs/UI_REWRITE_INTEGRATION.md"
       - ".github/workflows/dropfinder-ci.yml"
       - ".github/workflows/dropfinder-cloud.yml"
   pull_request:
@@ -23,12 +26,17 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: Compile and self-test scanner
         run: |
           python -m py_compile scripts/cloud_scan.py scripts/cloud_scan_v2.py
@@ -40,25 +48,85 @@ jobs:
           from pathlib import Path
           catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
           status=json.loads(Path('cloud_pages/data/status.json').read_text())
-          assert catalog['schema_version']=='dropfinder-cloud-catalog-v1'
+          catalog_schema=catalog['schema_version']
+          assert catalog_schema.startswith('dropfinder-cloud-catalog-v')
+          assert int(catalog_schema.rsplit('v',1)[1]) >= 1
           assert catalog['product_count']==len(catalog['products'])
-          assert status['schema_version']=='dropfinder-cloud-status-v1'
-          assert status['source_count']==35
-          assert status['enabled_sources']==17
+          status_schema=status['schema_version']
+          assert status_schema.startswith(('dropfinder-cloud-status-v','dropfinder-autonomous-runtime-v'))
+          assert int(status_schema.rsplit('v',1)[1]) >= 1
+          assert status['source_count']==status.get('candidate_sources', status['source_count'])
+          assert status['enabled_sources']==len(status['sources'])
+          assert status['healthy_sources']+status['degraded_sources']==status['enabled_sources']
+          assert status['product_count']==catalog['product_count']
           required={'id','source_id','vendor','name','url','availability','collected_at'}
           for row in catalog['products']:
               assert required <= row.keys()
               assert row['url'].startswith(('https://','http://'))
-          print(f"validated {len(catalog['products'])} products")
+          for source in status['sources']:
+              assert source['enabled'] is True
+              assert source['status'] in {'healthy','degraded'}
+          print(f"validated {len(catalog['products'])} products across {status['enabled_sources']} active sources")
           PY
+      - name: Validate platform package
+        working-directory: web
+        run: |
+          npm ci
+          npm run validate
       - name: Validate PWA files and privacy boundary
         run: |
           test -s cloud_pages/index.html
           test -s cloud_pages/manifest.webmanifest
           test -s cloud_pages/sw.js
+          test -s cloud_pages/app-shell.json
           test -s cloud_pages/icon.svg
+          node --check cloud_pages/sw.js
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest=json.loads(Path('cloud_pages/manifest.webmanifest').read_text())
+          shell=json.loads(Path('cloud_pages/app-shell.json').read_text())
+          assert manifest['display']=='standalone'
+          assert manifest['start_url']=='./'
+          assert manifest['scope']=='./'
+          assert manifest['theme_color'].lower() in {'#080b10','#070a0f'}
+          assert 'health' not in manifest['description'].lower()
+          assert shell['schema_version']=='dropfinder-app-shell-v1'
+          assert shell['assets'] and all(isinstance(path,str) and not path.startswith('/') for path in shell['assets'])
+          PY
           ! grep -RIE '(authorization|set-cookie|private[_-]?key|BEGIN [A-Z ]+PRIVATE KEY)' cloud_pages/data
       - name: Ensure workflow has no external credentials
         run: |
           ! grep -RIE '(secrets\.|cloudflare|tailscale|oracle|ngrok|localtunnel)' \
             .github/workflows/dropfinder-cloud.yml scripts/cloud_scan.py scripts/cloud_scan_v2.py
+
+  browser:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Frozen frontend install
+        working-directory: web
+        run: npm ci
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Run Chromium, Firefox, WebKit, mobile, keyboard, offline, PDF, and axe suites
+        working-directory: web
+        run: npm run test:e2e
+      - name: Preserve browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dropfinder-platform-browser-evidence
+          path: |
+            web/playwright-report
+            web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
