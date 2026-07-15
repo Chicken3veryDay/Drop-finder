@@ -14,11 +14,13 @@ export async function loadPdfJsRuntime(options = {}) {
     pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
     if (!sharedWorker || sharedWorkerSource !== workerSrc) {
       disposePdfJsRuntimeWorker();
-      sharedWorker = new Worker(workerSrc, { type: 'module', name: 'dropfinder-pdfjs' });
+      const worker = new Worker(workerSrc, { type: 'module', name: 'dropfinder-pdfjs' });
+      sharedWorker = worker;
       sharedWorkerSource = workerSrc;
       sharedRuntime = pdfjs;
-      sharedWorker.addEventListener('error', () => {
-        if (sharedRuntime?.GlobalWorkerOptions.workerPort === sharedWorker) {
+      worker.addEventListener('error', () => {
+        if (sharedWorker !== worker) return;
+        if (sharedRuntime?.GlobalWorkerOptions.workerPort === worker) {
           sharedRuntime.GlobalWorkerOptions.workerPort = null;
         }
         sharedWorker = null;
