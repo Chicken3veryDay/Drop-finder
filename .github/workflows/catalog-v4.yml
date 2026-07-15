@@ -45,6 +45,13 @@ jobs:
           python -m compileall -q scripts/catalog_v4 tests/catalog_v4
           python -m scripts.catalog_v4.selftest
           python -m unittest discover -s tests/catalog_v4 -v
+      - name: Re-run affected retrieval and merge self-tests
+        run: |
+          set -euo pipefail
+          python scripts/cloud_scan_v2.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
+          rm -rf /tmp/dropfinder-autonomous-merge-test
+          python scripts/autonomous_merge.py --self-test
       - name: Build current admitted catalog through v4
         run: |
           set -euo pipefail
