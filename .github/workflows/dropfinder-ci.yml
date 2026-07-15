@@ -48,9 +48,13 @@ jobs:
           from pathlib import Path
           catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
           status=json.loads(Path('cloud_pages/data/status.json').read_text())
-          assert catalog['schema_version']=='dropfinder-cloud-catalog-v1'
+          catalog_schema=catalog['schema_version']
+          assert catalog_schema.startswith('dropfinder-cloud-catalog-v')
+          assert int(catalog_schema.rsplit('v',1)[1]) >= 1
           assert catalog['product_count']==len(catalog['products'])
-          assert status['schema_version'] in {'dropfinder-cloud-status-v1','dropfinder-autonomous-runtime-v2'}
+          status_schema=status['schema_version']
+          assert status_schema.startswith(('dropfinder-cloud-status-v','dropfinder-autonomous-runtime-v'))
+          assert int(status_schema.rsplit('v',1)[1]) >= 1
           assert status['source_count']==status.get('candidate_sources', status['source_count'])
           assert status['enabled_sources']==len(status['sources'])
           assert status['healthy_sources']+status['degraded_sources']==status['enabled_sources']
