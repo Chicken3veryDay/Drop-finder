@@ -1,0 +1,179 @@
+name: Verify DropFinder Static Space in browser
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/static-browser-verification-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-static-browser-verification
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Chromium
+        run: |
+          set -euo pipefail
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Verify live mobile app
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-static-space.js <<'JS'
+          const fs = require('fs');
+          const { chromium } = require('playwright');
+          const URL = 'https://cgptmichaccount-dropfinder-os.static.hf.space';
+
+          (async () => {
+            const browser = await chromium.launch({headless: true});
+            const context = await browser.newContext({
+              viewport: {width: 390, height: 844},
+              deviceScaleFactor: 2,
+              isMobile: true,
+              hasTouch: true,
+              serviceWorkers: 'allow'
+            });
+            const page = await context.newPage();
+            const consoleErrors = [];
+            const pageErrors = [];
+            let imageRequests = 0;
+            page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+            page.on('pageerror', error => pageErrors.push(String(error)));
+            page.on('request', request => { if (request.resourceType() === 'image') imageRequests += 1; });
+            await page.addInitScript(() => {
+              window.__longTasks = [];
+              try {
+                new PerformanceObserver(list => {
+                  for (const entry of list.getEntries()) window.__longTasks.push(entry.duration);
+                }).observe({type: 'longtask', buffered: true});
+              } catch (_) {}
+            });
+
+            const started = Date.now();
+            await page.goto(URL, {waitUntil: 'domcontentloaded', timeout: 120000});
+            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true', null, {timeout: 30000});
+            const readyMs = Date.now() - started;
+            const cardCount = await page.locator('.card').count();
+            const resultText = await page.locator('#resultCount').innerText();
+            const names = await page.locator('.card .name').allInnerTexts();
+            const packageLabels = await page.locator('.card .facts .fact').allInnerTexts();
+            const ids = await page.locator('.card').evaluateAll(cards => cards.map(card => card.dataset.productId));
+            const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
+            const paginationControls = await page.locator('[class*="pagination"], [id*="pagination"], [data-page], button:has-text("Load more")').count();
+            const lazyImageCount = await page.locator('img[loading="lazy"][decoding="async"][fetchpriority="low"]').count();
+            const metrics = await page.evaluate(() => window.__dropfinderMetrics || {});
+            const longTasks = await page.evaluate(() => window.__longTasks || []);
+            const maxLongTask = longTasks.length ? Math.max(...longTasks) : 0;
+
+            const badNames = names.filter(name => /\b\d+(?:\.\d+)?\s*(?:g|grams?|oz|ounces?)\b/i.test(name) || /\bthc-?a\b/i.test(name) || /[|_•·]/.test(name) || /\b(?:weight|size|package|amount|quantity|option)\s*:/i.test(name));
+            const filterStarted = Date.now();
+            await page.locator('#query').fill('Rainbow Cadillac');
+            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true' && document.querySelectorAll('.card').length === 3, null, {timeout: 3000});
+            const filterMs = Date.now() - filterStarted;
+            const filteredNames = await page.locator('.card .name').allInnerTexts();
+            await page.locator('#query').fill('');
+            await page.waitForFunction(() => document.querySelector('#grid')?.dataset.renderComplete === 'true' && document.querySelectorAll('.card').length === 50, null, {timeout: 5000});
+            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+            await page.waitForTimeout(250);
+            const lastCardVisible = await page.locator('.card').last().isVisible();
+            const finalImageRequests = imageRequests;
+
+            const checks = {
+              all_50_products_on_one_page: cardCount === 50,
+              result_count_matches: resultText.includes('50') && resultText.includes('on this page'),
+              no_pagination: paginationControls === 0,
+              unique_product_cards: duplicateIds.length === 0,
+              all_names_canonical: badNames.length === 0,
+              package_labels_present: packageLabels.some(value => /^\d+(?:\.\d+)? g$/.test(value)),
+              lazy_async_images: lazyImageCount === 50,
+              initial_ready_under_5000ms: readyMs < 5000,
+              internal_render_under_1000ms: Number(metrics.lastRenderMs || 999999) < 1000,
+              max_long_task_under_500ms: maxLongTask < 500,
+              filter_under_600ms: filterMs < 600,
+              filter_correct: filteredNames.length === 3 && filteredNames.every(name => name === 'Rainbow Cadillac'),
+              last_card_reachable: lastCardVisible,
+              no_page_errors: pageErrors.length === 0,
+              no_console_errors: consoleErrors.length === 0
+            };
+            const failed = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name);
+            const report = {
+              schema_version: 'dropfinder-static-browser-verification-v1',
+              status: failed.length ? 'failed' : 'healthy',
+              verified_at: new Date().toISOString(),
+              url: URL,
+              viewport: {width: 390, height: 844, mobile: true},
+              card_count: cardCount,
+              result_text: resultText,
+              unique_id_count: new Set(ids).size,
+              duplicate_ids: [...new Set(duplicateIds)],
+              bad_name_count: badNames.length,
+              bad_names: badNames,
+              ready_ms: readyMs,
+              internal_render_ms: metrics.lastRenderMs,
+              fetch_and_parse_ms: metrics.fetchAndParseMs,
+              filter_ms: filterMs,
+              max_long_task_ms: Math.round(maxLongTask * 100) / 100,
+              long_task_count: longTasks.length,
+              initial_and_scroll_image_requests: finalImageRequests,
+              lazy_image_count: lazyImageCount,
+              console_errors: consoleErrors,
+              page_errors: pageErrors,
+              checks,
+              failed_checks: failed,
+              sample_names: names.slice(0, 25)
+            };
+            fs.writeFileSync('deployment/static-browser-verification.json', JSON.stringify(report, null, 2) + '\n');
+            console.log(JSON.stringify(report, null, 2));
+            await browser.close();
+            if (failed.length) process.exit(1);
+          })().catch(error => {
+            const report = {
+              schema_version: 'dropfinder-static-browser-verification-v1',
+              status: 'error',
+              verified_at: new Date().toISOString(),
+              url: URL,
+              error: String(error?.stack || error).slice(0, 12000),
+              failed_checks: ['browser_exception']
+            };
+            fs.writeFileSync('deployment/static-browser-verification.json', JSON.stringify(report, null, 2) + '\n');
+            console.error(JSON.stringify(report, null, 2));
+            process.exit(1);
+          });
+          JS
+          node /tmp/verify-static-space.js
+      - name: Record browser verification
+        if: always()
+        run: |
+          set -euo pipefail
+          test -s deployment/static-browser-verification.json
+          cp deployment/static-browser-verification.json /tmp/static-browser-verification.json
+          git config user.name "DropFinder Browser Verifier"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          recorded=false
+          for attempt in 1 2 3 4 5; do
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/static-browser-verification.json deployment/static-browser-verification.json
+            git add deployment/static-browser-verification.json
+            if git diff --cached --quiet; then recorded=true; break; fi
+            git commit -m "test: record live Static Space browser verification [skip ci]"
+            if git pull --rebase origin deploy/full-stack-hf && git push origin HEAD:deploy/full-stack-hf; then recorded=true; break; fi
+            git rebase --abort 2>/dev/null || true
+            git reset --hard origin/deploy/full-stack-hf
+            sleep $((attempt * 2))
+          done
+          test "$recorded" = true
