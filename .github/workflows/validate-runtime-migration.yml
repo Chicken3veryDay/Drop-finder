@@ -1,0 +1,160 @@
+name: Validate DropFinder runtime migration
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/runtime-migration-validation-request.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Migrate a legacy complete catalog atomically
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/dropfinder-migration-test
+          mkdir -p /tmp/dropfinder-migration-test/data
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/dropfinder-migration-test/data')
+          products = [
+              {
+                  'id': 'legacy-green',
+                  'source_id': 'green_unicorn_farms',
+                  'vendor': 'Green Unicorn Farms',
+                  'name': 'Bolo Runtz THCa Weight: 28g',
+                  'variant': 'Weight: 28g',
+                  'grams': 28.0,
+                  'price': 99.0,
+                  'price_per_gram': 3.5357,
+                  'thca': 27.2,
+                  'availability': 'in_stock',
+                  'image': 'https://example.test/bolo.jpg',
+                  'url': 'https://example.test/products/bolo-runtz',
+                  'pricing_confidence': 'exact_variant',
+                  'weight_source': 'variant',
+                  'comparison_complete': True,
+                  'comparison_contract': 'exact_price_weight_ppg_thca_stock_image_v1',
+              },
+              {
+                  'id': 'legacy-stoney',
+                  'source_id': 'stoney_branch_farms',
+                  'vendor': 'Stoney Branch Farms',
+                  'name': 'Punch Breath THCA 28 GRAMS SMALLS',
+                  'variant': '',
+                  'grams': 28.0,
+                  'price': 170.0,
+                  'price_per_gram': 6.0714,
+                  'thca': 27.4,
+                  'availability': 'out_of_stock',
+                  'image': 'https://example.test/punch.jpg',
+                  'url': 'https://example.test/products/punch-breath',
+                  'pricing_confidence': 'exact_title',
+                  'weight_source': 'title',
+                  'comparison_complete': True,
+                  'comparison_contract': 'exact_price_weight_ppg_thca_stock_image_v1',
+              },
+          ]
+          catalog = {
+              'schema_version': 'dropfinder-cloud-catalog-v4',
+              'generated_at': '2026-07-15T00:00:00+00:00',
+              'comparison_contract': 'exact_price_weight_ppg_thca_stock_image_v1',
+              'product_count': len(products),
+              'products': products,
+          }
+          status = {
+              'comparison_contract': 'exact_price_weight_ppg_thca_stock_image_v1',
+              'healthy_sources': 4,
+              'enabled_sources': 4,
+              'degraded_sources': 0,
+              'complete_products': len(products),
+              'services': {'comparison_completeness_gate': 'healthy'},
+          }
+          runtime = {
+              'comparison_contract': 'exact_price_weight_ppg_thca_stock_image_v1',
+              'complete_products': len(products),
+              'products': len(products),
+          }
+          for name, payload in (('catalog.json', catalog), ('status.json', status), ('runtime.json', runtime)):
+              (root / name).write_text(json.dumps(payload), encoding='utf-8')
+          PY
+          python -m py_compile deploy/render/migrate_runtime_state.py deploy/huggingface-space/hf_supervisor.py deploy/render/render_deploy_with_report.py
+          DROPFINDER_RUNTIME_DIR=/tmp/dropfinder-migration-test \
+          DROPFINDER_SCRIPTS_DIR="$GITHUB_WORKSPACE/scripts" \
+          python deploy/render/migrate_runtime_state.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('/tmp/dropfinder-migration-test')
+          catalog = json.loads((root / 'data/catalog.json').read_text())
+          status = json.loads((root / 'data/status.json').read_text())
+          runtime = json.loads((root / 'data/runtime.json').read_text())
+          receipt = json.loads((root / 'normalization-migration.json').read_text())
+          assert catalog['product_count'] == 2
+          assert catalog['normalization_contract'] == 'dropfinder-product-normalization-v1'
+          rows = {row['id']: row for row in catalog['products']}
+          assert rows['legacy-green']['display_name'] == 'Bolo Runtz'
+          assert rows['legacy-green']['package_label'] == '28 g'
+          assert rows['legacy-green']['raw_name'] == 'Bolo Runtz THCa Weight: 28g'
+          assert rows['legacy-stoney']['display_name'] == 'Punch Breath Smalls'
+          assert rows['legacy-stoney']['package_label'] == '28 g'
+          assert status['services']['final_normalizer'] == 'healthy'
+          assert status['normalization_contract'] == 'dropfinder-product-normalization-v1'
+          assert runtime['normalization_contract'] == 'dropfinder-product-normalization-v1'
+          assert receipt['field_failure_count'] == 0
+          assert receipt['migrated_products'] == 2
+          PY
+      - name: Record migration validation
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          Path('deployment/runtime-migration-validation.json').write_text(json.dumps({
+              'schema_version': 'dropfinder-runtime-migration-validation-v1',
+              'status': 'healthy',
+              'validated_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+              'legacy_catalog_migrated': True,
+              'product_count_preserved': True,
+              'raw_names_preserved': True,
+              'display_names_canonicalized': True,
+              'package_labels_standardized': True,
+              'atomic_metadata_updated': True,
+              'quality_floor_unchanged': True,
+          }, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          PY
+          cp deployment/runtime-migration-validation.json /tmp/runtime-migration-validation.json
+          git config user.name "DropFinder Migration Validator"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          recorded=false
+          for attempt in 1 2 3 4 5; do
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/runtime-migration-validation.json deployment/runtime-migration-validation.json
+            git add deployment/runtime-migration-validation.json
+            if git diff --cached --quiet; then
+              recorded=true
+              break
+            fi
+            git commit -m "test: record persisted catalog migration validation [skip ci]"
+            if git push origin HEAD:deploy/full-stack-hf; then
+              recorded=true
+              break
+            fi
+            git reset --hard HEAD~1
+            sleep $((attempt * 2))
+          done
+          test "$recorded" = true
