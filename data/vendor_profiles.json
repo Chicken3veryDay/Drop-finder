@@ -1,0 +1,1067 @@
+{
+  "generated_at": "2026-07-15T02:25:00Z",
+  "methodology": {
+    "absence_rule": "No observed link or gate is recorded as not_observed/uncertain, not proof that it does not exist.",
+    "boundary": "Public first-party storefront and documentation pages only; no purchase, checkout completion, account creation, identity upload, or gate bypass.",
+    "identity_rule": "Self-attested age prompts are never classified as identity verification."
+  },
+  "schema_version": "dropfinder-vendor-profiles-v1",
+  "source_of_truth": "scripts/cloud_scan.py:SOURCES",
+  "vendors": [
+    {
+      "adapter": {
+        "discovery_strategy": "central_index_plus_product_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "The public category page inspected did not expose a clear 21+ gate or an identity-verification requirement in the retrieved representation. No checkout was attempted."
+      },
+      "allowed_document_hosts": [
+        "arete.shop",
+        "cdn.shopify.com"
+      ],
+      "canonical_origin": "https://arete.shop",
+      "category_url": "https://arete.shop/l/national/products/category/thca-flower",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The public category page inspected did not expose a clear 21+ gate or an identity-verification requirement in the retrieved representation. No checkout was attempted.",
+          "url": "https://arete.shop/l/national/products/category/thca-flower"
+        },
+        {
+          "evidence_type": "laboratory_index",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "A first-party Labs navigation item resolves to a centralized lab-report page, and the flower category states products are independently tested. Product/batch matching must be derived from report labels and product context.",
+          "url": "https://arete.shop/lab-reports"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://arete.shop",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://arete.shop/favicon.ico"
+      },
+      "known_limitations": [
+        "Age behavior may be client-side or route-dependent and remains uncertain.",
+        "Lab report labels may not expose a stable variant or batch identifier for every product."
+      ],
+      "lab_index_urls": [
+        "https://arete.shop/lab-reports"
+      ],
+      "labs": {
+        "coa_availability": "public",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "supported",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "A first-party Labs navigation item resolves to a centralized lab-report page, and the flower category states products are independently tested. Product/batch matching must be derived from report labels and product context.",
+        "terpene_availability": "partial"
+      },
+      "vendor_id": "arete",
+      "vendor_name": "Arete",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "central_index_plus_product_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "self_attestation_21_plus",
+        "provider": "none_observed",
+        "scope": "browsing",
+        "summary": "The public collection and lab pages display an \u201cAre you over 21 years old?\u201d Yes/No gate. No public evidence of document or identity verification was observed."
+      },
+      "allowed_document_hosts": [
+        "blacktiecbd.net",
+        "cdn.shopify.com",
+        "www.blacktiecbd.net"
+      ],
+      "canonical_origin": "https://www.blacktiecbd.net",
+      "category_url": "https://www.blacktiecbd.net/collections/thca-flower",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The public collection and lab pages display an \u201cAre you over 21 years old?\u201d Yes/No gate. No public evidence of document or identity verification was observed.",
+          "url": "https://www.blacktiecbd.net/collections/thca-flower"
+        },
+        {
+          "evidence_type": "laboratory_index",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The first-party collection states each product has a product-specific COA, and the centralized lab page describes full-panel batch reports including potency and safety screens. Exotic-tier reports are described as including terpene breakdowns.",
+          "url": "https://www.blacktiecbd.net/pages/lab-results-and-coas"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://www.blacktiecbd.net",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://www.blacktiecbd.net/favicon.ico"
+      },
+      "known_limitations": [
+        "The centralized page can be rendered behind the age-attestation UI.",
+        "Exact report-to-variant mapping depends on product and batch labels exposed by the site."
+      ],
+      "lab_index_urls": [
+        "https://www.blacktiecbd.net/pages/lab-results-and-coas"
+      ],
+      "labs": {
+        "coa_availability": "public",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "supported",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "The first-party collection states each product has a product-specific COA, and the centralized lab page describes full-panel batch reports including potency and safety screens. Exotic-tier reports are described as including terpene breakdowns.",
+        "terpene_availability": "public"
+      },
+      "vendor_id": "black_tie_cbd",
+      "vendor_name": "Black Tie CBD",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "No explicit public age-gate or identity-verification mechanism was observable in the retrieved category representation. Checkout was not accessed."
+      },
+      "allowed_document_hosts": [
+        "crysp.co",
+        "www.crysp.co"
+      ],
+      "canonical_origin": "https://crysp.co",
+      "category_url": "https://crysp.co/thca-flower/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "No explicit public age-gate or identity-verification mechanism was observable in the retrieved category representation. Checkout was not accessed.",
+          "url": "https://crysp.co/thca-flower/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://crysp.co",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://crysp.co/favicon.ico"
+      },
+      "known_limitations": [
+        "Lab claims were observed without a stable public central document index.",
+        "Terpene document availability could not be confirmed without inspecting individual changing products."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "partial",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "supported",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "The first-party flower category states products are lab-tested and have verified lab results, but no centralized report index or directly addressable document link was observed in the inspected category representation.",
+        "terpene_availability": "uncertain"
+      },
+      "vendor_id": "crysp",
+      "vendor_name": "Crysp",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "The retrieved public shop representation did not expose a clear age gate or identity-verification requirement."
+      },
+      "allowed_document_hosts": [
+        "fiveleafwellness.com",
+        "www.fiveleafwellness.com"
+      ],
+      "canonical_origin": "https://fiveleafwellness.com",
+      "category_url": "https://fiveleafwellness.com/shop/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The retrieved public shop representation did not expose a clear age gate or identity-verification requirement.",
+          "url": "https://fiveleafwellness.com/shop/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://fiveleafwellness.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://fiveleafwellness.com/favicon.ico"
+      },
+      "known_limitations": [
+        "Current public shop output did not expose qualifying flower products or lab links.",
+        "Product-level pages may differ and require future safe refreshes."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No first-party COA, lab-report, or terpene-report link was observed on the inspected shop representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "five_leaf_wellness",
+      "vendor_name": "Five Leaf Wellness",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "self_attestation_21_plus",
+        "provider": "none_observed",
+        "scope": "browsing",
+        "summary": "The public category page displays a self-attested age prompt asking whether the visitor is over 21. The button text is internally inconsistent (\u201c18 or Older\u201d), so the result is retained with that limitation and not treated as identity verification."
+      },
+      "allowed_document_hosts": [
+        "greenunicornfarms.com",
+        "www.greenunicornfarms.com"
+      ],
+      "canonical_origin": "https://greenunicornfarms.com",
+      "category_url": "https://greenunicornfarms.com/category/thca-flower/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The public category page displays a self-attested age prompt asking whether the visitor is over 21. The button text is internally inconsistent (\u201c18 or Older\u201d), so the result is retained with that limitation and not treated as identity verification.",
+          "url": "https://greenunicornfarms.com/category/thca-flower/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://greenunicornfarms.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://greenunicornfarms.com/favicon.ico"
+      },
+      "known_limitations": [
+        "Age-modal copy is inconsistent between the question and affirmative button.",
+        "No centralized public lab index was found in the inspected category page."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No centralized lab-report or COA link was observed in the inspected THCA category representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "green_unicorn_farms",
+      "vendor_name": "Green Unicorn Farms",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved flower-category representation."
+      },
+      "allowed_document_hosts": [
+        "shophellomary.com",
+        "www.shophellomary.com"
+      ],
+      "canonical_origin": "https://shophellomary.com",
+      "category_url": "https://shophellomary.com/category/flower/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved flower-category representation.",
+          "url": "https://shophellomary.com/category/flower/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://shophellomary.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://shophellomary.com/favicon.ico"
+      },
+      "known_limitations": [
+        "Category output does not prove the absence of product-page lab documents.",
+        "Age behavior may be implemented in client-side state not exposed by the retrieved representation."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No COA, lab report, or terpene document link was observed in the inspected category representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "hello_mary",
+      "vendor_name": "Hello Mary",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "self_attestation_21_plus",
+        "provider": "none_observed",
+        "scope": "browsing",
+        "summary": "The public flower page displays a gate requiring the visitor to affirm \u201cYes, I\u2019m 21+ years old.\u201d No identity-document requirement was observed."
+      },
+      "allowed_document_hosts": [
+        "holycityfarms.com",
+        "www.holycityfarms.com"
+      ],
+      "canonical_origin": "https://holycityfarms.com",
+      "category_url": "https://holycityfarms.com/product-category/smokeables/flower/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The public flower page displays a gate requiring the visitor to affirm \u201cYes, I\u2019m 21+ years old.\u201d No identity-document requirement was observed.",
+          "url": "https://holycityfarms.com/product-category/smokeables/flower/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://holycityfarms.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://holycityfarms.com/favicon.ico"
+      },
+      "known_limitations": [
+        "The catalog includes multiple cannabinoid types, so lab discovery must stay bound to accepted products.",
+        "No public central lab index was observed during this pass."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No centralized COA or lab-report link was observed in the inspected category representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "holy_city_farms",
+      "vendor_name": "Holy City Farms",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "No explicit age gate or identity-verification requirement was observable in the retrieved home-page representation."
+      },
+      "allowed_document_hosts": [
+        "loudhempproducts.com",
+        "www.loudhempproducts.com"
+      ],
+      "canonical_origin": "https://loudhempproducts.com",
+      "category_url": "https://loudhempproducts.com/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "No explicit age gate or identity-verification requirement was observable in the retrieved home-page representation.",
+          "url": "https://loudhempproducts.com/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://loudhempproducts.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://loudhempproducts.com/favicon.ico"
+      },
+      "known_limitations": [
+        "The public page is sparse and may omit product-page metadata.",
+        "No centralized lab index was observed."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No lab-report, COA, or terpene-document link was observed in the inspected public representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "loud_house_hemp",
+      "vendor_name": "Loud House Hemp",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "central_index_gallery",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "self_attestation_21_plus",
+        "provider": "none_observed",
+        "scope": "browsing",
+        "summary": "The public collection and COA pages display an Adults only (21+) enter/exit gate. This is self-attestation, not identity verification."
+      },
+      "allowed_document_hosts": [
+        "cdn.shopify.com",
+        "luckyelk.com",
+        "www.luckyelk.com"
+      ],
+      "canonical_origin": "https://luckyelk.com",
+      "category_url": "https://luckyelk.com/collections/thca-flower",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The public collection and COA pages display an Adults only (21+) enter/exit gate. This is self-attestation, not identity verification.",
+          "url": "https://luckyelk.com/collections/thca-flower"
+        },
+        {
+          "evidence_type": "laboratory_index",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "A first-party COA Tests page exposes a THCA Flower section with public report links. Terpene coverage varies by report and is therefore classified partial rather than universal.",
+          "url": "https://luckyelk.com/pages/coa-tests"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://luckyelk.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://luckyelk.com/favicon.ico"
+      },
+      "known_limitations": [
+        "The report gallery uses image/document links whose visible labels may be sparse.",
+        "Exact batch and variant mapping may require report-internal identifiers."
+      ],
+      "lab_index_urls": [
+        "https://luckyelk.com/pages/coa-tests"
+      ],
+      "labs": {
+        "coa_availability": "public",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "supported",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "A first-party COA Tests page exposes a THCA Flower section with public report links. Terpene coverage varies by report and is therefore classified partial rather than universal.",
+        "terpene_availability": "partial"
+      },
+      "vendor_id": "lucky_elk",
+      "vendor_name": "Lucky Elk",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved flower-category representation."
+      },
+      "allowed_document_hosts": [
+        "checkout.prestonherbco.com",
+        "prestonherbco.com",
+        "www.prestonherbco.com"
+      ],
+      "canonical_origin": "https://www.prestonherbco.com",
+      "category_url": "https://www.prestonherbco.com/categories/flower",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved flower-category representation.",
+          "url": "https://www.prestonherbco.com/categories/flower"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://www.prestonherbco.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://www.prestonherbco.com/favicon.ico"
+      },
+      "known_limitations": [
+        "Rendered category content did not expose product-level laboratory links.",
+        "The checkout domain was not accessed."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No COA or lab-document link was observed in the inspected category representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "preston_herb_co",
+      "vendor_name": "Preston Herb Co.",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "No explicit age gate or identity-verification mechanism was observable in the retrieved category representation."
+      },
+      "allowed_document_hosts": [
+        "purerootsbotanicals.com",
+        "www.purerootsbotanicals.com"
+      ],
+      "canonical_origin": "https://purerootsbotanicals.com",
+      "category_url": "https://purerootsbotanicals.com/product-category/thca-flower/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "No explicit age gate or identity-verification mechanism was observable in the retrieved category representation.",
+          "url": "https://purerootsbotanicals.com/product-category/thca-flower/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://purerootsbotanicals.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://purerootsbotanicals.com/favicon.ico"
+      },
+      "known_limitations": [
+        "Product pages may expose changing report links not present on the category page.",
+        "No checkout or account flow was accessed."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No centralized COA, lab-results, or terpene-document link was observed in the inspected category representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "pure_roots_botanicals",
+      "vendor_name": "Pure Roots Botanicals",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved flower-category representation."
+      },
+      "allowed_document_hosts": [
+        "quantumexotics.com",
+        "static.wixstatic.com",
+        "www.quantumexotics.com"
+      ],
+      "canonical_origin": "https://www.quantumexotics.com",
+      "category_url": "https://www.quantumexotics.com/category/flower",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved flower-category representation.",
+          "url": "https://www.quantumexotics.com/category/flower"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://www.quantumexotics.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://www.quantumexotics.com/favicon.ico"
+      },
+      "known_limitations": [
+        "The Wix-rendered category is compact and may defer product details to client requests.",
+        "No central laboratory index was observed."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No COA or laboratory document link was observed in the inspected category representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "quantum_exotics",
+      "vendor_name": "Quantum Exotics",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "central_index_named_documents",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "self_attestation_21_plus",
+        "provider": "none_observed",
+        "scope": "browsing",
+        "summary": "The public site displays an \u201cAre you over 21?\u201d Yes/No entry prompt. No identity-document requirement was observed."
+      },
+      "allowed_document_hosts": [
+        "cdn.shopify.com",
+        "secretnature.com",
+        "www.secretnature.com"
+      ],
+      "canonical_origin": "https://secretnature.com",
+      "category_url": "https://secretnature.com/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The public site displays an \u201cAre you over 21?\u201d Yes/No entry prompt. No identity-document requirement was observed.",
+          "url": "https://secretnature.com/"
+        },
+        {
+          "evidence_type": "laboratory_index",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "A first-party laboratory page provides public batch COAs grouped by product category and states complete terpene analysis is included for every strain.",
+          "url": "https://secretnature.com/pages/laboratory-test-results"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://secretnature.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://secretnature.com/favicon.ico"
+      },
+      "known_limitations": [
+        "The configured scraper collection has changed independently of the lab index.",
+        "Document labels must be normalized carefully because historical and current products coexist."
+      ],
+      "lab_index_urls": [
+        "https://secretnature.com/pages/laboratory-test-results"
+      ],
+      "labs": {
+        "coa_availability": "public",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "supported",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "A first-party laboratory page provides public batch COAs grouped by product category and states complete terpene analysis is included for every strain.",
+        "terpene_availability": "public"
+      },
+      "vendor_id": "secret_nature",
+      "vendor_name": "Secret Nature",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "self_attestation_21_plus",
+        "provider": "none_observed",
+        "scope": "browsing",
+        "summary": "The public home page asks whether the visitor is over 21 and provides a self-attested affirmative choice. No identity-verification requirement was observed."
+      },
+      "allowed_document_hosts": [
+        "sherlocksglass.com",
+        "www.sherlocksglass.com"
+      ],
+      "canonical_origin": "https://sherlocksglass.com",
+      "category_url": "https://sherlocksglass.com/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The public home page asks whether the visitor is over 21 and provides a self-attested affirmative choice. No identity-verification requirement was observed.",
+          "url": "https://sherlocksglass.com/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://sherlocksglass.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://sherlocksglass.com/favicon.ico"
+      },
+      "known_limitations": [
+        "The storefront is very large and mixes many non-flower forms, so discovery must stay product-bound.",
+        "No central laboratory index was found in this pass."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No centralized COA or terpene-report index was observed in the inspected home-page representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "sherlocks_glass",
+      "vendor_name": "Sherlocks Glass & Dispensary",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "self_attestation_21_plus",
+        "provider": "none_observed",
+        "scope": "browsing",
+        "summary": "The public site displays a 21+ Yes/No age prompt. It is self-attestation and not evidence of identity verification."
+      },
+      "allowed_document_hosts": [
+        "smokymountaincbd.com",
+        "www.smokymountaincbd.com"
+      ],
+      "canonical_origin": "https://www.smokymountaincbd.com",
+      "category_url": "https://www.smokymountaincbd.com/",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "The public site displays a 21+ Yes/No age prompt. It is self-attestation and not evidence of identity verification.",
+          "url": "https://www.smokymountaincbd.com/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://www.smokymountaincbd.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://www.smokymountaincbd.com/favicon.ico"
+      },
+      "known_limitations": [
+        "The site mixes wholesale and retail content across many product forms.",
+        "No central public lab index was observed."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No centralized COA or lab-report link was observed in the inspected home-page representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "smoky_mountain_cbd",
+      "vendor_name": "Smoky Mountain CBD",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "product_page_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved THCA collection representation."
+      },
+      "allowed_document_hosts": [
+        "cdn.shopify.com",
+        "stoneybranch.com",
+        "www.stoneybranch.com"
+      ],
+      "canonical_origin": "https://stoneybranch.com",
+      "category_url": "https://stoneybranch.com/collections/thca",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved THCA collection representation.",
+          "url": "https://stoneybranch.com/collections/thca"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://stoneybranch.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://stoneybranch.com/favicon.ico"
+      },
+      "known_limitations": [
+        "Collection output may omit product-page report links.",
+        "No centralized public laboratory page was observed."
+      ],
+      "lab_index_urls": [],
+      "labs": {
+        "coa_availability": "not_observed",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "opportunistic",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "No COA or lab-document link was observed on the inspected collection representation.",
+        "terpene_availability": "not_observed"
+      },
+      "vendor_id": "stoney_branch_farms",
+      "vendor_name": "Stoney Branch Farms",
+      "verified_at": "2026-07-15T02:25:00Z"
+    },
+    {
+      "adapter": {
+        "discovery_strategy": "central_index_plus_product_links",
+        "ocr_supported": false,
+        "parser_strategy": "safe_auto_structured_html_json_pdf_text",
+        "product_page_discovery": true,
+        "redirect_policy": "same_vendor_or_declared_cdn_hosts_only",
+        "structured_api_discovery": true
+      },
+      "age_verification": {
+        "classification": "uncertain",
+        "provider": "none_observed",
+        "scope": "unknown",
+        "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved category shell. No checkout was attempted."
+      },
+      "allowed_document_hosts": [
+        "cdn11.bigcommerce.com",
+        "wnc-cbd.com",
+        "www.wnc-cbd.com"
+      ],
+      "canonical_origin": "https://wnc-cbd.com",
+      "category_url": "https://wnc-cbd.com/high-thca-flower",
+      "evidence": [
+        {
+          "evidence_type": "storefront_or_category",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "No explicit public age gate or identity-verification mechanism was observable in the retrieved category shell. No checkout was attempted.",
+          "url": "https://wnc-cbd.com/high-thca-flower"
+        },
+        {
+          "evidence_type": "laboratory_index",
+          "observed_at": "2026-07-15T02:25:00Z",
+          "status": "current",
+          "summary": "A first-party Lab Reports & Legal Documentation resource is linked from the storefront and redirects to a current public documentation page. Individual document completeness and terpene coverage vary.",
+          "url": "https://wnc-cbd.com/lab-reports-legal-documentation-20/"
+        }
+      ],
+      "favicon": {
+        "provenance": {
+          "method": "conventional_first_party_path",
+          "source_url": "https://wnc-cbd.com",
+          "status": "candidate_not_required_for_lab_parsing"
+        },
+        "url": "https://wnc-cbd.com/favicon.ico"
+      },
+      "known_limitations": [
+        "The category shell currently exposes limited product records to automated retrieval.",
+        "The documentation index combines lab and legal materials, so document-kind filtering is required."
+      ],
+      "lab_index_urls": [
+        "https://wnc-cbd.com/lab-reports-legal-documentation-20/"
+      ],
+      "labs": {
+        "coa_availability": "public",
+        "mapping_capability": {
+          "batch": "when_explicit_identifier_present",
+          "fallback": "vendor_level_unmatched_without_guessing",
+          "product": "supported",
+          "variant": "when_explicit_identifier_present",
+          "weight": "when_explicit_label_present"
+        },
+        "summary": "A first-party Lab Reports & Legal Documentation resource is linked from the storefront and redirects to a current public documentation page. Individual document completeness and terpene coverage vary.",
+        "terpene_availability": "partial"
+      },
+      "vendor_id": "wnc_cbd",
+      "vendor_name": "WNC CBD",
+      "verified_at": "2026-07-15T02:25:00Z"
+    }
+  ]
+}
