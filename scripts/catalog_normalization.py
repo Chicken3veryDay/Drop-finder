@@ -34,8 +34,8 @@ _PUNCTUATION = re.compile(r"^[\s,:;\-+./]+|[\s,:;\-+./]+$")
 _DUPLICATE_WORD = re.compile(r"\b([a-z0-9']+)\s+\1\b", re.I)
 
 _FORM_PATTERNS = (
-    ("Minis", re.compile(r"\b(?:minis?|mini\s+buds?)\b", re.I)),
-    ("Smalls", re.compile(r"\b(?:smalls?|small\s+buds?)\b", re.I)),
+    ("Minis", re.compile(r"\b(?:mini\s+buds?|minis?)\b", re.I)),
+    ("Smalls", re.compile(r"\b(?:small\s+buds?|smalls?)\b", re.I)),
     ("Popcorn", re.compile(r"\bpopcorn(?:\s+buds?)?\b", re.I)),
     ("Shake", re.compile(r"\bshake\b", re.I)),
     ("Trim", re.compile(r"\btrim\b", re.I)),
