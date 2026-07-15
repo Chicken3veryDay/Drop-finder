@@ -3,6 +3,9 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   base: './',
+  optimizeDeps: {
+    include: ['pdfjs-dist/legacy/build/pdf.mjs'],
+  },
   build: {
     outDir: 'dist-platform',
     emptyOutDir: true,
