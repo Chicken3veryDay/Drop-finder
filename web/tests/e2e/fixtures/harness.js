@@ -20,7 +20,11 @@ const pageStatus = document.querySelector('#page-status');
 const products = createSyntheticCatalog(10_000, { seed: 9 });
 const engine = new MarketplaceQueryEngine();
 const virtual = new VirtualMarketplaceAdapter({ estimatedRowHeight: 96, overscanPx: 260, pageSize: 300, maxRetainedPages: 10 });
-const viewer = new DocumentViewerCapability({ maxBytes: 4 * 1024 * 1024, maxPages: 10 });
+const viewer = new DocumentViewerCapability({
+  maxBytes: 4 * 1024 * 1024,
+  maxPages: 10,
+  pdfWorkerUrl: '/pdfjs/pdf.worker.min.mjs',
+});
 const pwa = new PwaGenerationCoordinator();
 const pwaEnabled = new URL(location.href).searchParams.has('pwa');
 let serviceWorkerReady = Promise.resolve(null);

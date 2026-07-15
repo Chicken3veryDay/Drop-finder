@@ -11,6 +11,8 @@
     "build": "vite build",
     "analyze:chunks": "node scripts/performance/analyze-chunks.mjs",
     "pwa:manifest": "node scripts/pwa/generate-shell-manifest.mjs",
+    "prepare:e2e-worker": "node scripts/pdfjs/prepare-e2e-worker.mjs",
+    "predev:e2e": "npm run prepare:e2e-worker",
     "dev:e2e": "node tests/e2e/run-vite.mjs",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium firefox webkit",
