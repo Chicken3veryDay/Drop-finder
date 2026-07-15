@@ -1,4 +1,4 @@
-const CACHE = 'dropfinder-e2e-root-v2';
+const CACHE = 'dropfinder-e2e-root-v3';
 const SHELL = [
   '/tests/e2e/fixtures/harness.html',
   '/tests/e2e/fixtures/harness.js',
@@ -16,17 +16,28 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET' || new URL(event.request.url).origin !== location.origin) return;
-  event.respondWith(caches.open(CACHE).then(async cache => {
-    try {
-      const response = await fetch(event.request);
-      if (response.ok) await cache.put(event.request, response.clone());
-      return response;
-    } catch {
-      return (await cache.match(event.request))
-        || (await cache.match(event.request, { ignoreSearch: true }))
-        || new Response('Offline', { status: 503 });
-    }
+  if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/node_modules/')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  const network = fetch(event.request).then(response => ({
+    response,
+    cacheCopy: response.ok ? response.clone() : null,
+  }));
+  event.waitUntil(network.then(async ({ cacheCopy }) => {
+    if (!cacheCopy) return;
+    const cache = await caches.open(CACHE);
+    await cache.put(event.request, cacheCopy);
+  }).catch(() => {}));
+  event.respondWith(network.then(({ response }) => response).catch(async () => {
+    const cache = await caches.open(CACHE);
+    return (await cache.match(event.request))
+      || (await cache.match(event.request, { ignoreSearch: true }))
+      || new Response('Offline', { status: 503 });
   }));
 });
 
