@@ -8,7 +8,7 @@ from typing import Any, Iterable
 
 from .models import DocumentCandidate, ParsedLabRecord
 
-PERCENT = r"(-?\d{1,3}(?:\.\d+)?)\s*%"
+PERCENT = r"(?<![\d.])(-?\d{1,3}(?:\.\d+)?)(?![\d.])\s*%"
 CANNABINOID_LABELS = {
     "thca": re.compile(r"\b(?:delta[- ]?9[- ]?)?thc[- ]?a\b", re.I),
     "delta_9_thc": re.compile(r"\b(?:delta[- ]?9[- ]?)?thc\b(?![- ]?a)", re.I),
@@ -18,6 +18,7 @@ CANNABINOID_LABELS = {
     "cbga": re.compile(r"\bcbg[- ]?a\b", re.I),
     "cbn": re.compile(r"\bcbn\b", re.I),
 }
+DIRECT_TOTAL_THC = re.compile(r"\b(?:direct\s+)?total\s+(?:delta[- ]?9\s+)?thc\b", re.I)
 TERPENE_NAMES = (
     "beta-caryophyllene", "caryophyllene", "limonene", "linalool", "myrcene",
     "alpha-pinene", "beta-pinene", "pinene", "humulene", "terpinolene", "ocimene",
@@ -37,7 +38,7 @@ def _number(value: Any) -> float | None:
         result = float(str(value).replace("%", "").strip())
     except (TypeError, ValueError):
         return None
-    return round(result, 6) if -0.000001 <= result <= 1000 else None
+    return round(result, 6) if 0.0 <= result <= 100.0 else None
 
 
 def _extract_metrics(text: str) -> tuple[dict[str, float], dict[str, float], float | None, float | None]:
@@ -57,10 +58,13 @@ def _extract_metrics(text: str) -> tuple[dict[str, float], dict[str, float], flo
         value = _number(values[-1])
         if value is None:
             continue
-        for name, pattern in CANNABINOID_LABELS.items():
-            if pattern.search(line):
-                cannabinoids.setdefault(name, value)
-                break
+        if DIRECT_TOTAL_THC.search(line):
+            cannabinoids.setdefault("total_thc", value)
+        else:
+            for name, pattern in CANNABINOID_LABELS.items():
+                if pattern.search(line):
+                    cannabinoids.setdefault(name, value)
+                    break
         lower = line.lower()
         for terpene in TERPENE_NAMES:
             if terpene in lower:
@@ -79,6 +83,9 @@ def parse_lab_text(text: str, candidate: DocumentCandidate, parser_id: str = "la
         fields[name] = match.group(1).strip() if match else ""
     cannabinoids, terpenes, total_c, total_t = _extract_metrics(normalized)
     limitations: list[str] = []
+    impossible_values = [raw for raw in re.findall(PERCENT, normalized) if _number(raw) is None]
+    if impossible_values:
+        limitations.append(f"ignored {len(impossible_values)} impossible percentage value(s)")
     if not cannabinoids and not terpenes:
         limitations.append("no recognized cannabinoid or terpene percentage rows")
     status = "parsed" if cannabinoids or terpenes else "partial"
@@ -119,6 +126,7 @@ def _walk(value: Any) -> Iterable[tuple[str, Any]]:
 def parse_structured_json(payload: str | bytes | dict[str, Any] | list[Any], candidate: DocumentCandidate) -> ParsedLabRecord:
     data = json.loads(payload) if isinstance(payload, (str, bytes, bytearray)) else payload
     flattened: list[str] = []
+
     def visit(value: Any) -> None:
         if isinstance(value, dict):
             label = next((value.get(key) for key in ("analyte", "compound", "cannabinoid", "terpene", "name", "label") if value.get(key) not in (None, "")), None)
@@ -133,6 +141,7 @@ def parse_structured_json(payload: str | bytes | dict[str, Any] | list[Any], can
         elif isinstance(value, list):
             for item in value:
                 visit(item)
+
     visit(data)
     return parse_lab_text("\n".join(flattened), candidate, "structured_json_v1")
 
@@ -141,10 +150,12 @@ class _TextHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
+
     def handle_data(self, data: str) -> None:
         value = re.sub(r"\s+", " ", data).strip()
         if value:
             self.parts.append(value)
+
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() in {"p", "div", "tr", "td", "th", "li", "br", "h1", "h2", "h3", "h4"}:
             self.parts.append("\n")
