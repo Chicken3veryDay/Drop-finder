@@ -77,8 +77,6 @@ def main() -> None:
     >''',
         '''      className="df-virtual-viewport"
       onScroll={onScroll}
-      role="list"
-      aria-label={`Marketplace results, ${windowState.totalCount} products`}
     >''',
     )
 
