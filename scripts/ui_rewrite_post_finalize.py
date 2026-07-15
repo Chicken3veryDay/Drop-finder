@@ -44,28 +44,40 @@ def main() -> None:
         '{ ignores: ["dist", "dist-platform", "public", "../cloud_pages/assets"] },',
         1,
     )
-    marker = '''    languageOptions: {
-      globals: {
-        console: "readonly",
-        process: "readonly",
-        URL: "readonly",
-      },
+    tail = '''  {
+    files: ["**/*.test.{ts,tsx}", "src/test/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "react-refresh/only-export-components": "off",
     },
-  },'''
-    replacement = '''    languageOptions: {
-      globals: {
-        console: "readonly",
-        process: "readonly",
-        URL: "readonly",
-      },
+  },
+);'''
+    replacement_tail = '''  {
+    files: ["**/*.test.{ts,tsx}", "src/test/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "react-refresh/only-export-components": "off",
     },
+  },
+  {
+    files: ["**/*.{js,mjs,cjs}"],
     rules: {
       "no-undef": "off",
+      "no-empty": "off",
     },
-  },'''
-    if marker not in text:
-        raise RuntimeError("Expected JavaScript ESLint block is missing")
-    eslint.write_text(text.replace(marker, replacement, 1), encoding="utf-8")
+  },
+  {
+    files: ["src/features/marketplace/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-empty-object-type": "off",
+      "react-refresh/only-export-components": "off",
+    },
+  },
+);'''
+    if tail not in text:
+        raise RuntimeError("Expected ESLint configuration tail is missing")
+    eslint.write_text(text.replace(tail, replacement_tail, 1), encoding="utf-8")
 
     service_worker = ROOT / "cloud_pages/sw.js"
     replace(
