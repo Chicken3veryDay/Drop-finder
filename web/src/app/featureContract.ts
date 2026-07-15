@@ -27,7 +27,7 @@ export interface CapabilityAwareSlotProps {
   capabilities: CapabilityReader;
 }
 
-export interface MarketplaceRootSlotProps extends CapabilityAwareSlotProps {}
+export type MarketplaceRootSlotProps = CapabilityAwareSlotProps;
 
 export interface SearchSlotProps extends CapabilityAwareSlotProps {
   value: string;
