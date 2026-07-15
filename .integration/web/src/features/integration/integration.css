@@ -1,0 +1,84 @@
+.df-virtual-viewport {
+  block-size: min(72vh, 64rem);
+  min-block-size: 24rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.df-platform-document-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 78%);
+}
+
+.df-platform-document-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  inline-size: min(72rem, 100%);
+  max-block-size: calc(100vh - 2rem);
+  overflow: hidden;
+  border: 1px solid var(--border-strong, #39414d);
+  border-radius: 0.75rem;
+  background: var(--surface-1, #10151d);
+  color: var(--text-1, #f4f7fb);
+  box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 55%);
+}
+
+.df-platform-document-dialog > header,
+.df-platform-document-dialog > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-block-end: 1px solid var(--border-subtle, #29313d);
+}
+
+.df-platform-document-dialog > footer {
+  justify-content: center;
+  flex-wrap: wrap;
+  border-block-start: 1px solid var(--border-subtle, #29313d);
+  border-block-end: 0;
+}
+
+.df-platform-document-dialog header span {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.df-platform-document-stage {
+  display: grid;
+  place-items: center;
+  min-block-size: 18rem;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.df-platform-document-stage canvas,
+.df-platform-document-stage img {
+  max-inline-size: 100%;
+  block-size: auto;
+}
+
+@media (max-width: 48rem) {
+  .df-virtual-viewport {
+    block-size: calc(100dvh - 10rem);
+    min-block-size: 20rem;
+  }
+
+  .df-platform-document-backdrop {
+    padding: 0;
+  }
+
+  .df-platform-document-dialog {
+    inline-size: 100%;
+    max-block-size: 100dvh;
+    min-block-size: 100dvh;
+    border-radius: 0;
+  }
+}
