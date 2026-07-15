@@ -154,6 +154,10 @@ const collator = new Intl.Collator(undefined, {
   usage: "sort",
 });
 
+const PRICE_PER_GRAM_ABSOLUTE_TOLERANCE = 0.015;
+const PRICE_PER_GRAM_RELATIVE_TOLERANCE = 0.001;
+const MAX_PUBLIC_URL_LENGTH = 4096;
+
 export const DEFAULT_FILTERS: MarketplaceFilters = Object.freeze({
   search: "",
   vendorIds: Object.freeze([]),
@@ -178,6 +182,30 @@ export function finitePositive(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+export function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_PUBLIC_URL_LENGTH) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    const hostname = parsed.hostname.toLocaleLowerCase();
+    const isIpLiteral =
+      /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname) ||
+      hostname.startsWith("[");
+    return (
+      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      hostname.length > 0 &&
+      parsed.username.length === 0 &&
+      parsed.password.length === 0 &&
+      hostname !== "localhost" &&
+      !hostname.endsWith(".localhost") &&
+      !isIpLiteral
+    );
+  } catch {
+    return false;
+  }
+}
+
 export interface SanitizedNumericRange {
   min?: number;
   max?: number;
@@ -186,43 +214,85 @@ export interface SanitizedNumericRange {
 export function sanitizeRange(range: NumericRange): SanitizedNumericRange {
   const min = typeof range.min === "number" && Number.isFinite(range.min) ? range.min : undefined;
   const max = typeof range.max === "number" && Number.isFinite(range.max) ? range.max : undefined;
-
-  if (min !== undefined && max !== undefined && min > max) {
-    return { min, max: min };
-  }
   const normalized: SanitizedNumericRange = {};
   if (min !== undefined) normalized.min = min;
   if (max !== undefined) normalized.max = max;
   return normalized;
 }
 
+export function isInvalidRange(range: NumericRange): boolean {
+  const normalized = sanitizeRange(range);
+  return (
+    normalized.min !== undefined &&
+    normalized.max !== undefined &&
+    normalized.min > normalized.max
+  );
+}
+
 export function inRange(value: number, range: NumericRange): boolean {
   const normalized = sanitizeRange(range);
+  if (isInvalidRange(normalized)) return false;
   if (normalized.min !== undefined && value < normalized.min) return false;
   if (normalized.max !== undefined && value > normalized.max) return false;
   return true;
 }
 
+export function hasConsistentPricePerGram(variant: MarketplaceVariant): boolean {
+  if (
+    !finitePositive(variant.grams) ||
+    !finitePositive(variant.currentPrice) ||
+    !finitePositive(variant.pricePerGram)
+  ) {
+    return false;
+  }
+  const calculated = variant.currentPrice / variant.grams;
+  const tolerance = Math.max(
+    PRICE_PER_GRAM_ABSOLUTE_TOLERANCE,
+    calculated * PRICE_PER_GRAM_RELATIVE_TOLERANCE,
+  );
+  return Math.abs(variant.pricePerGram - calculated) <= tolerance;
+}
+
 export function isRenderableVariant(variant: MarketplaceVariant): boolean {
   return (
     variant.inStock === true &&
-    finitePositive(variant.grams) &&
-    finitePositive(variant.currentPrice) &&
-    finitePositive(variant.pricePerGram) &&
+    hasConsistentPricePerGram(variant) &&
     typeof variant.id === "string" &&
-    variant.id.length > 0 &&
-    typeof variant.productUrl === "string" &&
-    /^https?:\/\//i.test(variant.productUrl)
+    variant.id.trim().length > 0 &&
+    isHttpUrl(variant.productUrl)
   );
 }
 
+function compareVariantPreference(a: MarketplaceVariant, b: MarketplaceVariant): number {
+  return (
+    a.pricePerGram - b.pricePerGram ||
+    a.currentPrice - b.currentPrice ||
+    collator.compare(a.id, b.id)
+  );
+}
+
+function weightKey(grams: number): string {
+  return grams.toFixed(6);
+}
+
 export function getInStockVariants(product: MarketplaceProduct): MarketplaceVariant[] {
-  const seen = new Set<string>();
-  return product.variants.filter((variant) => {
-    if (!isRenderableVariant(variant) || seen.has(variant.id)) return false;
-    seen.add(variant.id);
-    return true;
-  });
+  const seenIds = new Set<string>();
+  const byWeight = new Map<string, MarketplaceVariant>();
+
+  for (const variant of product.variants) {
+    if (!isRenderableVariant(variant) || seenIds.has(variant.id)) continue;
+    seenIds.add(variant.id);
+
+    const key = weightKey(variant.grams);
+    const current = byWeight.get(key);
+    if (!current || compareVariantPreference(variant, current) < 0) {
+      byWeight.set(key, variant);
+    }
+  }
+
+  return [...byWeight.values()].sort(
+    (a, b) => a.grams - b.grams || collator.compare(a.id, b.id),
+  );
 }
 
 export function selectActiveVariant(
@@ -363,6 +433,10 @@ function compareRows(a: MarketplaceRowProjection, b: MarketplaceRowProjection, s
   return result || collator.compare(a.product.id, b.product.id) || a.stableIndex - b.stableIndex;
 }
 
+export function productSearchText(product: MarketplaceProduct): string {
+  return `${normalizeSearch(product.vendorName)} ${normalizeSearch(product.strainName)}`;
+}
+
 export function queryMarketplace(
   products: readonly MarketplaceProduct[],
   filters: MarketplaceFilters,
@@ -371,20 +445,27 @@ export function queryMarketplace(
   const normalizedNeedle = normalizeSearch(filters.search);
   const vendorSet = new Set(filters.vendorIds);
   const lineageSet = new Set(filters.lineages);
+  const seenProductIds = new Set<string>();
   const rows: MarketplaceRowProjection[] = [];
 
   for (let stableIndex = 0; stableIndex < products.length; stableIndex += 1) {
     const product = products[stableIndex]!;
+    if (
+      typeof product.id !== "string" ||
+      product.id.trim().length === 0 ||
+      seenProductIds.has(product.id)
+    ) {
+      continue;
+    }
+
     const activeVariant = selectActiveVariant(product, filters.weight);
     if (!activeVariant) continue;
+    seenProductIds.add(product.id);
 
     if (vendorSet.size > 0 && !vendorSet.has(product.vendorId)) continue;
     if (lineageSet.size > 0 && !lineageSet.has(product.lineage)) continue;
 
-    if (normalizedNeedle) {
-      const haystack = `${normalizeSearch(product.vendorName)} ${normalizeSearch(product.strainName)}`;
-      if (!haystack.includes(normalizedNeedle)) continue;
-    }
+    if (normalizedNeedle && !productSearchText(product).includes(normalizedNeedle)) continue;
 
     if (
       typeof product.totalThcDisplay !== "number" ||
@@ -420,11 +501,30 @@ export function resolveVariant(
   return getInStockVariants(product).find((variant) => variant.id === variantId) ?? fallback;
 }
 
+export function isRenderableDocument(
+  document: MarketplaceDocument | null | undefined,
+  expectedKind?: DocumentKind,
+): document is MarketplaceDocument {
+  return (
+    document !== null &&
+    document !== undefined &&
+    typeof document.id === "string" &&
+    document.id.trim().length > 0 &&
+    (expectedKind === undefined || document.kind === expectedKind) &&
+    isHttpUrl(document.url) &&
+    (document.format === "pdf" ||
+      document.format === "image" ||
+      document.format === "html" ||
+      document.format === "unsupported")
+  );
+}
+
 export function resolveDocument(
   variant: MarketplaceVariant,
   kind: DocumentKind,
 ): MarketplaceDocument | null {
-  return kind === "coa" ? variant.coa ?? null : variant.terpeneDocument ?? null;
+  const document = kind === "coa" ? variant.coa : variant.terpeneDocument;
+  return isRenderableDocument(document, kind) ? document : null;
 }
 
 export function nextExpandedProduct(
@@ -450,13 +550,18 @@ export function escapeSearchState(value: string, isFocused: boolean): {
   return { value, shouldBlur: isFocused };
 }
 
-export function productSearchText(product: MarketplaceProduct): string {
-  return `${normalizeSearch(product.vendorName)} ${normalizeSearch(product.strainName)}`;
-}
-
 export function uniqueVendors(products: readonly MarketplaceProduct[]): Array<{ id: string; name: string }> {
   const vendors = new Map<string, string>();
   for (const product of products) {
+    if (
+      typeof product.vendorId !== "string" ||
+      product.vendorId.trim().length === 0 ||
+      typeof product.vendorName !== "string" ||
+      product.vendorName.trim().length === 0 ||
+      getInStockVariants(product).length === 0
+    ) {
+      continue;
+    }
     if (!vendors.has(product.vendorId)) vendors.set(product.vendorId, product.vendorName);
   }
   return [...vendors.entries()]
