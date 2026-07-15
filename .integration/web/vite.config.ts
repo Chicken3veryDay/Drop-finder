@@ -10,7 +10,13 @@ export default defineConfig({
   publicDir: isE2eServer ? "public" : false,
   ...(isE2eServer ? { server: { hmr: false } } : {}),
   optimizeDeps: {
-    include: ["pdfjs-dist/legacy/build/pdf.mjs"],
+    include: [
+      "react",
+      "react/jsx-runtime",
+      "react-dom",
+      "react-dom/client",
+      "pdfjs-dist/legacy/build/pdf.mjs",
+    ],
     ...(isE2eServer ? { noDiscovery: true } : {}),
   },
   resolve: {
