@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: dropfinder-ui-rewrite-bootstrap
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   compose:
@@ -104,12 +104,41 @@ jobs:
           python -m unittest discover -s tests/catalog_v4 -v
           python -m unittest discover -s tests -p 'test_vendor_adapters.py' -v
 
-      - id: frontend
-        name: Validate frontend, platform, performance, chunks, and publication preservation
+      - id: lint
+        name: Lint integrated frontend
         working-directory: web
         run: |
-          set -euo pipefail
-          npm run validate
+          set -o pipefail
+          npm run lint 2>&1 | tee /tmp/dropfinder-integration-lint.log
+
+      - id: typecheck
+        name: Typecheck integrated frontend
+        working-directory: web
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee /tmp/dropfinder-integration-typecheck.log
+
+      - id: tests
+        name: Run integrated frontend and platform tests
+        working-directory: web
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee /tmp/dropfinder-integration-tests.log
+
+      - id: benchmark
+        name: Run 1k, 10k, and 50k performance gates
+        working-directory: web
+        run: |
+          set -o pipefail
+          npm run benchmark 2>&1 | tee /tmp/dropfinder-integration-benchmark.log
+
+      - id: chunks
+        name: Build and analyze platform chunks
+        working-directory: web
+        run: |
+          set -o pipefail
+          npm run build:platform 2>&1 | tee /tmp/dropfinder-integration-platform-build.log
+          npm run analyze:chunks 2>&1 | tee /tmp/dropfinder-integration-chunks.log
           npm run pwa:check
 
       - id: browsers
@@ -143,7 +172,7 @@ jobs:
             web/test-results
             web/dist-platform
             cloud_pages/data/catalog-v4
-            /tmp/dropfinder-integration-build.log
+            /tmp/dropfinder-integration-*.log
           if-no-files-found: ignore
           retention-days: 14
 
@@ -158,22 +187,27 @@ jobs:
           PWA_OUTCOME: ${{ steps.pwa.outcome }}
           COMMIT_OUTCOME: ${{ steps.commit.outcome }}
           PYTHON_OUTCOME: ${{ steps.python.outcome }}
-          FRONTEND_OUTCOME: ${{ steps.frontend.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome }}
+          CHUNKS_OUTCOME: ${{ steps.chunks.outcome }}
           BROWSERS_OUTCOME: ${{ steps.browsers.outcome }}
           EXACT_OUTCOME: ${{ steps.exact.outcome }}
           PUSH_OUTCOME: ${{ steps.push.outcome }}
         run: |
           set -euo pipefail
-          cp /tmp/dropfinder-integration-build.log /tmp/bootstrap-build.log 2>/dev/null || true
+          mkdir -p /tmp/bootstrap-logs
+          cp /tmp/dropfinder-integration-*.log /tmp/bootstrap-logs/ 2>/dev/null || true
           git fetch origin main ui-rewrite/06-full-integration
           git reset --hard origin/ui-rewrite/06-full-integration
           git clean -fdx
-          mkdir -p .integration
-          cp /tmp/bootstrap-build.log .integration/BUILD_FAILURE.log 2>/dev/null || true
+          mkdir -p .integration/logs
+          cp /tmp/bootstrap-logs/* .integration/logs/ 2>/dev/null || true
           python - <<'PY'
           import json, os
           from pathlib import Path
-          keys = ['COMPOSE','CATALOG','LOCKFILE','INSTALL','BUILD','PWA','COMMIT','PYTHON','FRONTEND','BROWSERS','EXACT','PUSH']
+          keys = ['COMPOSE','CATALOG','LOCKFILE','INSTALL','BUILD','PWA','COMMIT','PYTHON','LINT','TYPECHECK','TESTS','BENCHMARK','CHUNKS','BROWSERS','EXACT','PUSH']
           payload = {key.lower(): os.environ[f'{key}_OUTCOME'] for key in keys}
           payload['run_id'] = os.environ['GITHUB_RUN_ID']
           payload['source_head'] = os.environ['GITHUB_SHA']
@@ -181,6 +215,6 @@ jobs:
           PY
           git config user.name "DropFinder Integration Bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .integration/BOOTSTRAP_FAILURE.json .integration/BUILD_FAILURE.log
+          git add .integration/BOOTSTRAP_FAILURE.json .integration/logs
           git commit -m "Record integration bootstrap failure ${GITHUB_RUN_ID}"
           git push --force origin HEAD:ui-rewrite/06-failure-evidence
