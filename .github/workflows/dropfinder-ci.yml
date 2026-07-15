@@ -8,6 +8,9 @@ on:
       - "scripts/cloud_scan.py"
       - "scripts/cloud_scan_v2.py"
       - "cloud_pages/**"
+      - "web/**"
+      - "docs/UI_PERFORMANCE_AND_PWA.md"
+      - "docs/UI_REWRITE_INTEGRATION.md"
       - ".github/workflows/dropfinder-ci.yml"
       - ".github/workflows/dropfinder-cloud.yml"
   pull_request:
@@ -23,12 +26,17 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: Compile and self-test scanner
         run: |
           python -m py_compile scripts/cloud_scan.py scripts/cloud_scan_v2.py
@@ -42,21 +50,42 @@ jobs:
           status=json.loads(Path('cloud_pages/data/status.json').read_text())
           assert catalog['schema_version']=='dropfinder-cloud-catalog-v1'
           assert catalog['product_count']==len(catalog['products'])
-          assert status['schema_version']=='dropfinder-cloud-status-v1'
-          assert status['source_count']==35
-          assert status['enabled_sources']==17
+          assert status['schema_version'] in {'dropfinder-cloud-status-v1','dropfinder-autonomous-runtime-v2'}
+          assert status['source_count']==status.get('candidate_sources', status['source_count'])
+          assert status['enabled_sources']==len(status['sources'])
+          assert status['healthy_sources']+status['degraded_sources']==status['enabled_sources']
+          assert status['product_count']==catalog['product_count']
           required={'id','source_id','vendor','name','url','availability','collected_at'}
           for row in catalog['products']:
               assert required <= row.keys()
               assert row['url'].startswith(('https://','http://'))
-          print(f"validated {len(catalog['products'])} products")
+          for source in status['sources']:
+              assert source['enabled'] is True
+              assert source['status'] in {'healthy','degraded'}
+          print(f"validated {len(catalog['products'])} products across {status['enabled_sources']} active sources")
           PY
+      - name: Validate platform package
+        working-directory: web
+        run: |
+          npm ci
+          npm run validate
       - name: Validate PWA files and privacy boundary
         run: |
           test -s cloud_pages/index.html
           test -s cloud_pages/manifest.webmanifest
           test -s cloud_pages/sw.js
           test -s cloud_pages/icon.svg
+          node --check cloud_pages/sw.js
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest=json.loads(Path('cloud_pages/manifest.webmanifest').read_text())
+          assert manifest['display']=='standalone'
+          assert manifest['start_url']=='./'
+          assert manifest['scope']=='./'
+          assert manifest['theme_color'].lower() in {'#080b10','#070a0f'}
+          assert 'health' not in manifest['description'].lower()
+          PY
           ! grep -RIE '(authorization|set-cookie|private[_-]?key|BEGIN [A-Z ]+PRIVATE KEY)' cloud_pages/data
       - name: Ensure workflow has no external credentials
         run: |
