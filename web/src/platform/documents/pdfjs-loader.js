@@ -1,49 +1,41 @@
-/** Lazy-loads pinned PDF.js and binds one explicit dedicated module worker. */
-let sharedWorker = null;
-let sharedWorkerIdentity = null;
+/** Lazy-loads pinned PDF.js and configures its separately emitted module worker. */
+let sharedWorkerSource = null;
 let sharedRuntime = null;
 
 export async function loadPdfJsRuntime(options = {}) {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
-    const identity = options.workerSrc ?? 'vite:pdfjs-legacy-worker';
-    if (!sharedWorker || sharedWorkerIdentity !== identity) {
-      disposePdfJsRuntimeWorker();
-      const worker = options.workerSrc
-        ? new Worker(options.workerSrc, { type: 'module', name: 'dropfinder-pdfjs' })
-        : await createBundledWorker();
-      sharedWorker = worker;
-      sharedWorkerIdentity = identity;
-      sharedRuntime = pdfjs;
-      const release = () => {
-        if (sharedWorker !== worker) return;
-        if (sharedRuntime?.GlobalWorkerOptions.workerPort === worker) {
-          sharedRuntime.GlobalWorkerOptions.workerPort = null;
-        }
-        worker.terminate?.();
-        sharedWorker = null;
-        sharedWorkerIdentity = null;
-      };
-      worker.addEventListener('error', release, { once: true });
-      worker.addEventListener('messageerror', release, { once: true });
+  if (typeof window !== 'undefined') {
+    const workerSource = options.workerSrc ?? await loadBundledWorkerSource();
+    if (typeof workerSource !== 'string' || workerSource.length === 0) {
+      throw new TypeError('PDF.js worker source must be a non-empty string');
     }
-    pdfjs.GlobalWorkerOptions.workerPort = sharedWorker;
+    clearConfiguredWorkerSource();
+    pdfjs.GlobalWorkerOptions.workerPort = null;
+    pdfjs.GlobalWorkerOptions.workerSrc = workerSource;
+    sharedWorkerSource = workerSource;
+    sharedRuntime = pdfjs;
   }
   return pdfjs;
 }
 
-async function createBundledWorker() {
-  const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?worker');
-  const PdfJsWorker = workerModule.default;
-  return new PdfJsWorker({ name: 'dropfinder-pdfjs' });
+async function loadBundledWorkerSource() {
+  const workerModule = await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url');
+  return workerModule.default;
 }
 
-export function disposePdfJsRuntimeWorker() {
-  if (sharedRuntime?.GlobalWorkerOptions.workerPort === sharedWorker) {
+function clearConfiguredWorkerSource() {
+  if (!sharedRuntime) return;
+  if (sharedRuntime.GlobalWorkerOptions.workerPort) {
     sharedRuntime.GlobalWorkerOptions.workerPort = null;
   }
-  sharedWorker?.terminate?.();
-  sharedWorker = null;
-  sharedWorkerIdentity = null;
+  if (sharedRuntime.GlobalWorkerOptions.workerSrc === sharedWorkerSource) {
+    sharedRuntime.GlobalWorkerOptions.workerSrc = '';
+  }
+}
+
+/** Compatibility export: PDF.js owns and destroys workers through each loading task. */
+export function disposePdfJsRuntimeWorker() {
+  clearConfiguredWorkerSource();
+  sharedWorkerSource = null;
   sharedRuntime = null;
 }
