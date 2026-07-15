@@ -40,17 +40,23 @@ test('publishes only the latest rapid search and supports exact sort and weight 
 test('preserves keyboard focus and scroll anchor when a virtual row expands and collapses', async ({ page }) => {
   const viewport = page.locator('#viewport');
   await viewport.evaluate(element => { element.scrollTop = 2_000; element.dispatchEvent(new Event('scroll')); });
-  const button = page.getByRole('button', { name: 'Expand' }).first();
-  await button.focus();
+  await page.waitForTimeout(50);
+  const candidate = page.locator('[data-marketplace-row]').nth(4);
+  const productId = await candidate.getAttribute('data-product-id');
+  expect(productId).toBeTruthy();
+  const row = page.locator(`[data-product-id="${productId}"]`);
+  const expand = row.getByRole('button', { name: 'Expand' });
+  await expand.evaluate(element => element.focus({ preventScroll: true }));
+  await expect(expand).toBeFocused();
   const before = await viewport.evaluate(element => element.scrollTop);
-  await button.click();
-  await expect(page.getByRole('button', { name: 'Collapse' }).first()).toBeFocused();
-  const expanded = page.locator('[data-marketplace-row][data-expanded="true"]');
-  await expect(expanded).toHaveCount(1);
+  await expand.press('Enter');
+  const collapse = row.getByRole('button', { name: 'Collapse' });
+  await expect(collapse).toBeFocused();
+  await expect(row).toHaveAttribute('data-expanded', 'true');
   const after = await viewport.evaluate(element => element.scrollTop);
   expect(Math.abs(after - before)).toBeLessThan(260);
-  await page.getByRole('button', { name: 'Collapse' }).first().click();
-  await expect(page.locator('[data-marketplace-row][data-expanded="true"]')).toHaveCount(0);
+  await collapse.press('Enter');
+  await expect(row).toHaveAttribute('data-expanded', 'false');
 });
 
 test('renders the real two-page PDF, navigates, zooms, closes, and restores focus', async ({ page }) => {
