@@ -21,10 +21,29 @@ def _require_secure_configuration() -> None:
         )
 
 
+def _migrate_restored_state() -> None:
+    migration = os.getenv(
+        "DROPFINDER_STATE_MIGRATION_SCRIPT",
+        "/app/migrate_runtime_state.py",
+    ).strip()
+    if not migration:
+        return
+    if not os.path.isfile(migration):
+        raise SystemExit(f"Configured runtime migration script is missing: {migration}")
+    print(f"Migrating restored DropFinder state with {migration}", flush=True)
+    subprocess.run(
+        [sys.executable, migration],
+        cwd="/app",
+        env=os.environ.copy(),
+        check=True,
+    )
+
+
 def main() -> int:
     _require_secure_configuration()
     os.makedirs("/app/runtime", exist_ok=True)
     restore()
+    _migrate_restored_state()
 
     stop = threading.Event()
     interval = max(900, int(os.getenv("DROPFINDER_BACKUP_INTERVAL_SECONDS", "1800")))
