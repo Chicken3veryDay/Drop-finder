@@ -78,25 +78,33 @@ class ParserTests(unittest.TestCase):
     def test_structured_html_parser(self):
         record = parse_structured_html((FIXTURES / "lab_table.html").read_text(), self.candidate)
         self.assertEqual(record.parse_status, "parsed")
+        self.assertEqual(record.confidence, "medium")
         self.assertEqual(record.cannabinoids["thca"], 27.45)
         self.assertEqual(record.cannabinoids["delta_9_thc"], 0.21)
         self.assertEqual(record.terpenes["myrcene"], 0.82)
         self.assertEqual(record.total_terpenes, 2.10)
+        self.assertIn("cannabinoids.thca", record.field_provenance)
+        self.assertTrue(record.field_provenance["cannabinoids.thca"]["source_location"].startswith("text_line:"))
 
     def test_structured_json_parser(self):
         record = parse_structured_json((FIXTURES / "structured_api.json").read_text(), self.candidate)
+        self.assertEqual(record.confidence, "high")
         self.assertEqual(record.cannabinoids["thca"], 27.45)
         self.assertEqual(record.terpenes["myrcene"], 0.82)
+        self.assertIn("terpenes.myrcene", record.field_provenance)
 
     def test_text_pdf_parser(self):
         record = parse_pdf((FIXTURES / "text_coa.pdf").read_bytes(), self.candidate)
         self.assertEqual(record.parse_status, "parsed")
+        self.assertEqual(record.confidence, "medium")
         self.assertEqual(record.batch_id, "BD-2026-07")
         self.assertEqual(record.cannabinoids["thca"], 27.45)
+        self.assertIn("cannabinoids.thca", record.field_provenance)
 
     def test_scanned_pdf_is_explicitly_unsupported(self):
         record = parse_pdf((FIXTURES / "scanned_stub.pdf").read_bytes(), self.candidate)
         self.assertIn(record.parse_status, {"unsupported_scanned", "unsupported_format"})
+        self.assertEqual(record.confidence, "none")
         self.assertFalse(record.cannabinoids)
 
     def test_direct_total_thc_is_distinct_from_delta_9(self):
@@ -106,6 +114,7 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(record.cannabinoids["total_thc"], 24.31)
         self.assertEqual(record.cannabinoids["delta_9_thc"], 0.19)
+        self.assertIn("cannabinoids.total_thc", record.field_provenance)
 
     def test_impossible_percentages_are_rejected_with_warning(self):
         record = parse_structured_html(
@@ -114,7 +123,7 @@ class ParserTests(unittest.TestCase):
         )
         self.assertNotIn("thca", record.cannabinoids)
         self.assertNotIn("myrcene", record.terpenes)
-        self.assertTrue(any("impossible percentage" in item for item in record.limitations))
+        self.assertTrue(any("impossible percentage" in item for item in record.warnings))
 
     def test_stable_document_ids_ignore_timestamps(self):
         first = stable_document_id("v", "https://x/a.pdf", "coa", "p", "v1", "b1")
@@ -184,9 +193,11 @@ class CoverageTests(unittest.TestCase):
             "identity_verification_required", "identity_verification_conditional",
             "self_attestation_21_plus", "no_observed_gate", "uncertain",
         }
+        allowed_scopes = {"browsing", "checkout", "delivery", "first_order", "every_order", "unknown"}
         allowed_evidence = {"current", "conflicting", "inaccessible", "stale"}
         for profile in payload["vendors"]:
             self.assertIn(profile["age_verification"]["classification"], allowed_age)
+            self.assertIn(profile["age_verification"]["scope"], allowed_scopes)
             self.assertTrue(profile["verified_at"])
             for evidence in profile["evidence"]:
                 self.assertIn(evidence["status"], allowed_evidence)
