@@ -1,0 +1,121 @@
+name: Deploy DropFinder to Hugging Face Space
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/huggingface-deploy-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-huggingface-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HF_SPACE_REPO: Cgptmichaccount/dropfinder-os
+      SPACE_URL: https://cgptmichaccount-dropfinder-os.hf.space
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Assemble bundle and embed verified production seed
+        run: |
+          set -euo pipefail
+          python scripts/build_huggingface_bundle.py --output /tmp/dropfinder-space
+          mkdir -p /tmp/dropfinder-space/web/data
+          for name in catalog status runtime quarantine rejections; do
+            curl --silent --show-error --fail --retry 5 --retry-all-errors \
+              --connect-timeout 20 --max-time 120 \
+              "https://dropfinder-os.onrender.com/api/$name" \
+              -o "/tmp/dropfinder-space/web/data/$name.json"
+          done
+          DROPFINDER_RUNTIME_DIR=/tmp/dropfinder-space/web \
+          DROPFINDER_SCRIPTS_DIR="$GITHUB_WORKSPACE/scripts" \
+            python deploy/render/migrate_runtime_state.py
+          python -m py_compile /tmp/dropfinder-space/*.py /tmp/dropfinder-space/scripts/*.py
+          python /tmp/dropfinder-space/scripts/catalog_normalization.py --self-test
+          python /tmp/dropfinder-space/scripts/autonomous_merge_complete.py --self-test
+          node --check /tmp/dropfinder-space/browser-app.js
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          root = Path('/tmp/dropfinder-space/web/data')
+          catalog = json.loads((root/'catalog.json').read_text())
+          status = json.loads((root/'status.json').read_text())
+          runtime = json.loads((root/'runtime.json').read_text())
+          products = catalog.get('products') or []
+          assert len(products) >= 25
+          assert catalog.get('normalization_contract') == 'dropfinder-product-normalization-v1'
+          assert status.get('normalization_contract') == 'dropfinder-product-normalization-v1'
+          assert runtime.get('normalization_contract') == 'dropfinder-product-normalization-v1'
+          bad = []
+          weight = re.compile(r'\b\d+(?:\.\d+)?\s*(?:g|grams?|oz|ounces?)\b', re.I)
+          for row in products:
+              name = str(row.get('name') or '')
+              if weight.search(name) or 'thca' in name.lower() or any(x in name for x in ('|','_','•','·')):
+                  bad.append({'id': row.get('id'), 'name': name})
+          assert not bad, bad[:20]
+          print(json.dumps({'seed_products': len(products), 'seed_sources': status.get('healthy_sources')}, indent=2))
+          PY
+      - name: Create or update public Docker Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'huggingface_hub>=0.34,<2'
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ['HF_TOKEN'])
+          repo_id = os.environ['HF_SPACE_REPO']
+          api.create_repo(repo_id=repo_id, repo_type='space', space_sdk='docker', private=False, exist_ok=True)
+          api.upload_folder(
+              repo_id=repo_id,
+              repo_type='space',
+              folder_path='/tmp/dropfinder-space',
+              commit_message='Deploy normalized one-page DropFinder',
+              delete_patterns=['*'],
+          )
+          print(repo_id)
+          PY
+      - name: Wait for and verify public Space
+        run: |
+          set -euo pipefail
+          python scripts/verify_huggingface_release.py \
+            --url "$SPACE_URL" \
+            --output deployment/huggingface-deployment.json
+      - name: Record verified Space receipt
+        if: always()
+        run: |
+          set -euo pipefail
+          test -s deployment/huggingface-deployment.json
+          cp deployment/huggingface-deployment.json /tmp/huggingface-deployment.json
+          git config user.name "DropFinder Hugging Face Deployer"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          recorded=false
+          for attempt in 1 2 3 4 5; do
+            git fetch origin deploy/full-stack-hf
+            git reset --hard origin/deploy/full-stack-hf
+            cp /tmp/huggingface-deployment.json deployment/huggingface-deployment.json
+            git add deployment/huggingface-deployment.json
+            if git diff --cached --quiet; then recorded=true; break; fi
+            git commit -m "deploy: record verified Hugging Face Space [skip ci]"
+            if git pull --rebase origin deploy/full-stack-hf && git push origin HEAD:deploy/full-stack-hf; then
+              recorded=true; break
+            fi
+            git rebase --abort 2>/dev/null || true
+            git reset --hard origin/deploy/full-stack-hf
+            sleep $((attempt * 2))
+          done
+          test "$recorded" = true
