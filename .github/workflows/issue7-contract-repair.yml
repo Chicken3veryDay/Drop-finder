@@ -1,0 +1,218 @@
+name: Issue 7 final contract repair
+
+on:
+  push:
+    branches: [ui-rewrite/03-vendor-compliance-labs]
+    paths:
+      - ".github/workflows/issue7-contract-repair.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  repair-rebase-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ui-rewrite/03-vendor-compliance-labs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rebase onto current main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git rebase origin/main
+      - name: Repair Issue 7 contract and parser bounds
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected one anchor in {path}, found {text.count(old)}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "scripts/vendor_adapters/models.py",
+              '''AgeGateClassification = Literal[
+              "identity_verification_required",
+              "identity_verification_checkout_only",
+              "self_attestation_21_plus",
+              "no_observable_age_gate",
+              "uncertain",
+          ]
+          Availability = Literal["public", "partial", "not_observed", "inaccessible", "unsupported", "uncertain"]
+          ''',
+              '''AgeGateClassification = Literal[
+              "identity_verification_required",
+              "identity_verification_conditional",
+              "self_attestation_21_plus",
+              "no_observed_gate",
+              "uncertain",
+          ]
+          Availability = Literal["public", "partial", "not_observed", "inaccessible", "unsupported", "uncertain"]
+          EvidenceStatus = Literal["current", "conflicting", "inaccessible", "stale"]
+          ''',
+          )
+          replace_once(
+              "scripts/vendor_adapters/models.py",
+              '    evidence_status: str = "observed"\n',
+              '    evidence_status: EvidenceStatus = "current"\n',
+          )
+
+          replace_once(
+              "scripts/vendor_adapters/registry.py",
+              '''    errors: list[str] = []
+              allowed_age = {
+                  "identity_verification_required", "identity_verification_checkout_only",
+                  "self_attestation_21_plus", "no_observable_age_gate", "uncertain",
+              }
+              allowed_availability = {"public", "partial", "not_observed", "inaccessible", "unsupported", "uncertain"}
+          ''',
+              '''    errors: list[str] = []
+              if payload.get("schema_version") != "dropfinder-vendor-profiles-v1":
+                  errors.append("schema_version must be dropfinder-vendor-profiles-v1")
+              allowed_age = {
+                  "identity_verification_required", "identity_verification_conditional",
+                  "self_attestation_21_plus", "no_observed_gate", "uncertain",
+              }
+              allowed_availability = {"public", "partial", "not_observed", "inaccessible", "unsupported", "uncertain"}
+              allowed_evidence = {"current", "conflicting", "inaccessible", "stale"}
+          ''',
+          )
+          replace_once(
+              "scripts/vendor_adapters/registry.py",
+              '''        if not profile.get("evidence"):
+                  errors.append(f"{vendor_id}: evidence missing")
+              return errors
+          ''',
+              '''        if not profile.get("verified_at"):
+                  errors.append(f"{vendor_id}: verified_at missing")
+              evidence = profile.get("evidence")
+              if not isinstance(evidence, list) or not evidence:
+                  errors.append(f"{vendor_id}: evidence missing")
+              else:
+                  for evidence_index, item in enumerate(evidence):
+                      evidence_prefix = f"{vendor_id}.evidence[{evidence_index}]"
+                      if not isinstance(item, dict):
+                          errors.append(f"{evidence_prefix}: must be an object")
+                          continue
+                      if item.get("status") not in allowed_evidence:
+                          errors.append(f"{evidence_prefix}: invalid status")
+                      for field in ("url", "summary", "observed_at"):
+                          if not item.get(field):
+                              errors.append(f"{evidence_prefix}: {field} missing")
+              return errors
+          ''',
+          )
+
+          replace_once(
+              "scripts/vendor_adapters/parsers.py",
+              'PERCENT = r"(-?\\d{1,3}(?:\\.\\d+)?)\\s*%"\n',
+              'PERCENT = r"(?<![\\d.])(-?\\d{1,3}(?:\\.\\d+)?)(?![\\d.])\\s*%"\n',
+          )
+          replace_once(
+              "scripts/vendor_adapters/parsers.py",
+              '    return round(result, 6) if -0.000001 <= result <= 1000 else None\n',
+              '    return round(result, 6) if 0.0 <= result <= 100.0 else None\n',
+          )
+          replace_once(
+              "scripts/vendor_adapters/parsers.py",
+              '''    limitations: list[str] = []
+              if not cannabinoids and not terpenes:
+          ''',
+              '''    limitations: list[str] = []
+              impossible_values = [raw for raw in re.findall(PERCENT, normalized) if _number(raw) is None]
+              if impossible_values:
+                  limitations.append(f"ignored {len(impossible_values)} impossible percentage value(s)")
+              if not cannabinoids and not terpenes:
+          ''',
+          )
+
+          replace_once(
+              "tests/test_vendor_adapters.py",
+              '''    def test_stable_document_ids_ignore_timestamps(self):
+          ''',
+              '''    def test_impossible_percentages_are_rejected_with_warning(self):
+                  record = parse_structured_html(
+                      "<table><tr><td>THCA</td><td>150%</td></tr><tr><td>Myrcene</td><td>-2%</td></tr></table>",
+                      self.candidate,
+                  )
+                  self.assertNotIn("thca", record.cannabinoids)
+                  self.assertNotIn("myrcene", record.terpenes)
+                  self.assertTrue(any("impossible percentage" in item for item in record.limitations))
+
+              def test_stable_document_ids_ignore_timestamps(self):
+          ''',
+          )
+          replace_once(
+              "tests/test_vendor_adapters.py",
+              '''    def test_public_artifacts_do_not_leak_private_paths(self):
+          ''',
+              '''    def test_machine_readable_profile_contract_uses_issue_enums(self):
+                  payload = json.loads(PROFILES.read_text())
+                  allowed_age = {
+                      "identity_verification_required", "identity_verification_conditional",
+                      "self_attestation_21_plus", "no_observed_gate", "uncertain",
+                  }
+                  allowed_evidence = {"current", "conflicting", "inaccessible", "stale"}
+                  for profile in payload["vendors"]:
+                      self.assertIn(profile["age_verification"]["classification"], allowed_age)
+                      self.assertTrue(profile["verified_at"])
+                      for evidence in profile["evidence"]:
+                          self.assertIn(evidence["status"], allowed_evidence)
+
+              def test_public_artifacts_do_not_leak_private_paths(self):
+          ''',
+          )
+
+          profile_path = Path("data/vendor_profiles.json")
+          payload = json.loads(profile_path.read_text(encoding="utf-8"))
+          replacements = {
+              "identity_verification_checkout_only": "identity_verification_conditional",
+              "no_observable_age_gate": "no_observed_gate",
+          }
+          for profile in payload.get("vendors", []):
+              age = profile.get("age_verification", {})
+              classification = age.get("classification")
+              if classification in replacements:
+                  age["classification"] = replacements[classification]
+              for evidence in profile.get("evidence", []):
+                  if evidence.get("status") == "observed":
+                      evidence["status"] = "current"
+          profile_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+      - name: Validate repaired implementation
+        run: |
+          python -m compileall -q scripts/vendor_adapters tests/test_vendor_adapters.py
+          python -m scripts.vendor_adapters.cli verify
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python -m scripts.vendor_adapters.cli parse \
+            --candidate tests/fixtures/vendor_adapters/candidate.json \
+            --document tests/fixtures/vendor_adapters/text_coa.pdf \
+            --content-type application/pdf \
+            --output /tmp/parsed-lab.json
+          python - <<'PY'
+          import json
+          row = json.load(open('/tmp/parsed-lab.json'))
+          assert row['parse_status'] == 'parsed'
+          assert row['cannabinoids']['thca'] == 27.45
+          PY
+          python scripts/cloud_scan_v2.py --self-test
+          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_merge.py --self-test
+      - name: Commit and publish repaired branch
+        run: |
+          git add scripts/vendor_adapters/models.py scripts/vendor_adapters/registry.py scripts/vendor_adapters/parsers.py tests/test_vendor_adapters.py data/vendor_profiles.json
+          git diff --cached --check
+          git commit -m "fix(issue7): align profile contract and potency validation"
+          git push --force-with-lease origin HEAD:ui-rewrite/03-vendor-compliance-labs
