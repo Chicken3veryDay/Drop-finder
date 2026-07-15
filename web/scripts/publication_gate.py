@@ -65,16 +65,18 @@ def verify_published(root: Path) -> None:
 def record_receipt(root: Path) -> None:
     catalog, status, runtime = validate_data(root)
     repository = os.environ["GITHUB_REPOSITORY"]
+    owner, repository_name = repository.split("/", 1)
+    pages_url = f"https://{owner.lower()}.github.io/{repository_name}/"
     receipt = {
         "schema_version": "dropfinder-autonomous-deployment-v6",
         "status": "healthy",
-        "mode": "credential_free_github_actions_plus_public_repository_cdn",
+        "mode": "credential_free_github_actions_plus_github_pages",
         "repository": repository,
         "branch": "gh-pages",
         "source_snapshot_commit": git("rev-parse", "HEAD"),
         "publication_commit": git("rev-parse", "origin/gh-pages"),
         "entry_path": "index.html",
-        "phone_url": f"https://raw.githack.com/{repository}/gh-pages/index.html",
+        "phone_url": pages_url,
         "catalog_path": "data/catalog.json",
         "status_path": "data/status.json",
         "runtime_path": "data/runtime.json",
