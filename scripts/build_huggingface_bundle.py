@@ -46,11 +46,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN useradd --create-home --uid 1000 --shell /bin/bash user \
     && python -m pip install --no-cache-dir \
        'fastapi>=0.115,<1' \
-       'uvicorn[standard]>=0.34,<1' \
-       'huggingface_hub>=0.34,<2'
+       'uvicorn[standard]>=0.34,<1'
 
 WORKDIR /app
-COPY --chown=user:user space_app.py strict_space_app.py migrate_runtime_state.py hf_state.py hf_supervisor.py /app/
+COPY --chown=user:user space_app.py strict_space_app.py migrate_runtime_state.py public_supervisor.py /app/
 COPY --chown=user:user scripts/ /app/scripts/
 COPY --chown=user:user web/ /app/web/
 RUN python - <<'PY'
@@ -70,7 +69,7 @@ RUN mkdir -p /app/runtime/data /app/runtime/logs /app/runtime/runs \
     && python /app/scripts/autonomous_merge_complete.py --self-test
 USER user
 EXPOSE 7860
-CMD ["python", "/app/hf_supervisor.py"]
+CMD ["python", "/app/public_supervisor.py"]
 '''
 
 
@@ -87,8 +86,7 @@ def build(output: Path) -> None:
 
     copy(ROOT / "deploy/huggingface-space/README.md", output / "README.md")
     copy(ROOT / "deploy/huggingface-space/space_app.py", output / "space_app.py")
-    copy(ROOT / "deploy/huggingface-space/hf_state.py", output / "hf_state.py")
-    copy(ROOT / "deploy/huggingface-space/hf_supervisor.py", output / "hf_supervisor.py")
+    copy(ROOT / "deploy/huggingface-space/public_supervisor.py", output / "public_supervisor.py")
     copy(ROOT / "deploy/render/migrate_runtime_state.py", output / "migrate_runtime_state.py")
 
     strict = (ROOT / "deploy/render/render_space_app.py").read_text(encoding="utf-8")
