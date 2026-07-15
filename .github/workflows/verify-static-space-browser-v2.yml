@@ -1,0 +1,99 @@
+name: Verify DropFinder Static Space browser v2
+
+on:
+  push:
+    branches: [deploy/full-stack-hf]
+    paths:
+      - "deployment/static-browser-v2-request.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dropfinder-static-browser-verification-v2
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: deploy/full-stack-hf
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Chromium
+        run: |
+          set -euo pipefail
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Run live phone-sized verification
+        id: browser
+        continue-on-error: true
+        env:
+          DROPFINDER_STATIC_URL: https://cgptmichaccount-dropfinder-os.static.hf.space
+          DROPFINDER_BROWSER_REPORT: deployment/static-browser-verification.json
+        run: |
+          set -euo pipefail
+          node scripts/verify_static_space_browser.js
+      - name: Persist report through GitHub API
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test -s deployment/static-browser-verification.json
+          python - <<'PY'
+          import base64, json, os, time, urllib.error, urllib.parse, urllib.request
+          from pathlib import Path
+          repo = os.environ['GH_REPO']
+          branch = 'deploy/full-stack-hf'
+          path = 'deployment/static-browser-verification.json'
+          token = os.environ['GH_TOKEN']
+          content = base64.b64encode(Path(path).read_bytes()).decode('ascii')
+          api = f'https://api.github.com/repos/{repo}/contents/{path}'
+          headers = {
+              'Accept':'application/vnd.github+json',
+              'Authorization':f'Bearer {token}',
+              'User-Agent':'DropFinder-Static-Browser-Verifier/2.0',
+              'X-GitHub-Api-Version':'2022-11-28',
+          }
+          for attempt in range(1, 8):
+              sha = None
+              try:
+                  req = urllib.request.Request(f'{api}?{urllib.parse.urlencode({"ref":branch})}', headers=headers)
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      sha = json.load(response).get('sha')
+              except urllib.error.HTTPError as exc:
+                  if exc.code != 404: raise
+              payload = {'message':'test: record live Static Space browser verification [skip ci]','content':content,'branch':branch}
+              if sha: payload['sha'] = sha
+              req = urllib.request.Request(api, data=json.dumps(payload).encode(), method='PUT', headers={**headers,'Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                      result = json.load(response)
+                  print(json.dumps({'commit':result.get('commit',{}).get('sha'),'path':path},indent=2))
+                  break
+              except urllib.error.HTTPError as exc:
+                  if exc.code not in {409,422} or attempt == 7: raise
+                  time.sleep(attempt * 2)
+          else:
+              raise SystemExit('could not persist browser report')
+          PY
+      - name: Require healthy browser report
+        if: always()
+        env:
+          BROWSER_OUTCOME: ${{ steps.browser.outcome }}
+        run: |
+          set -euo pipefail
+          test "$BROWSER_OUTCOME" = success
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('deployment/static-browser-verification.json').read_text())
+          assert report.get('status') == 'healthy', report
+          PY
