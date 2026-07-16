@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import urllib.parse
 from collections import Counter
 from datetime import datetime, timezone
@@ -92,6 +93,33 @@ def _classification(product: dict[str, Any]) -> tuple[str, dict[str, Any], set[s
     return primary, evidence, tags
 
 
+def _positive_number(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) and parsed > 0 else None
+
+
+def _vape_quantity_reject_reason(product: dict[str, Any]) -> str | None:
+    unit = str(product.get("quantity_unit") or "")
+    grams = _positive_number(product.get("grams"))
+    volume_ml = _positive_number(product.get("volume_ml"))
+    metric = str(product.get("comparison_metric") or "")
+    comparison = _positive_number(product.get("comparison_price"))
+    price_per_ml = _positive_number(product.get("price_per_ml"))
+
+    if unit == "g" or grams is not None:
+        return "unsupported_vape_mass_quantity"
+    if unit != "ml" or volume_ml is None:
+        return "missing_vape_volume"
+    if metric != "price_per_ml" or comparison is None or price_per_ml is None:
+        return "missing_vape_comparison_price"
+    if abs(comparison - price_per_ml) > 0.0001:
+        return "inconsistent_vape_comparison_price"
+    return None
+
+
 def reject_reason(product: dict[str, Any]) -> str | None:
     name = str(product.get("name") or "").strip()
     source_id = str(product.get("source_id") or "").strip()
@@ -132,6 +160,9 @@ def reject_reason(product: dict[str, Any]) -> str | None:
             return "missing_product_level_cannabis_evidence"
         if not evidence.get("explicit_vape"):
             return "missing_product_level_vape_evidence"
+        quantity_reason = _vape_quantity_reject_reason(product)
+        if quantity_reason:
+            return quantity_reason
     elif primary == PSILOCYBIN_MUSHROOM:
         if not evidence.get("explicit_psilocybin"):
             return "missing_product_level_psilocybin_evidence"
@@ -148,6 +179,9 @@ def reject_reason(product: dict[str, Any]) -> str | None:
             return "missing_product_level_vape_evidence"
         if evidence.get("amanita_signal"):
             return "amanita_not_psilocybin"
+        quantity_reason = _vape_quantity_reject_reason(product)
+        if quantity_reason:
+            return quantity_reason
     else:
         return "unsupported_primary_type"
     return None
@@ -371,7 +405,8 @@ def self_test(root: Path) -> int:
         product_id="vape", primary_type=CANNABIS_VAPE,
         name="THCA Disposable Vape 1mL", url="https://example.test/products/vape",
         evidence={"explicit_cannabis": True, "explicit_vape": True},
-        volume_ml=1, price_per_ml=20,
+        volume_ml=1, quantity_unit="ml", comparison_metric="price_per_ml",
+        comparison_price=20, price_per_ml=20,
     )
     mushroom = _fixture(
         product_id="mushroom", primary_type=PSILOCYBIN_MUSHROOM,

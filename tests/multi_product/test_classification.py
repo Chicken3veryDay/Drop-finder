@@ -69,7 +69,19 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(comparison_price("35", flower_quantity)["price_per_gram"], 10.0)
         vape_quantity = quantity_fields("1mL disposable", CANNABIS_VAPE)
         self.assertEqual(vape_quantity["volume_ml"], 1.0)
+        self.assertEqual(vape_quantity["quantity_unit"], "ml")
         self.assertEqual(comparison_price("25", vape_quantity)["price_per_ml"], 25.0)
+
+        mass_vape_quantity = quantity_fields("2g disposable", CANNABIS_VAPE)
+        self.assertEqual(mass_vape_quantity["grams"], 2.0)
+        self.assertIsNone(mass_vape_quantity["volume_ml"])
+        self.assertEqual(mass_vape_quantity["quantity_unit"], "g")
+        self.assertEqual(comparison_price("40", mass_vape_quantity)["price_per_gram"], 20.0)
+
+        dual_unit_quantity = quantity_fields("1g / 1mL disposable", CANNABIS_VAPE)
+        self.assertIsNone(dual_unit_quantity["grams"])
+        self.assertEqual(dual_unit_quantity["volume_ml"], 1.0)
+        self.assertEqual(dual_unit_quantity["quantity_unit"], "ml")
 
     def test_legacy_fraction_and_word_weights_remain_supported(self) -> None:
         expected = {

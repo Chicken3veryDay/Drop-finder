@@ -81,6 +81,27 @@ class RuntimeTests(unittest.TestCase):
             ],
         )
 
+    def test_mass_labeled_vape_preserves_source_quantity_for_publication(self):
+        reliability = self.make_reliability()
+        install_multi_product_runtime(reliability)
+        row = reliability.worker.core.record(
+            "fixture",
+            "Fixture",
+            ("html", "https://example.test/shop", "storewide"),
+            "THCA Live Resin Disposable Vape 2g",
+            "https://example.test/products/vape",
+            "",
+            40,
+            "in_stock",
+        )
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row["grams"], 2.0)
+        self.assertIsNone(row["volume_ml"])
+        self.assertEqual(row["quantity_unit"], "g")
+        self.assertEqual(row["comparison_metric"], "price_per_gram")
+        self.assertEqual(row["price_per_gram"], 20.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,6 +118,12 @@ Explicitly excluded fields:
 
 Comparison metric: `price_per_ml`.
 
+The current public vape schema is intentionally volume-only. Retrieval preserves an
+explicit mass label for auditability, but final publication rejects mass-only vape
+records with `unsupported_vape_mass_quantity`. It must never erase the label or
+invent a gram-to-milliliter conversion. Supporting mass-priced vapes requires a
+separate schema and UI change so unlike units are not silently compared.
+
 ### Cannabis edible
 
 Compact row:
