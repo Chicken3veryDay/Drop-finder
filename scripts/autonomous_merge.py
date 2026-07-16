@@ -24,6 +24,8 @@ _PUBLIC_ROUTE_FIELDS = (
     "content_type",
     "products",
     "candidates",
+    "verification_failures",
+    "verification_failure_reasons",
     "duration_seconds",
     "retry_attempt",
 )
@@ -58,6 +60,7 @@ def _source_status(row: dict[str, Any], accepted_count: int, rejected_count: int
     ]
     healthy_routes = sum(route.get("status") == "healthy" for route in route_results)
     non_healthy_routes = len(route_results) - healthy_routes
+    verification_failures = sum(int(route.get("verification_failures") or 0) for route in route_results)
     active_route = str(row.get("active_route") or "")
     fallback_active = any(
         route.get("status") == "healthy"
@@ -79,6 +82,7 @@ def _source_status(row: dict[str, Any], accepted_count: int, rejected_count: int
         "routes_attempted": len(route_results),
         "healthy_routes": healthy_routes,
         "non_healthy_routes": non_healthy_routes,
+        "verification_failures": verification_failures,
         "fallback_active": fallback_active,
         "retry_attempts": max(
             (int(route.get("retry_attempt") or 1) for route in route_results),
@@ -97,6 +101,7 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
     sources = status.get("sources") or []
     status["healthy_routes"] = sum(int(source.get("healthy_routes") or 0) for source in sources)
     status["non_healthy_routes"] = sum(int(source.get("non_healthy_routes") or 0) for source in sources)
+    status["verification_failures"] = sum(int(source.get("verification_failures") or 0) for source in sources)
     status["fallback_active_sources"] = sum(bool(source.get("fallback_active")) for source in sources)
     status_path.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return runtime
@@ -136,6 +141,12 @@ def self_test(root: Path) -> int:
                 "status": "healthy",
                 "http_status": 200,
                 "products": 1,
+                "candidates": 3,
+                "verification_failures": 2,
+                "verification_failure_reasons": {
+                    "product_detail_fetch_error": 1,
+                    "product_detail_missing_evidence": 1,
+                },
                 "retry_attempt": 2,
             },
         ]
@@ -167,14 +178,21 @@ def self_test(root: Path) -> int:
         assert source["routes_attempted"] == 2
         assert source["healthy_routes"] == 1
         assert source["non_healthy_routes"] == 1
+        assert source["verification_failures"] == 2
         assert source["fallback_active"] is True
         assert source["retry_attempts"] == 2
         assert [route["status"] for route in source["route_results"]] == ["http_error", "healthy"]
         assert source["route_results"][0]["http_status"] == 429
+        assert source["route_results"][1]["verification_failures"] == 2
+        assert source["route_results"][1]["verification_failure_reasons"] == {
+            "product_detail_fetch_error": 1,
+            "product_detail_missing_evidence": 1,
+        }
         assert "response_body" not in source["route_results"][0]
         assert "headers" not in source["route_results"][0]
         assert status["healthy_routes"] == 1
         assert status["non_healthy_routes"] == 1
+        assert status["verification_failures"] == 2
         assert status["fallback_active_sources"] == 1
     return 0
 
