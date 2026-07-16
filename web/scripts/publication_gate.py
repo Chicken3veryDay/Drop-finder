@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small, deterministic gates used by the static DropFinder publication workflow."""
+"""Deterministic gates for the static multi-product DropFinder publication."""
 
 from __future__ import annotations
 
@@ -7,8 +7,17 @@ import argparse
 import json
 import os
 import subprocess
+from collections import Counter
 from pathlib import Path
 from typing import Any
+
+CONTROLLED_PRODUCT_TYPES = {"psilocybin_mushroom", "psilocybin_vape"}
+ENABLED_PRODUCT_TYPES = {
+    "cannabis_flower",
+    "cannabis_vape",
+    "psilocybin_mushroom",
+    "psilocybin_vape",
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -19,6 +28,53 @@ def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], text=True).strip()
 
 
+def product_type(product: dict[str, Any]) -> str:
+    evidence = product.get("classification_evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    explicit = str(product.get("primary_type") or evidence.get("primary_type") or "")
+    if explicit:
+        return explicit
+    if evidence.get("explicit_thca") and evidence.get("explicit_flower"):
+        return "cannabis_flower"
+    return ""
+
+
+def valid_type_evidence(product: dict[str, Any]) -> bool:
+    evidence = product.get("classification_evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    primary = product_type(product)
+    if primary not in ENABLED_PRODUCT_TYPES:
+        return False
+    if primary == "cannabis_flower":
+        return bool(evidence.get("explicit_thca") and evidence.get("explicit_flower"))
+    if primary == "cannabis_vape":
+        return bool(evidence.get("explicit_cannabis") and evidence.get("explicit_vape"))
+    if primary == "psilocybin_mushroom":
+        return bool(
+            evidence.get("explicit_psilocybin")
+            and evidence.get("explicit_mushroom")
+            and not evidence.get("explicit_vape")
+            and not evidence.get("amanita_signal")
+        )
+    if primary == "psilocybin_vape":
+        return bool(
+            evidence.get("explicit_psilocybin")
+            and evidence.get("explicit_vape")
+            and not evidence.get("amanita_signal")
+        )
+    return False
+
+
+def controlled_links_removed(product: dict[str, Any]) -> bool:
+    if product_type(product) not in CONTROLLED_PRODUCT_TYPES:
+        return True
+    return not any(product.get(field) for field in ("url", "public_purchase_url", "route_url", "source_url", "raw_url"))
+
+
+def type_counts(products: list[dict[str, Any]]) -> dict[str, int]:
+    return dict(sorted(Counter(product_type(product) for product in products if product_type(product)).items()))
+
+
 def validate_data(root: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     catalog = load_json(root / "data/catalog.json")
     status = load_json(root / "data/status.json")
@@ -26,7 +82,8 @@ def validate_data(root: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str,
     quarantine = load_json(root / "data/quarantine.json")
     rejections = load_json(root / "data/rejections.json")
 
-    assert catalog["product_count"] == len(catalog["products"])
+    products = catalog["products"]
+    assert catalog["product_count"] == len(products)
     assert status["degraded_sources"] == 0
     assert status["healthy_sources"] == status["enabled_sources"]
     assert runtime["zero_degraded_active_services"] is True
@@ -34,11 +91,16 @@ def validate_data(root: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str,
     assert all(source["status"] == "healthy" for source in status["sources"])
     assert quarantine["count"] == status["quarantined_sources"]
     assert rejections["count"] == status["rejected_products"]
-    assert all(
-        product.get("classification_evidence", {}).get("explicit_thca")
-        and product.get("classification_evidence", {}).get("explicit_flower")
-        for product in catalog["products"]
-    )
+    assert all(valid_type_evidence(product) for product in products)
+    assert all(controlled_links_removed(product) for product in products)
+
+    derived_counts = type_counts(products)
+    if "products_by_type" in catalog:
+        assert catalog["products_by_type"] == derived_counts
+    if "products_by_type" in status:
+        assert status["products_by_type"] == derived_counts
+    if "products_by_type" in runtime:
+        assert runtime["products_by_type"] == derived_counts
     return catalog, status, runtime
 
 
@@ -67,8 +129,38 @@ def record_receipt(root: Path) -> None:
     repository = os.environ["GITHUB_REPOSITORY"]
     owner, repository_name = repository.split("/", 1)
     pages_url = f"https://{owner.lower()}.github.io/{repository_name}/"
+    products = catalog["products"]
+    counts = type_counts(products)
+    verification = {
+        "publication_branch_exists": True,
+        "main_and_public_runtime_blob_match": git("rev-parse", "HEAD:cloud_pages/data/runtime.json") == git("rev-parse", "origin/gh-pages:data/runtime.json"),
+        "main_and_public_status_blob_match": git("rev-parse", "HEAD:cloud_pages/data/status.json") == git("rev-parse", "origin/gh-pages:data/status.json"),
+        "all_active_sources_healthy": status["healthy_sources"] == status["enabled_sources"] and status["degraded_sources"] == 0,
+        "all_published_products_have_valid_type_evidence": all(valid_type_evidence(product) for product in products),
+        "controlled_products_have_no_purchase_links": all(controlled_links_removed(product) for product in products),
+        "all_published_flower_products_have_explicit_thca_evidence": all(
+            product.get("classification_evidence", {}).get("explicit_thca")
+            for product in products
+            if product_type(product) == "cannabis_flower"
+        ),
+        "all_published_flower_products_have_explicit_flower_evidence": all(
+            product.get("classification_evidence", {}).get("explicit_flower")
+            for product in products
+            if product_type(product) == "cannabis_flower"
+        ),
+        "negative_catalog_search_found_forbidden_forms": False,
+        "catalog_blob_sha": git("rev-parse", "origin/gh-pages:data/catalog.json"),
+        "status_blob_sha": git("rev-parse", "origin/gh-pages:data/status.json"),
+        "runtime_blob_sha": git("rev-parse", "origin/gh-pages:data/runtime.json"),
+        "rejections_blob_sha": git("rev-parse", "origin/gh-pages:data/rejections.json"),
+        "quarantine_blob_sha": git("rev-parse", "origin/gh-pages:data/quarantine.json"),
+        "index_blob_sha": git("rev-parse", "origin/gh-pages:index.html"),
+        "manifest_blob_sha": git("rev-parse", "origin/gh-pages:manifest.webmanifest"),
+        "service_worker_blob_sha": git("rev-parse", "origin/gh-pages:sw.js"),
+        "vite_manifest_blob_sha": git("rev-parse", "origin/gh-pages:assets/vite-manifest.json"),
+    }
     receipt = {
-        "schema_version": "dropfinder-autonomous-deployment-v6",
+        "schema_version": "dropfinder-autonomous-deployment-v7-multi-product",
         "status": "healthy",
         "mode": "credential_free_github_actions_plus_github_pages",
         "repository": repository,
@@ -89,6 +181,7 @@ def record_receipt(root: Path) -> None:
         "worker_model": "six_scheduled_resumable_github_actions_shards",
         "schedule": "23 */3 * * *",
         "published_at": runtime["generated_at"],
+        "products_by_type": counts,
         "runtime": {
             "status": runtime["status"],
             "zero_degraded_active_services": runtime["zero_degraded_active_services"],
@@ -102,33 +195,18 @@ def record_receipt(root: Path) -> None:
             "rejected_products": runtime["rejected_products"],
         },
         "services": status["services"],
-        "verification": {
-            "publication_branch_exists": True,
-            "main_and_public_runtime_blob_match": git("rev-parse", "HEAD:cloud_pages/data/runtime.json") == git("rev-parse", "origin/gh-pages:data/runtime.json"),
-            "main_and_public_status_blob_match": git("rev-parse", "HEAD:cloud_pages/data/status.json") == git("rev-parse", "origin/gh-pages:data/status.json"),
-            "all_active_sources_healthy": status["healthy_sources"] == status["enabled_sources"] and status["degraded_sources"] == 0,
-            "all_published_products_have_explicit_thca_evidence": all(product.get("classification_evidence", {}).get("explicit_thca") for product in catalog["products"]),
-            "all_published_products_have_explicit_flower_evidence": all(product.get("classification_evidence", {}).get("explicit_flower") for product in catalog["products"]),
-            "negative_catalog_search_found_forbidden_forms": False,
-            "catalog_blob_sha": git("rev-parse", "origin/gh-pages:data/catalog.json"),
-            "status_blob_sha": git("rev-parse", "origin/gh-pages:data/status.json"),
-            "runtime_blob_sha": git("rev-parse", "origin/gh-pages:data/runtime.json"),
-            "rejections_blob_sha": git("rev-parse", "origin/gh-pages:data/rejections.json"),
-            "quarantine_blob_sha": git("rev-parse", "origin/gh-pages:data/quarantine.json"),
-            "index_blob_sha": git("rev-parse", "origin/gh-pages:index.html"),
-            "manifest_blob_sha": git("rev-parse", "origin/gh-pages:manifest.webmanifest"),
-            "service_worker_blob_sha": git("rev-parse", "origin/gh-pages:sw.js"),
-            "vite_manifest_blob_sha": git("rev-parse", "origin/gh-pages:assets/vite-manifest.json"),
-        },
+        "verification": verification,
     }
     assert all(
-        receipt["verification"][key]
+        verification[key]
         for key in (
             "main_and_public_runtime_blob_match",
             "main_and_public_status_blob_match",
             "all_active_sources_healthy",
-            "all_published_products_have_explicit_thca_evidence",
-            "all_published_products_have_explicit_flower_evidence",
+            "all_published_products_have_valid_type_evidence",
+            "controlled_products_have_no_purchase_links",
+            "all_published_flower_products_have_explicit_thca_evidence",
+            "all_published_flower_products_have_explicit_flower_evidence",
         )
     )
     output = Path("deployment/cdn.json")
