@@ -264,6 +264,12 @@ def fetch_public_document(
                     chain.append(current)
                     continue
 
+                if not 200 <= status < 300:
+                    return FetchResult(
+                        safe, current, status, "", b"",
+                        f"http_status_{status}", tuple(chain),
+                    )
+
                 content_type = str(response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
                 if content_type and content_type not in ALLOWED_CONTENT_TYPES and not content_type.startswith("image/"):
                     return FetchResult(
