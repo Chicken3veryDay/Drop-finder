@@ -32,6 +32,11 @@ export class MarketplaceQueryEngine {
   async initialize(generationId, products) {
     if (!Array.isArray(products)) throw new PlatformError('invalid_index', 'Products must be an array');
     this.disposeWorker();
+    for (const deferred of this.pending.values()) {
+      deferred.reject(new DOMException('Superseded by a new catalog generation', 'AbortError'));
+    }
+    this.pending.clear();
+    this.workerRestarts = 0;
     this.generationId = generationId;
     this.rows = products.map(compactProduct);
     try {
@@ -44,6 +49,7 @@ export class MarketplaceQueryEngine {
     } else {
       this.mode = 'sync';
       if (this.rows.length > this.options.syncFallbackLimit) {
+        this.mode = 'failed';
         throw new PlatformError('worker_required', `Worker support is required above ${this.options.syncFallbackLimit} products`);
       }
     }
@@ -51,6 +57,16 @@ export class MarketplaceQueryEngine {
 
   async query(input = {}) {
     if (!this.generationId) throw new PlatformError('not_initialized', 'Query engine is not initialized');
+    if (this.mode === 'failed') {
+      throw new PlatformError(
+        'worker_unavailable_for_catalog_size',
+        `Marketplace search is unavailable above ${this.options.syncFallbackLimit} products without a worker`,
+      );
+    }
+    if (this.mode !== 'sync' && (this.mode !== 'worker' || !this.worker)) {
+      throw new PlatformError('worker_unavailable', 'Marketplace search worker is unavailable');
+    }
+
     const request = normalizeQuery(input, this.options.pageSize);
     const version = ++this.requestVersion;
     for (const [oldVersion, deferred] of this.pending) {
@@ -65,15 +81,23 @@ export class MarketplaceQueryEngine {
         return executeQuery(this.rows, request, version, this.generationId);
       });
     }
+
+    const worker = this.worker;
     return new Promise((resolve, reject) => {
-      this.pending.set(version, { resolve, reject });
+      const deferred = { resolve, reject };
+      this.pending.set(version, deferred);
       while (this.pending.size > this.options.maxQueuedRequests) {
         const oldest = this.pending.keys().next().value;
         if (oldest === version) break;
         this.pending.get(oldest)?.reject(new DOMException('Query queue was compacted', 'AbortError'));
         this.pending.delete(oldest);
       }
-      this.worker.postMessage({ type: 'query', generationId: this.generationId, version, request });
+      try {
+        worker.postMessage({ type: 'query', generationId: this.generationId, version, request });
+      } catch (error) {
+        if (this.pending.get(version) === deferred) this.pending.delete(version);
+        reject(new PlatformError('worker_dispatch_failed', 'Marketplace search worker could not accept the query', error));
+      }
     });
   }
 
