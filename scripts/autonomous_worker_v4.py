@@ -13,6 +13,7 @@ if str(HERE) not in sys.path:
 # browser-transport wrapper is intentionally not imported because it reduced
 # successful source coverage on live GitHub-hosted runs.
 import autonomous_worker_v2 as reliability  # type: ignore
+import multi_product  # type: ignore
 
 worker = reliability.worker
 
@@ -26,12 +27,26 @@ reliability.RETRYABLE_HTTP.add(403)
 if "/cbd-hemp-flower/" not in worker.PRODUCT_PATHS:
     worker.PRODUCT_PATHS = (*worker.PRODUCT_PATHS, "/cbd-hemp-flower/")
 
+# Install the narrow type-aware classifier after the reliability layer has
+# finished wiring its candidate scoring and retry wrappers.
+multi_product.install(reliability)
+
 
 def self_test() -> int:
     reliability.self_test()
+    multi_product.self_test()
     assert 403 in reliability.RETRYABLE_HTTP
     assert "/cbd-hemp-flower/" in worker.PRODUCT_PATHS
     assert "green_unicorn_farms" in worker.FALLBACK_HTML_ROUTES
+    assert worker.has_product_evidence("THCA disposable vape 1g")
+    assert worker.has_product_evidence("Amanita mushroom caps 7g")
+    assert not worker.has_product_evidence("Nicotine disposable vape")
+    assert any(
+        route[2] == "storewide"
+        for source_id, _vendor, routes in worker.core.SOURCES
+        if source_id == "sherlocks_glass"
+        for route in routes
+    )
     return 0
 
 
