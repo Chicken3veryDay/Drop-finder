@@ -31,19 +31,21 @@ class CliTests(unittest.TestCase):
             self.assertEqual(verified.returncode, 0, verified.stderr)
             self.assertIn('"products": 3', verified.stdout)
 
-    def test_legacy_title_recovers_exact_weight_evidence(self) -> None:
+    def test_legacy_title_recovers_first_valid_weight_evidence(self) -> None:
         admitted, excluded = strict_flower_products([
             {
                 "primary_type": "cannabis_flower",
                 "grams": 28.3495,
+                "source_weight_label": "28.3495g",
                 "source_title": "THCa Flower - Sherb Tang - 28 Grams",
-                "variant": "",
+                "variant": "Default Title",
             },
             {
                 "primary_type": "cannabis_flower",
-                "grams": 448.0,
+                "grams": 453.592,
+                "source_weight_label": "453.592g",
                 "source_title": "Bacio Gelato THCA Bulk Flower 1 Pound",
-                "variant": "",
+                "variant": "1 Pound",
             },
         ])
         self.assertEqual(excluded, 0)
