@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { AppShell } from "./AppShell";
 import { featureRegistry } from "./featureRegistry";
 import { registerServiceWorker } from "./registerServiceWorker";
+import { installVendorAgeBadges } from "../features/marketplace/vendor-age-badges";
 import "../styles/index.css";
 import "../features/marketplace/marketplace-mobile-parity.css";
 
@@ -15,4 +16,5 @@ createRoot(root).render(
   </StrictMode>,
 );
 
+installVendorAgeBadges();
 registerServiceWorker();

@@ -1,0 +1,347 @@
+{
+  "schema_version": "dropfinder-vendor-expansion-v1",
+  "generated_at": "2026-07-15T23:30:00Z",
+  "methodology": {
+    "boundary": "Public first-party storefront, category, product, and unauthenticated catalog API representations only. No checkout completion, account creation, identity upload, age-gate bypass, or purchase is performed.",
+    "identity_rule": "A Yes/No, Enter, or I am 21+ control is self-attestation confirmation and is never classified as identity verification.",
+    "uncertainty_rule": "A gate or provider not visible in the retrieved public representation remains uncertain or none_observed; absence is not treated as proof that no control exists.",
+    "admission_rule": "Registration does not guarantee publication. Every route remains subject to the existing product-level THCA flower evidence, price, URL, stock, and exclusion gates; failed sources are quarantined."
+  },
+  "vendors": [
+    {
+      "vendor_id": "cali_canna",
+      "vendor_name": "Cali Canna",
+      "canonical_origin": "https://calicanna.cc",
+      "category_url": "https://calicanna.cc/",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://calicanna.cc/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "shopify", "url": "https://calicanna.cc/collections/flower/products.json?limit=250", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://calicanna.cc/", "scope": "storewide"}
+      ],
+      "fallback_html_routes": ["https://calicanna.cc/"],
+      "product_paths": ["/products/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "The public storefront states that products are for adults 21+, but the retrieved representation did not expose a document check or a clear Yes/No age-control implementation.", "evidence_url": "https://calicanna.cc/", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "high", "reasons": ["live first-party storefront", "flower product catalog observed", "bounded public routes"], "limitations": ["collection handle may change", "age provider was not observable"]}
+    },
+    {
+      "vendor_id": "flow_gardens",
+      "vendor_name": "Flow Gardens",
+      "canonical_origin": "https://flowgardens.com",
+      "category_url": "https://flowgardens.com/collections/flower-type-1-flower-high-thca",
+      "platform": "shopify",
+      "routes": [
+        {"type": "shopify", "url": "https://flowgardens.com/collections/flower-type-1-flower-high-thca/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://flowgardens.com/collections/flower-type-1-flower-high-thca", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://flowgardens.com/collections/flower-type-1-flower-high-thca"],
+      "product_paths": ["/products/"],
+      "age_verification": {"classification": "self_attestation_21_plus", "display": "confirmation", "provider": "none_observed", "scope": "browsing", "summary": "The storefront presents an I Am 21 Years or Older entry control. No identity-document provider was observed.", "evidence_url": "https://flowgardens.com/collections/flower-type-1-flower-high-thca", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "high", "reasons": ["live first-party Type 1 high-THCA collection", "Shopify catalog route", "product-level pages"], "limitations": []}
+    },
+    {
+      "vendor_id": "dr_ganja",
+      "vendor_name": "Dr. Ganja",
+      "canonical_origin": "https://www.drganja.com",
+      "category_url": "https://www.drganja.com/thca-flower",
+      "platform": "woocommerce_or_html",
+      "routes": [
+        {"type": "woo", "url": "https://www.drganja.com/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://www.drganja.com/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://www.drganja.com/thca-flower"],
+      "product_paths": ["/product/"],
+      "age_verification": {"classification": "self_attestation_21_plus", "display": "confirmation", "provider": "none_observed", "scope": "browsing", "summary": "The storefront presents No, I am under 21 and Yes, I am 21+ controls. No identity-document provider was observed.", "evidence_url": "https://www.drganja.com/", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "high", "reasons": ["live dedicated THCA flower category", "product prices observed", "public product pages"], "limitations": ["Woo Store API availability is verified by live CI"]}
+    },
+    {
+      "vendor_id": "hemp_hop",
+      "vendor_name": "Hemp Hop",
+      "canonical_origin": "https://hemphop.co",
+      "category_url": "https://hemphop.co/collections/thca-flower-and-prerolls",
+      "platform": "shopify",
+      "routes": [
+        {"type": "shopify", "url": "https://hemphop.co/collections/thca-flower-and-prerolls/products.json?limit=250", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://hemphop.co/collections/thca-flower-and-prerolls", "scope": "mixed_flower"}
+      ],
+      "fallback_html_routes": ["https://hemphop.co/collections/thca-flower-and-prerolls"],
+      "product_paths": ["/products/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "The public collection states that purchasers must be 21+, but a distinct Yes/No control or identity provider was not observable in the retrieved representation.", "evidence_url": "https://hemphop.co/collections/thca-flower-and-prerolls", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "high", "reasons": ["live first-party THCA flower collection", "product-specific lab links observed", "Shopify route"], "limitations": ["mixed collection also contains pre-rolls; strict form exclusions remain mandatory"]}
+    },
+    {
+      "vendor_id": "beleafer",
+      "vendor_name": "Beleafer",
+      "canonical_origin": "https://beleafer.com",
+      "category_url": "https://beleafer.com/product-category/thca-flower/",
+      "platform": "woocommerce_or_html",
+      "routes": [
+        {"type": "woo", "url": "https://beleafer.com/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://beleafer.com/product-category/thca-flower/", "scope": "thca_flower"},
+        {"type": "html", "url": "https://beleafer.com/", "scope": "storewide"}
+      ],
+      "fallback_html_routes": ["https://beleafer.com/product-category/thca-flower/", "https://beleafer.com/"],
+      "product_paths": ["/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public Yes/No age control was confirmed in the retrieved representation.", "evidence_url": "https://beleafer.com/", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party flower storefront", "public category and product routes"], "limitations": ["current category handle and API response require live validation"]}
+    },
+    {
+      "vendor_id": "wildflower_hemp_co",
+      "vendor_name": "Wildflower Hemp Co",
+      "canonical_origin": "https://wildflowerhempco.com",
+      "category_url": "https://wildflowerhempco.com/collections/flower",
+      "platform": "shopify",
+      "routes": [
+        {"type": "shopify", "url": "https://wildflowerhempco.com/collections/flower/products.json?limit=250", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://wildflowerhempco.com/collections/flower", "scope": "mixed_flower"}
+      ],
+      "fallback_html_routes": ["https://wildflowerhempco.com/collections/flower"],
+      "product_paths": ["/products/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public Yes/No age control was observable in the retrieved collection representation.", "evidence_url": "https://wildflowerhempco.com/collections/flower", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "high", "reasons": ["live premium THCA flower products", "variant prices observed", "first-party lab links"], "limitations": ["collection is mixed and relies on strict product evidence"]}
+    },
+    {
+      "vendor_id": "gold_canna",
+      "vendor_name": "Gold Canna",
+      "canonical_origin": "https://goldcanna.com",
+      "category_url": "https://goldcanna.com/collections/all",
+      "platform": "shopify",
+      "routes": [
+        {"type": "shopify", "url": "https://goldcanna.com/collections/all/products.json?limit=250", "scope": "storewide"},
+        {"type": "html", "url": "https://goldcanna.com/collections/all", "scope": "storewide"}
+      ],
+      "fallback_html_routes": ["https://goldcanna.com/collections/all"],
+      "product_paths": ["/products/"],
+      "age_verification": {"classification": "self_attestation_21_plus", "display": "confirmation", "provider": "none_observed", "scope": "browsing", "summary": "The storefront presents an Are You Over 21 Years of Age prompt with a Yes entry control. No identity-document provider was observed.", "evidence_url": "https://goldcanna.com/", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "high", "reasons": ["live first-party Shopify catalog", "flower products and variants observed", "public product data"], "limitations": ["storewide route requires strict form filtering"]}
+    },
+    {
+      "vendor_id": "botany_farms",
+      "vendor_name": "Botany Farms",
+      "canonical_origin": "https://botanyfarms.com",
+      "category_url": "https://botanyfarms.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://botanyfarms.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://botanyfarms.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://botanyfarms.com/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "The current public route is registered for bounded live validation; no document-verification provider or stable age-control implementation was directly confirmed.", "evidence_url": "https://botanyfarms.com/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party hemp storefront", "dedicated route candidate", "strict quarantine protects publication"], "limitations": ["current route was not fully retrievable during research and must pass live CI"]}
+    },
+    {
+      "vendor_id": "bay_smokes",
+      "vendor_name": "Bay Smokes",
+      "canonical_origin": "https://bay-smokes.com",
+      "category_url": "https://bay-smokes.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://bay-smokes.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://bay-smokes.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://bay-smokes.com/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public age-control implementation was directly confirmed during the bounded research pass.", "evidence_url": "https://bay-smokes.com/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party storefront", "dedicated route candidate", "strict quarantine protects publication"], "limitations": ["current route must pass live CI before any products publish"]}
+    },
+    {
+      "vendor_id": "the_hemp_collect",
+      "vendor_name": "The Hemp Collect",
+      "canonical_origin": "https://thehempcollect.com",
+      "category_url": "https://thehempcollect.com/collections/thca-flower",
+      "platform": "shopify",
+      "routes": [
+        {"type": "shopify", "url": "https://thehempcollect.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://thehempcollect.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://thehempcollect.com/collections/thca-flower"],
+      "product_paths": ["/products/"],
+      "age_verification": {"classification": "self_attestation_21_plus", "display": "confirmation", "provider": "none_observed", "scope": "browsing", "summary": "The storefront presents Leave and I'm 21+ controls. No identity-document provider was observed.", "evidence_url": "https://thehempcollect.com/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "high", "reasons": ["live dedicated THCA flower collection", "Shopify route", "public COA links"], "limitations": []}
+    },
+    {
+      "vendor_id": "snapdragon_hemp",
+      "vendor_name": "Snapdragon Hemp",
+      "canonical_origin": "https://snapdragonhemp.com",
+      "category_url": "https://snapdragonhemp.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://snapdragonhemp.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://snapdragonhemp.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://snapdragonhemp.com/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public Yes/No control was directly confirmed during the bounded research pass.", "evidence_url": "https://snapdragonhemp.com/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party hemp storefront", "dedicated route candidate", "strict product admission"], "limitations": ["route and gate require live CI confirmation"]}
+    },
+    {
+      "vendor_id": "cbd_hemp_direct",
+      "vendor_name": "CBD Hemp Direct",
+      "canonical_origin": "https://cbdhemp.direct",
+      "category_url": "https://cbdhemp.direct/collections/thca-flower",
+      "platform": "woocommerce_or_html",
+      "routes": [
+        {"type": "woo", "url": "https://cbdhemp.direct/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://cbdhemp.direct/collections/thca-flower", "scope": "thca_flower"},
+        {"type": "html", "url": "https://cbdhemp.direct/", "scope": "storewide"}
+      ],
+      "fallback_html_routes": ["https://cbdhemp.direct/collections/thca-flower", "https://cbdhemp.direct/"],
+      "product_paths": ["/product/", "/products/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "The public storefront was protected by an automated request-verification layer during research, so its age-control provider remains uncertain.", "evidence_url": "https://cbdhemp.direct/", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party flower storefront", "API and HTML fallbacks", "bounded retry and quarantine"], "limitations": ["request-verification layer may block GitHub-hosted workers"]}
+    },
+    {
+      "vendor_id": "eight_horses_hemp",
+      "vendor_name": "Eight Horses Hemp",
+      "canonical_origin": "https://eighthorseshemp.com",
+      "category_url": "https://eighthorseshemp.com/collections/hemp-flower-type-1-2",
+      "platform": "shopify",
+      "routes": [
+        {"type": "shopify", "url": "https://eighthorseshemp.com/collections/hemp-flower-type-1-2/products.json?limit=250", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://eighthorseshemp.com/collections/hemp-flower-type-1-2", "scope": "mixed_flower"}
+      ],
+      "fallback_html_routes": ["https://eighthorseshemp.com/collections/hemp-flower-type-1-2"],
+      "product_paths": ["/products/"],
+      "age_verification": {"classification": "self_attestation_21_plus", "display": "confirmation", "provider": "none_observed", "scope": "browsing", "summary": "The storefront states that clicking Enter verifies the visitor is 21 or older. No identity-document provider was observed.", "evidence_url": "https://eighthorseshemp.com/collections/hemp-flower-type-1-2", "observed_at": "2026-07-15T23:30:00Z", "status": "current"},
+      "vetting": {"status": "accepted", "confidence": "high", "reasons": ["live Type 1 and Type 2 flower collection", "Shopify catalog route", "product pages"], "limitations": ["mixed collection requires explicit THCA evidence"]}
+    },
+    {
+      "vendor_id": "veteran_grown_hemp",
+      "vendor_name": "Veteran Grown Hemp",
+      "canonical_origin": "https://veterangrownhemp.com",
+      "category_url": "https://veterangrownhemp.com/product-category/thca-flower/",
+      "platform": "woocommerce_or_html",
+      "routes": [
+        {"type": "woo", "url": "https://veterangrownhemp.com/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://veterangrownhemp.com/product-category/thca-flower/", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://veterangrownhemp.com/product-category/thca-flower/"],
+      "product_paths": ["/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public age-control implementation was directly confirmed during the bounded research pass.", "evidence_url": "https://veterangrownhemp.com/product-category/thca-flower/", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["first-party vendor route candidate", "Woo and HTML fallbacks", "strict quarantine"], "limitations": ["route must pass live CI before products publish"]}
+    },
+    {
+      "vendor_id": "canna_nc",
+      "vendor_name": "CannaNC",
+      "canonical_origin": "https://cannanc.com",
+      "category_url": "https://cannanc.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://cannanc.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://cannanc.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://cannanc.com/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public Yes/No control was directly confirmed during the bounded research pass.", "evidence_url": "https://cannanc.com/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["first-party storefront route candidate", "dedicated category convention", "strict admission"], "limitations": ["route and platform require live CI confirmation"]}
+    },
+    {
+      "vendor_id": "lit_farms",
+      "vendor_name": "LIT Farms",
+      "canonical_origin": "https://litfarms.com",
+      "category_url": "https://litfarms.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://litfarms.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://litfarms.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://litfarms.com/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public age-control implementation was directly confirmed during the bounded research pass.", "evidence_url": "https://litfarms.com/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["first-party flower storefront route candidate", "Shopify and HTML fallbacks", "strict product evidence"], "limitations": ["current category handle requires live CI validation"]}
+    },
+    {
+      "vendor_id": "simply_mary",
+      "vendor_name": "Simply Mary",
+      "canonical_origin": "https://simplymary.co",
+      "category_url": "https://simplymary.co/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://simplymary.co/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://simplymary.co/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://simplymary.co/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public age-control implementation was directly confirmed during the bounded research pass.", "evidence_url": "https://simplymary.co/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["first-party flower storefront route candidate", "bounded public routes", "strict quarantine"], "limitations": ["current route must pass live CI before products publish"]}
+    },
+    {
+      "vendor_id": "earthy_select",
+      "vendor_name": "Earthy Select",
+      "canonical_origin": "https://earthyselect.com",
+      "category_url": "https://earthyselect.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://earthyselect.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "woo", "url": "https://earthyselect.com/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower", "scope": "mixed_flower"},
+        {"type": "html", "url": "https://earthyselect.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://earthyselect.com/collections/thca-flower", "https://earthyselect.com/"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public Yes/No control was directly confirmed during the bounded research pass.", "evidence_url": "https://earthyselect.com/", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party cannabinoid storefront", "multi-platform route fallbacks", "strict form filtering"], "limitations": ["platform and current collection handle require live CI validation"]}
+    },
+    {
+      "vendor_id": "exhale_wellness",
+      "vendor_name": "Exhale Wellness",
+      "canonical_origin": "https://www.exhalewell.com",
+      "category_url": "https://www.exhalewell.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://www.exhalewell.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://www.exhalewell.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://www.exhalewell.com/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public age-control implementation was directly confirmed during the bounded research pass.", "evidence_url": "https://www.exhalewell.com/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party storefront", "dedicated route candidate", "strict quarantine"], "limitations": ["current route must pass live CI before products publish"]}
+    },
+    {
+      "vendor_id": "plain_jane",
+      "vendor_name": "Plain Jane",
+      "canonical_origin": "https://plainjane.com",
+      "category_url": "https://plainjane.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://plainjane.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://plainjane.com/collections/thca-flower", "scope": "thca_flower"},
+        {"type": "html", "url": "https://plainjane.com/", "scope": "storewide"}
+      ],
+      "fallback_html_routes": ["https://plainjane.com/collections/thca-flower", "https://plainjane.com/"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public Yes/No control was directly confirmed during the bounded research pass.", "evidence_url": "https://plainjane.com/", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party flower storefront", "Shopify and HTML route candidates", "strict product-level admission"], "limitations": ["current THCA collection handle requires live CI validation"]}
+    },
+    {
+      "vendor_id": "great_cbd_shop",
+      "vendor_name": "Great CBD Shop",
+      "canonical_origin": "https://greatcbdshop.com",
+      "category_url": "https://greatcbdshop.com/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://greatcbdshop.com/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://greatcbdshop.com/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://greatcbdshop.com/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public age-control implementation was directly confirmed during the bounded research pass.", "evidence_url": "https://greatcbdshop.com/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established multi-brand first-party retailer", "dedicated route candidate", "strict product evidence and exclusions"], "limitations": ["marketplace-style catalog needs strong deduplication and live route validation"]}
+    },
+    {
+      "vendor_id": "hello_mood",
+      "vendor_name": "Mood",
+      "canonical_origin": "https://hellomood.co",
+      "category_url": "https://hellomood.co/collections/thca-flower",
+      "platform": "shopify_or_html",
+      "routes": [
+        {"type": "shopify", "url": "https://hellomood.co/collections/thca-flower/products.json?limit=250", "scope": "thca_flower"},
+        {"type": "html", "url": "https://hellomood.co/collections/thca-flower", "scope": "thca_flower"}
+      ],
+      "fallback_html_routes": ["https://hellomood.co/collections/thca-flower"],
+      "product_paths": ["/products/", "/product/"],
+      "age_verification": {"classification": "uncertain", "display": "unknown", "provider": "none_observed", "scope": "unknown", "summary": "No identity-document provider or stable public age-control implementation was directly confirmed during the bounded research pass.", "evidence_url": "https://hellomood.co/collections/thca-flower", "observed_at": "2026-07-15T23:30:00Z", "status": "inaccessible"},
+      "vetting": {"status": "accepted", "confidence": "medium", "reasons": ["established first-party online storefront", "dedicated route candidate", "strict flower-only admission"], "limitations": ["current route and storefront rendering require live CI validation"]}
+    }
+  ]
+}
