@@ -95,7 +95,7 @@ def classify_product(
     route_hint: object = "",
 ) -> ProductClassification | None:
     text = normalized_text(name, description, url, route_hint)
-    if not text or ACCESSORY.search(text) or is_mixed_offer(name, description, url, route_hint):
+    if not text or ACCESSORY.search(text) or is_mixed_offer(name, description, url):
         return None
 
     has_thca = bool(THCA.search(text))
