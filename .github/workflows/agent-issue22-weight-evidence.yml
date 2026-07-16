@@ -1,0 +1,427 @@
+name: Agent issue 22 weight evidence repair
+
+on:
+  push:
+    branches:
+      - agent/ec249c6b/cycle-0003/issue-22-weight-evidence
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: require source-backed catalog weights') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/ec249c6b/cycle-0003/issue-22-weight-evidence
+          fetch-depth: 0
+
+      - name: Apply focused repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one exact replacement, found {count}")
+              target.write_text(text.replace(old, new), encoding="utf-8")
+
+          replace_exact(
+              "scripts/cloud_scan.py",
+              r'''GRAM=re.compile(r'(?<!\d)(0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b',re.I)
+          OUNCE=re.compile(r'(?<!\d)(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)?\b',re.I)
+          WORD_WEIGHT=re.compile(r'\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b',re.I)''',
+              r'''GRAM=re.compile(r'(?<![\d.])(0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b',re.I)
+          OUNCE=re.compile(r'(?<![\d.])(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)\b',re.I)
+          BARE_FRACTION_OUNCE=re.compile(r'(?<![\d.])(1/8|1/4|1/2)(?:st|nd|rd|th)?\b',re.I)
+          POUND_WEIGHT=re.compile(r'\b(?:1/8|1/4|1/2|1|2|4|one|two|four|eighth|quarter|half)\s*(?:lb|lbs|pounds?)\b',re.I)
+          WORD_WEIGHT=re.compile(r'\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b',re.I)''',
+          )
+          replace_exact(
+              "scripts/cloud_scan.py",
+              r'''def grams(s):
+           m=GRAM.search(s)
+           if m:return num(m.group(1))
+           m=OUNCE.search(s)
+           if m:return round({'1/8':3.5437,'1/4':7.0874,'1/2':14.1748}.get(m.group(1),(num(m.group(1)) or 0)*28.3495),3)
+           m=WORD_WEIGHT.search(s)
+           return {'eighth':3.5437,'quarter':7.0874,'half ounce':14.1748,'half-oz':14.1748,'half oz':14.1748,'ounce':28.3495,'one ounce':28.3495,'zip':28.3495}.get(m.group(1).lower()) if m else None''',
+              r'''def grams(s):
+           m=GRAM.search(s)
+           if m:return num(m.group(1))
+           if POUND_WEIGHT.search(s):return None
+           m=OUNCE.search(s) or BARE_FRACTION_OUNCE.search(s)
+           if m:return round({'1/8':3.5437,'1/4':7.0874,'1/2':14.1748}.get(m.group(1),(num(m.group(1)) or 0)*28.3495),3)
+           m=WORD_WEIGHT.search(s)
+           return {'eighth':3.5437,'quarter':7.0874,'half ounce':14.1748,'half-oz':14.1748,'half oz':14.1748,'ounce':28.3495,'one ounce':28.3495,'zip':28.3495}.get(m.group(1).lower()) if m else None''',
+          )
+          replace_exact(
+              "scripts/cloud_scan.py",
+              r'''def selftest():
+           assert grams('1/8th ounce')==3.544;assert grams('quarter oz')==7.0874
+           route=('shopify','https://example.com/collections/thca-flower/products.json','thca_flower');payload=json.dumps({'products':[{'title':'Blue Dream THCA Flower','handle':'blue','body_html':'3.5g THCA 24.1%','variants':[{'id':1,'title':'3.5g','price':'35','available':True}]},{'title':'THCA Pre-Rolls','handle':'rolls','variants':[{'id':2,'price':'20'}]}]});rows=shopify(payload,'fixture','Fixture',route);assert len(rows)==1 and rows[0]['price_per_gram']==10;print('cloud scanner self-test passed');return 0''',
+              r'''def selftest():
+           assert grams('1/8th ounce')==3.544;assert grams('quarter oz')==7.0874;assert grams('1 oz')==28.349
+           for invalid in ('Tier 1','Type 1','Tier 2','4 pack','THCA 24.1%','THCA 18.2%','THCA 22.4%','quarter pound','1/4 lb'):assert grams(invalid) is None
+           assert grams('Blue Dream THCA 24.1% 3.5g')==3.5
+           route=('shopify','https://example.com/collections/thca-flower/products.json','thca_flower');payload=json.dumps({'products':[{'title':'Blue Dream THCA Flower','handle':'blue','body_html':'3.5g THCA 24.1%','variants':[{'id':1,'title':'3.5g','price':'35','available':True}]},{'title':'THCA Pre-Rolls','handle':'rolls','variants':[{'id':2,'price':'20'}]}]});rows=shopify(payload,'fixture','Fixture',route);assert len(rows)==1 and rows[0]['price_per_gram']==10;print('cloud scanner self-test passed');return 0''',
+          )
+
+          replace_exact(
+              "scripts/catalog_v4/normalization.py",
+              r'''BARE_FRACTION_OUNCE_PATTERN = re.compile(r"(?<![\d.-])(?P<value>1/8|1/4|1/2)\s*(?:th|st|nd|rd)?\b", re.I)
+          WORD_WEIGHT_PATTERN = re.compile(
+              r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b",
+              re.I,
+          )''',
+              r'''BARE_FRACTION_OUNCE_PATTERN = re.compile(r"(?<![\d.-])(?P<value>1/8|1/4|1/2)\s*(?:th|st|nd|rd)?\b", re.I)
+          POUND_WEIGHT_PATTERN = re.compile(
+              r"\b(?:1/8|1/4|1/2|1|2|4|one|two|four|eighth|quarter|half)\s*(?:lb|lbs|pounds?)\b",
+              re.I,
+          )
+          WORD_WEIGHT_PATTERN = re.compile(
+              r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b",
+              re.I,
+          )''',
+          )
+          replace_exact(
+              "scripts/catalog_v4/normalization.py",
+              r'''def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str]:
+              direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
+              source_label = clean_text(label if label not in (None, "") else value)
+              # The first argument is a normalized grams field when supplied by an
+              # adapter. Numeric strings are therefore valid here; arbitrary labels are
+              # parsed only from the second argument below.
+              if direct is not None:
+                  return _snap_commercial_weight(direct), source_label or f"{direct.normalize()}g"
+              text = source_label
+              match = GRAM_PATTERN.search(text)
+              if match:
+                  return Decimal(match.group("value")), text
+              match = OUNCE_PATTERN.search(text) or BARE_FRACTION_OUNCE_PATTERN.search(text)
+              if match:
+                  amount = match.group("value")
+                  grams = {
+                      "1/8": Decimal("3.5"),
+                      "1/4": Decimal("7"),
+                      "1/2": Decimal("14"),
+                      "1": Decimal("28"),
+                      "2": Decimal("56"),
+                      "4": Decimal("112"),
+                  }[amount]
+                  return grams, text
+              match = WORD_WEIGHT_PATTERN.search(text)
+              if match:
+                  token = normalized_search(match.group("value"))
+                  grams = {
+                      "eighth": Decimal("3.5"),
+                      "quarter": Decimal("7"),
+                      "half ounce": Decimal("14"),
+                      "half oz": Decimal("14"),
+                      "ounce": Decimal("28"),
+                      "one ounce": Decimal("28"),
+                      "two ounces": Decimal("56"),
+                      "two ounce": Decimal("56"),
+                      "four ounces": Decimal("112"),
+                      "four ounce": Decimal("112"),
+                      "zip": Decimal("28"),
+                  }.get(token)
+                  if grams is not None:
+                      return grams, text
+              return None, text''',
+              r'''def _weight_from_label(text: str) -> Decimal | None:
+              if not text or POUND_WEIGHT_PATTERN.search(text):
+                  return None
+              match = GRAM_PATTERN.search(text)
+              if match:
+                  return Decimal(match.group("value"))
+              match = OUNCE_PATTERN.search(text) or BARE_FRACTION_OUNCE_PATTERN.search(text)
+              if match:
+                  return {
+                      "1/8": Decimal("3.5"),
+                      "1/4": Decimal("7"),
+                      "1/2": Decimal("14"),
+                      "1": Decimal("28"),
+                      "2": Decimal("56"),
+                      "4": Decimal("112"),
+                  }[match.group("value")]
+              match = WORD_WEIGHT_PATTERN.search(text)
+              if not match:
+                  return None
+              return {
+                  "eighth": Decimal("3.5"),
+                  "quarter": Decimal("7"),
+                  "half ounce": Decimal("14"),
+                  "half oz": Decimal("14"),
+                  "ounce": Decimal("28"),
+                  "one ounce": Decimal("28"),
+                  "two ounces": Decimal("56"),
+                  "two ounce": Decimal("56"),
+                  "four ounces": Decimal("112"),
+                  "four ounce": Decimal("112"),
+                  "zip": Decimal("28"),
+              }.get(normalized_search(match.group("value")))
+
+
+          def normalize_weight(
+              value: Any,
+              label: Any = None,
+              *,
+              require_explicit_label: bool = False,
+          ) -> tuple[Decimal | None, str]:
+              direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
+              source_label = clean_text(label if label not in (None, "") else "")
+              parsed_label = _weight_from_label(source_label)
+              if direct is not None:
+                  normalized_direct = _snap_commercial_weight(direct)
+                  if require_explicit_label:
+                      if parsed_label is None or _snap_commercial_weight(parsed_label) != normalized_direct:
+                          return None, source_label
+                      return normalized_direct, source_label
+                  return normalized_direct, source_label or f"{direct.normalize()}g"
+              text = source_label or clean_text(value)
+              return _weight_from_label(text), text''',
+          )
+
+          replace_exact(
+              "scripts/catalog_v4/builder.py",
+              r'''            grams, source_weight_label = normalize_weight(
+                          raw.get("grams") if raw.get("grams") not in (None, "") else raw.get("weight_grams"),
+                          variant_label or raw.get("weight") or raw.get("size"),
+                      )''',
+              r'''            adapter_weight = raw.get("weight_grams")
+                      legacy_weight = raw.get("grams")
+                      weight_value = adapter_weight if adapter_weight not in (None, "") else legacy_weight
+                      weight_label = variant_label or raw.get("weight") or raw.get("size") or source_title
+                      grams, source_weight_label = normalize_weight(
+                          weight_value,
+                          weight_label,
+                          require_explicit_label=(
+                              adapter_weight in (None, "") and legacy_weight not in (None, "")
+                          ),
+                      )''',
+          )
+
+          replace_exact(
+              "tests/catalog_v4/test_normalization.py",
+              r'''    def test_weight_normalization(self) -> None:
+                  cases = {
+                      "3.5g": Decimal("3.5"),
+                      "1/8th oz": Decimal("3.5"),
+                      "Quarter oz": Decimal("7"),
+                      "half ounce": Decimal("14"),
+                      "one ounce": Decimal("28"),
+                      "two ounces": Decimal("56"),
+                  }
+                  for label, expected in cases.items():
+                      with self.subTest(label=label):
+                          self.assertEqual(normalize_weight(None, label)[0], expected)
+                  self.assertEqual(normalize_weight("7", "7 grams")[0], Decimal("7"))
+                  self.assertIsNone(normalize_weight(None, "family pack")[0])
+                  self.assertIsNone(normalize_weight(-1, "-1g")[0])''',
+              r'''    def test_weight_normalization(self) -> None:
+                  cases = {
+                      "3.5g": Decimal("3.5"),
+                      "1/8th oz": Decimal("3.5"),
+                      "Quarter oz": Decimal("7"),
+                      "half ounce": Decimal("14"),
+                      "one ounce": Decimal("28"),
+                      "two ounces": Decimal("56"),
+                  }
+                  for label, expected in cases.items():
+                      with self.subTest(label=label):
+                          self.assertEqual(normalize_weight(None, label)[0], expected)
+                  self.assertEqual(normalize_weight("7", "7 grams")[0], Decimal("7"))
+                  self.assertIsNone(normalize_weight(None, "family pack")[0])
+                  self.assertIsNone(normalize_weight(-1, "-1g")[0])
+                  for label in ("Quarter Pound", "quarter lb", "1/4 lb", "half pound"):
+                      with self.subTest(label=label):
+                          self.assertIsNone(normalize_weight(None, label)[0])
+
+              def test_legacy_numeric_weight_requires_matching_source_evidence(self) -> None:
+                  self.assertIsNone(
+                      normalize_weight("28.3495", "Tier 1", require_explicit_label=True)[0]
+                  )
+                  self.assertIsNone(
+                      normalize_weight("56.699", "THCA 24.1%", require_explicit_label=True)[0]
+                  )
+                  self.assertIsNone(
+                      normalize_weight("28.3495", "7g", require_explicit_label=True)[0]
+                  )
+                  self.assertEqual(
+                      normalize_weight("28.3495", "1 oz", require_explicit_label=True)[0],
+                      Decimal("28"),
+                  )''',
+          )
+
+          replace_exact(
+              "tests/catalog_v4/test_builder.py",
+              r'''    def test_write_and_verify_publication(self) -> None:''',
+              r'''    def test_legacy_numeric_weight_requires_explicit_source_evidence(self) -> None:
+                  base = {
+                      "source_id": "vendor",
+                      "vendor": "Vendor",
+                      "availability": "in_stock",
+                      "price": 30,
+                  }
+                  rows = [
+                      {
+                          **base,
+                          "source_product_id": "tier",
+                          "source_variant_id": "tier-v",
+                          "name": "Example THCA Flower | Tier 1",
+                          "url": "https://vendor.example/products/tier",
+                          "grams": 28.3495,
+                      },
+                      {
+                          **base,
+                          "source_product_id": "potency",
+                          "source_variant_id": "potency-v",
+                          "name": "Example THCA Flower 24.1%",
+                          "url": "https://vendor.example/products/potency",
+                          "grams": 28.3495,
+                      },
+                      {
+                          **base,
+                          "source_product_id": "explicit",
+                          "source_variant_id": "explicit-v",
+                          "name": "Explicit THCA Flower | 1 oz",
+                          "url": "https://vendor.example/products/explicit",
+                          "grams": 28.3495,
+                      },
+                      {
+                          **base,
+                          "source_product_id": "trusted",
+                          "source_variant_id": "trusted-v",
+                          "name": "Trusted THCA Flower",
+                          "url": "https://vendor.example/products/trusted",
+                          "weight_grams": 28,
+                      },
+                  ]
+                  result = build_catalog(
+                      rows,
+                      generated_at="2026-01-01T00:00:00Z",
+                      detail_shards=1,
+                  )
+                  index = read_json_bytes(result.files["catalog-v4/index.json"])
+                  self.assertEqual(result.product_count, 2)
+                  self.assertEqual(
+                      {product["strain_name"] for product in index["products"]},
+                      {"Explicit THCA Flower", "Trusted THCA"},
+                  )
+                  self.assertEqual(result.rejections["reason_counts"]["invalid_or_missing_weight"], 2)
+
+              def test_write_and_verify_publication(self) -> None:''',
+          )
+
+          new_test = Path("tests/test_cloud_scan_weights.py")
+          if new_test.exists():
+              raise SystemExit(f"{new_test}: already exists")
+          new_test.write_text(
+              '''from __future__ import annotations
+
+          import unittest
+
+          from scripts.cloud_scan import grams
+
+
+          class CloudScanWeightTests(unittest.TestCase):
+              def test_explicit_weights_are_preserved(self) -> None:
+                  cases = {
+                      "0.5g": 0.5,
+                      "3.5 grams": 3.5,
+                      "1/8th ounce": 3.544,
+                      "1/8 oz": 3.544,
+                      "quarter oz": 7.0874,
+                      "1 oz": 28.349,
+                      "2 ounces": 56.699,
+                      "4 oz": 113.398,
+                  }
+                  for label, expected in cases.items():
+                      with self.subTest(label=label):
+                          self.assertEqual(grams(label), expected)
+
+              def test_unrelated_numbers_and_pounds_are_not_weight_evidence(self) -> None:
+                  labels = (
+                      "Tier 1",
+                      "Type 1",
+                      "Tier 2",
+                      "4 pack",
+                      "THCA 24.1%",
+                      "THCA 18.2%",
+                      "THCA 22.4%",
+                      "Quarter Pound",
+                      "quarter lb",
+                      "1/4 lb",
+                  )
+                  for label in labels:
+                      with self.subTest(label=label):
+                          self.assertIsNone(grams(label))
+
+              def test_explicit_weight_wins_over_potency_text(self) -> None:
+                  self.assertEqual(grams("Blue Dream THCA 24.1% 3.5g"), 3.5)
+
+
+          if __name__ == "__main__":
+              unittest.main()
+          ''',
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Validate focused and broad behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q scripts tests
+          python3 scripts/cloud_scan.py --self-test
+          python3 -m unittest discover -s tests -p 'test_cloud_scan_weights.py' -v
+          python3 -m unittest discover -s tests/catalog_v4 -p 'test_normalization.py' -v
+          python3 -m unittest discover -s tests/catalog_v4 -p 'test_builder.py' -v
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Validate current catalog migration without publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(mktemp -d)"
+          python3 -m scripts.catalog_v4 \
+            --input cloud_pages/data/catalog.json \
+            --output "$output" \
+            --minimum-products 1 \
+            --minimum-variants 1
+          python3 - "$output/catalog-v4/index.json" <<'PY'
+          import json
+          import sys
+
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          names = {product["strain_name"] for product in payload["products"]}
+          contaminated = {
+              "ADL | THCa Flower | Tier 1",
+              "Fidel Runtz | THCa Flower | Tier 1",
+          }
+          present = sorted(contaminated & names)
+          if present:
+              raise SystemExit(f"unsupported tier-derived weights remain published: {present}")
+          print(f"validated migrated catalog: {payload['product_count']} products, {payload['in_stock_variant_count']} variants")
+          PY
+
+      - name: Commit recoverable repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/agent-issue22-weight-evidence.yml
+          git config user.name "continuous-work-agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add scripts/cloud_scan.py scripts/catalog_v4/normalization.py scripts/catalog_v4/builder.py tests/catalog_v4/test_normalization.py tests/catalog_v4/test_builder.py tests/test_cloud_scan_weights.py .github/workflows/agent-issue22-weight-evidence.yml
+          git diff --cached --check
+          git commit -m "fix: require source-backed catalog weights"
+          git push origin HEAD:agent/ec249c6b/cycle-0003/issue-22-weight-evidence
