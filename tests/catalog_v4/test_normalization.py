@@ -30,6 +30,24 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(normalize_weight("7", "7 grams")[0], Decimal("7"))
         self.assertIsNone(normalize_weight(None, "family pack")[0])
         self.assertIsNone(normalize_weight(-1, "-1g")[0])
+        for label in ("Quarter Pound", "quarter lb", "1/4 lb", "half pound"):
+            with self.subTest(label=label):
+                self.assertIsNone(normalize_weight(None, label)[0])
+
+    def test_legacy_numeric_weight_requires_matching_source_evidence(self) -> None:
+        self.assertIsNone(
+            normalize_weight("28.3495", "Tier 1", require_explicit_label=True)[0]
+        )
+        self.assertIsNone(
+            normalize_weight("56.699", "THCA 24.1%", require_explicit_label=True)[0]
+        )
+        self.assertIsNone(
+            normalize_weight("28.3495", "7g", require_explicit_label=True)[0]
+        )
+        self.assertEqual(
+            normalize_weight("28.3495", "1 oz", require_explicit_label=True)[0],
+            Decimal("28"),
+        )
 
     def test_canonical_strain_name_is_conservative(self) -> None:
         self.assertEqual(
