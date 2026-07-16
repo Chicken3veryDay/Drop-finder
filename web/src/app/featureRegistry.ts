@@ -12,6 +12,7 @@ const discoveredModules = import.meta.glob(
     "../features/*/register-*.js",
     "../features/*/register-*.jsx",
     "../features/*/register-*.mjs",
+    "!../features/integration/register-marketplace-props.tsx",
   ],
   { eager: true },
 );
