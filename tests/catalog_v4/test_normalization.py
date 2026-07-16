@@ -29,12 +29,13 @@ class NormalizationTests(unittest.TestCase):
                 self.assertEqual(normalize_weight(None, label)[0], expected)
         self.assertEqual(normalize_weight("7", "7 grams")[0], Decimal("7"))
         self.assertEqual(normalize_weight("28.3495", "1 oz")[0], Decimal("28"))
-        self.assertEqual(normalize_weight("7")[0], Decimal("7"))
+        self.assertIsNone(normalize_weight("7")[0])
         self.assertIsNone(normalize_weight(None, "family pack")[0])
         self.assertIsNone(normalize_weight(-1, "-1g")[0])
 
-    def test_numeric_weight_requires_matching_text_when_label_is_supplied(self) -> None:
+    def test_numeric_weight_requires_matching_text_evidence(self) -> None:
         for value, label in (
+            ("28.3495", None),
             ("28.3495", "28.3495"),
             ("28.3495", "Tier 1"),
             ("28.3495", "THCA 24.1%"),
