@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.catalog_v4.cli import strict_flower_products
+
 FIXTURE = Path(__file__).parent / "fixtures" / "legacy_rows.json"
 
 
@@ -28,6 +30,46 @@ class CliTests(unittest.TestCase):
             )
             self.assertEqual(verified.returncode, 0, verified.stderr)
             self.assertIn('"products": 3', verified.stdout)
+
+    def test_legacy_title_recovers_exact_weight_evidence(self) -> None:
+        admitted, excluded = strict_flower_products([
+            {
+                "primary_type": "cannabis_flower",
+                "grams": 28.3495,
+                "source_title": "THCa Flower - Sherb Tang - 28 Grams",
+                "variant": "",
+            },
+            {
+                "primary_type": "cannabis_flower",
+                "grams": 448.0,
+                "source_title": "Bacio Gelato THCA Bulk Flower 1 Pound",
+                "variant": "",
+            },
+        ])
+        self.assertEqual(excluded, 0)
+        self.assertEqual(admitted[0]["grams"], 28.0)
+        self.assertEqual(admitted[0]["source_weight_label"], "28 Grams")
+        self.assertEqual(admitted[1]["grams"], 448.0)
+        self.assertEqual(admitted[1]["source_weight_label"], "1 Pound")
+
+    def test_legacy_title_does_not_authenticate_tier_or_potency_numbers(self) -> None:
+        admitted, excluded = strict_flower_products([
+            {
+                "primary_type": "cannabis_flower",
+                "grams": 28.3495,
+                "source_title": "ADL | THCa Flower | Tier 1",
+                "variant": "",
+            },
+            {
+                "primary_type": "cannabis_flower",
+                "grams": 28.3495,
+                "source_title": "Blue Dream THCA 24.1%",
+                "variant": "",
+            },
+        ])
+        self.assertEqual(excluded, 0)
+        self.assertNotIn("source_weight_label", admitted[0])
+        self.assertNotIn("source_weight_label", admitted[1])
 
 
 if __name__ == "__main__":
