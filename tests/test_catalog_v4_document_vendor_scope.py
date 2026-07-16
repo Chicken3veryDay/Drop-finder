@@ -113,20 +113,30 @@ class CatalogV4DocumentVendorScopeTests(unittest.TestCase):
 
             manifest_path = output_root / "catalog-v4" / "manifest.json"
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            target_entry = next(
-                entry
-                for entry in manifest["product_detail_shards"]
-                if json.loads(
-                    (output_root / entry["path"].removeprefix("data/")).read_text(encoding="utf-8")
-                )["products"]
-            )
+            target_entry = None
+            detail = None
+            product_row = None
+            for entry in manifest["product_detail_shards"]:
+                candidate_path = output_root / entry["path"].removeprefix("data/")
+                candidate_detail = json.loads(candidate_path.read_text(encoding="utf-8"))
+                candidate_product = next(
+                    (
+                        row
+                        for row in candidate_detail["products"]
+                        if any(variant["documents"] for variant in row["variants"])
+                    ),
+                    None,
+                )
+                if candidate_product is not None:
+                    target_entry = entry
+                    detail = candidate_detail
+                    product_row = candidate_product
+                    break
+
+            self.assertIsNotNone(target_entry)
+            self.assertIsNotNone(detail)
+            self.assertIsNotNone(product_row)
             detail_path = output_root / target_entry["path"].removeprefix("data/")
-            detail = json.loads(detail_path.read_text(encoding="utf-8"))
-            product_row = next(
-                row
-                for row in detail["products"]
-                if row["variants"][0]["documents"]
-            )
             product_row["variants"][0]["documents"][0]["vendor_id"] = "vendor-b"
             encoded = (json.dumps(detail, indent=2, sort_keys=True, ensure_ascii=False, separators=(",", ": ")) + "\n").encode("utf-8")
             detail_path.write_bytes(encoded)
