@@ -101,8 +101,8 @@ export class MarketplaceQueryEngine {
     });
   }
 
-  handleWorkerMessage(message) {
-    if (message?.type !== 'result') return;
+  handleWorkerMessage(message, worker = this.worker) {
+    if (!worker || worker !== this.worker || message?.type !== 'result') return;
     const deferred = this.pending.get(message.version);
     if (!deferred) return;
     this.pending.delete(message.version);
@@ -113,7 +113,8 @@ export class MarketplaceQueryEngine {
     deferred.resolve(message.result);
   }
 
-  handleWorkerCrash() {
+  handleWorkerCrash(worker = this.worker) {
+    if (!worker || worker !== this.worker) return;
     this.crashCount += 1;
     for (const deferred of this.pending.values()) deferred.reject(new PlatformError('worker_crashed', 'Marketplace worker crashed'));
     this.pending.clear();
@@ -135,14 +136,18 @@ export class MarketplaceQueryEngine {
   attachWorker(worker) {
     this.worker = worker;
     this.mode = 'worker';
-    worker.onmessage = event => this.handleWorkerMessage(event.data);
-    worker.onerror = () => this.handleWorkerCrash();
+    worker.onmessage = event => this.handleWorkerMessage(event.data, worker);
+    worker.onerror = () => this.handleWorkerCrash(worker);
     worker.postMessage({ type: 'initialize', generationId: this.generationId, rows: this.rows });
   }
 
   disposeWorker() {
-    this.worker?.terminate?.();
+    const worker = this.worker;
     this.worker = null;
+    if (!worker) return;
+    worker.onmessage = null;
+    worker.onerror = null;
+    worker.terminate?.();
   }
 
   dispose() {
