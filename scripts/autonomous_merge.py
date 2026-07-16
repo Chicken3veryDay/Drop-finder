@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Admit only healthy retrieval workers and publish a zero-degraded strict-flower catalog."""
+"""Admit healthy retrieval workers and publish a zero-degraded typed catalog."""
 from __future__ import annotations
 
 import argparse
@@ -50,11 +50,20 @@ def dedupe(products: list[dict]) -> list[dict]:
         if not key:
             continue
         current = rows.get(key)
-        score = sum(product.get(field) not in (None, "", [], {}) for field in ("price", "grams", "thca", "image", "availability", "classification_evidence"))
-        old_score = -1 if current is None else sum(current.get(field) not in (None, "", [], {}) for field in ("price", "grams", "thca", "image", "availability", "classification_evidence"))
+        score = sum(
+            product.get(field) not in (None, "", [], {})
+            for field in ("price", "grams", "thca", "image", "availability", "classification_evidence")
+        )
+        old_score = -1 if current is None else sum(
+            current.get(field) not in (None, "", [], {})
+            for field in ("price", "grams", "thca", "image", "availability", "classification_evidence")
+        )
         if current is None or score > old_score:
             rows[key] = product
-    return sorted(rows.values(), key=lambda row: (str(row.get("vendor") or "").lower(), str(row.get("name") or "").lower()))
+    return sorted(
+        rows.values(),
+        key=lambda row: (str(row.get("vendor") or "").lower(), str(row.get("name") or "").lower()),
+    )
 
 
 def product_text(product: dict) -> str:
@@ -118,7 +127,12 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
     worker_active = [row for row in sources if row.get("admitted") and row.get("status") == "healthy"]
     worker_quarantine = [row for row in sources if row not in worker_active]
     worker_active_ids = {str(row.get("source_id") or "") for row in worker_active}
-    raw_products = [row for payload in shards for row in payload.get("products", []) if str(row.get("source_id") or "") in worker_active_ids]
+    raw_products = [
+        row
+        for payload in shards
+        for row in payload.get("products", [])
+        if str(row.get("source_id") or "") in worker_active_ids
+    ]
     products, rejected = sanitize(raw_products)
     counts = Counter(str(row.get("source_id") or "") for row in products)
 
@@ -140,7 +154,9 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
             admitted = dict(source)
             quality = dict(admitted.get("quality") or {})
             quality["products"] = accepted_count
-            quality["rejected_products"] = sum(1 for row in rejected if str(row.get("source_id") or "") == source_id)
+            quality["rejected_products"] = sum(
+                1 for row in rejected if str(row.get("source_id") or "") == source_id
+            )
             admitted.update(products=accepted_count, quality=quality, admitted=True, status="healthy")
             active.append(admitted)
 
@@ -157,10 +173,12 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
         raise RuntimeError("final product sanitizer invariant failed")
 
     generated = now()
+    type_counts = dict(sorted(Counter(str(row.get("product_type") or "cannabis_flower") for row in products).items()))
     catalog = {
         "schema_version": "dropfinder-cloud-catalog-v3",
         "generated_at": generated,
         "product_count": len(products),
+        "product_type_counts": type_counts,
         "products": products,
     }
     status_sources = [
@@ -191,6 +209,7 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
         "quarantined_sources": len(quarantine),
         "healthy_routes": sum(1 for source in status_sources for route in source.get("route_results", [])),
         "product_count": len(products),
+        "product_type_counts": type_counts,
         "rejected_products": len(rejected),
         "rejection_reasons": reason_counts,
         "services": {
@@ -228,6 +247,7 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
         "active_sources": len(active),
         "quarantined_candidates": len(quarantine),
         "products": len(products),
+        "product_type_counts": type_counts,
         "rejected_products": len(rejected),
         "shards": len(shards),
     }
@@ -239,32 +259,139 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
         ("rejections.json", rejection_payload),
         ("runtime.json", runtime),
     ):
-        (output_dir / filename).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        (output_dir / filename).write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     return runtime
+
+
+# Replace the historical flower-only sanitizer with the explicit type-aware
+# policy. The import works both when this file is executed directly and when it
+# is imported as scripts.autonomous_merge.
+try:
+    from multi_product import install_merge as _install_multi_product_merge
+except ImportError:  # pragma: no cover - package import path
+    from scripts.multi_product import install_merge as _install_multi_product_merge
+_install_multi_product_merge(globals())
 
 
 def self_test(root: Path) -> int:
     root.mkdir(parents=True, exist_ok=True)
-    valid = {"id": "1", "source_id": "a", "name": "Blue Dream THCA Flower", "url": "https://x/products/blue-dream-thca-flower", "price": 20}
-    valid_hash_strain = {"id": "4", "source_id": "a", "name": "Hash Burger THCA Flower", "url": "https://x/products/hash-burger-thca-flower", "price": 25}
-    bad_roll = {"id": "2", "source_id": "a", "name": "Indica Hybrid Sativa", "url": "https://x/products/thca-pre-rolled-joints", "price": 10}
-    bad_subscription = {"id": "3", "source_id": "a", "name": "THCA Flower Subscription", "url": "https://x/products/subscription", "price": 20}
-    (root / "shard-0.json").write_text(json.dumps({
-        "schema_version": "dropfinder-autonomous-shard-v1",
-        "products": [valid, valid_hash_strain, bad_roll, bad_subscription],
-        "sources": [
-            {"source_id": "a", "name": "A", "admitted": True, "status": "healthy", "products": 4},
-            {"source_id": "b", "name": "B", "admitted": False, "status": "quarantined", "products": 0},
-        ],
-    }), encoding="utf-8")
+    valid = {
+        "id": "1",
+        "source_id": "a",
+        "name": "Blue Dream THCA Flower",
+        "url": "https://x/products/blue-dream-thca-flower",
+        "price": 20,
+        "product_type": "cannabis_flower",
+        "classification_evidence": {
+            "product_type": "cannabis_flower",
+            "explicit_thca": True,
+            "explicit_flower": True,
+        },
+    }
+    valid_hash_strain = {
+        "id": "4",
+        "source_id": "a",
+        "name": "Hash Burger THCA Flower",
+        "url": "https://x/products/hash-burger-thca-flower",
+        "price": 25,
+        "product_type": "cannabis_flower",
+        "classification_evidence": {
+            "product_type": "cannabis_flower",
+            "explicit_thca": True,
+            "explicit_flower": True,
+        },
+    }
+    valid_vape = {
+        "id": "5",
+        "source_id": "a",
+        "name": "Blue Dream THCA Disposable Vape 1g",
+        "url": "https://x/products/blue-dream-thca-vape",
+        "price": 30,
+        "grams": 1,
+        "availability": "in_stock",
+        "product_type": "cannabis_vape",
+        "classification_evidence": {
+            "product_type": "cannabis_vape",
+            "explicit_thca": True,
+            "explicit_vape": True,
+        },
+    }
+    valid_mushroom = {
+        "id": "6",
+        "source_id": "a",
+        "name": "Amanita Mushroom Caps 7g",
+        "url": "https://x/products/amanita-mushroom-caps",
+        "price": 24,
+        "grams": 7,
+        "availability": "in_stock",
+        "product_type": "mushroom",
+        "classification_evidence": {
+            "product_type": "mushroom",
+            "explicit_mushroom": True,
+        },
+    }
+    bad_roll = {
+        "id": "2",
+        "source_id": "a",
+        "name": "Indica Hybrid Sativa",
+        "url": "https://x/products/thca-pre-rolled-joints",
+        "price": 10,
+    }
+    bad_subscription = {
+        "id": "3",
+        "source_id": "a",
+        "name": "THCA Flower Subscription",
+        "url": "https://x/products/subscription",
+        "price": 20,
+    }
+    bad_nicotine = {
+        "id": "7",
+        "source_id": "a",
+        "name": "Nicotine Disposable Vape",
+        "url": "https://x/products/nicotine-vape",
+        "price": 20,
+        "product_type": "cannabis_vape",
+        "classification_evidence": {
+            "product_type": "cannabis_vape",
+            "explicit_vape": True,
+            "explicit_thca": False,
+        },
+    }
+    (root / "shard-0.json").write_text(
+        json.dumps({
+            "schema_version": "dropfinder-autonomous-shard-v1",
+            "products": [
+                valid,
+                valid_hash_strain,
+                valid_vape,
+                valid_mushroom,
+                bad_roll,
+                bad_subscription,
+                bad_nicotine,
+            ],
+            "sources": [
+                {"source_id": "a", "name": "A", "admitted": True, "status": "healthy", "products": 7},
+                {"source_id": "b", "name": "B", "admitted": False, "status": "quarantined", "products": 0},
+            ],
+        }),
+        encoding="utf-8",
+    )
     runtime = merge(root, root / "out", 1, 1)
     status = json.loads((root / "out" / "status.json").read_text())
     catalog = json.loads((root / "out" / "catalog.json").read_text())
     rejections = json.loads((root / "out" / "rejections.json").read_text())
     assert runtime["zero_degraded_active_services"] and status["degraded_sources"] == 0
-    assert catalog["product_count"] == 2
-    assert {row["id"] for row in catalog["products"]} == {"1", "4"}
-    assert rejections["count"] == 2
+    assert catalog["product_count"] == 4
+    assert {row["id"] for row in catalog["products"]} == {"1", "4", "5", "6"}
+    assert catalog["product_type_counts"] == {
+        "cannabis_flower": 2,
+        "cannabis_vape": 1,
+        "mushroom": 1,
+    }
+    assert rejections["count"] == 3
     return 0
 
 
