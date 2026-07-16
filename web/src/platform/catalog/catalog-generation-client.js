@@ -20,7 +20,6 @@ export class CatalogGenerationClient {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
     if (!this.fetchImpl) throw new PlatformError('fetch_unavailable', 'Fetch is unavailable');
     this.cache = options.cache ?? createDefaultGenerationCache(options.cacheName);
-    this.now = options.now ?? Date.now;
     this.active = null;
     this.lastNetworkVerification = null;
     this.pending = null;
@@ -42,7 +41,7 @@ export class CatalogGenerationClient {
     const verifiedAt = this.active && this.lastNetworkVerification?.generationId === this.active.generationId
       ? this.lastNetworkVerification.verifiedAt
       : this.active?.activatedAt;
-    if (!force && this.active && Number.isFinite(verifiedAt) && this.now() - verifiedAt <= this.options.staleMs) {
+    if (!force && this.active && Number.isFinite(verifiedAt) && Date.now() - verifiedAt <= this.options.staleMs) {
       return this.active;
     }
     try {
@@ -83,7 +82,7 @@ export class CatalogGenerationClient {
         }
         this.lastNetworkVerification = Object.freeze({
           generationId: generation.generationId,
-          verifiedAt: this.now(),
+          verifiedAt: Date.now(),
         });
       } else if (generation.generationId !== this.active?.generationId) {
         this.activate(generation, 'cache-fallback');
@@ -131,7 +130,7 @@ export class CatalogGenerationClient {
       index,
       manifestUrl,
       publicationBaseUrl,
-      activatedAt: this.now(),
+      activatedAt: Date.now(),
       source: 'network',
     });
   }
