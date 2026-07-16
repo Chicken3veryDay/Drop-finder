@@ -201,7 +201,8 @@ export class CatalogGenerationClient {
     let entry = this.inflight.get(key);
     if (!entry) {
       const controller = new AbortController();
-      const { signal: _consumerSignal, ...requestInit } = init;
+      const requestInit = { ...init };
+      delete requestInit.signal;
       entry = createSharedRequest(
         controller,
         this.fetchBounded(input, { ...requestInit, signal: controller.signal }),
