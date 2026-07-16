@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/pages-branch-fallback.yml"
+      - "web/scripts/verify-pages-endpoint.mjs"
   workflow_dispatch:
 
 permissions:
@@ -27,15 +28,17 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Validate canonical site
         run: |
           set -euo pipefail
-          test -s cloud_pages/index.html
-          test -s cloud_pages/data/catalog.json
-          test -s cloud_pages/data/status.json
-          grep -q "DropFinder Cloud" cloud_pages/index.html
-          python -m json.tool cloud_pages/data/catalog.json >/dev/null
-          python -m json.tool cloud_pages/data/status.json >/dev/null
+          node web/scripts/verify-publication.mjs cloud_pages
+          python web/scripts/publication_gate.py verify-published --root cloud_pages
       - name: Publish immutable site tree to gh-pages
         run: |
           set -euo pipefail
@@ -83,36 +86,39 @@ jobs:
           page_url="$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '.html_url // empty')"
           [ -n "$page_url" ] || page_url="$known_url"
 
-          code=""
-          marker=false
+          verified=false
+          verification_error=""
           for attempt in $(seq 1 30); do
-            code="$(curl -L -sS -o /tmp/dropfinder-public.html -w '%{http_code}' \
-              --connect-timeout 10 --max-time 30 "$page_url" || true)"
-            if [ "$code" = "200" ] && grep -q "DropFinder Cloud" /tmp/dropfinder-public.html; then
-              marker=true
+            if node web/scripts/verify-pages-endpoint.mjs "$page_url" >/tmp/pages-verification.json 2>/tmp/pages-verification.err; then
+              cat /tmp/pages-verification.json
+              verified=true
+              verification_error=""
               break
             fi
-            echo "Waiting for branch publication (attempt $attempt, HTTP ${code:-none})"
+            verification_error="$(cat /tmp/pages-verification.err)"
+            echo "Waiting for branch publication (attempt $attempt): $verification_error"
             sleep 10
           done
 
           pages_api="$(gh api "repos/${GITHUB_REPOSITORY}/pages")"
           mkdir -p deployment
-          PAGE_URL="$page_url" HTTP_CODE="${code:-0}" MARKER="$marker" PAGES_API="$pages_api" python - <<'PY'
+          PAGE_URL="$page_url" VERIFIED="$verified" PAGES_API="$pages_api" \
+          VERIFICATION_ERROR="$verification_error" python - <<'PY'
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
           catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
           status=json.loads(Path('cloud_pages/data/status.json').read_text())
           api=json.loads(os.environ['PAGES_API'])
-          live=os.environ['HTTP_CODE']=='200' and os.environ['MARKER']=='true'
+          live=os.environ['VERIFIED']=='true'
           payload={
-              'schema_version':'dropfinder-pages-branch-receipt-v1',
+              'schema_version':'dropfinder-pages-branch-receipt-v2',
               'status':'live' if live else 'failed',
               'verified_at':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               'page_url':os.environ['PAGE_URL'],
-              'http_status':int(os.environ['HTTP_CODE'] or 0),
-              'content_marker_verified':os.environ['MARKER']=='true',
+              'http_status':200 if live else 0,
+              'publication_verified':live,
+              'verification_error':os.environ['VERIFICATION_ERROR'][:2000],
               'pages_status':api.get('status'),
               'pages_build_type':api.get('build_type'),
               'pages_source':api.get('source'),
@@ -135,5 +141,4 @@ jobs:
           git diff --cached --quiet || git commit -m "chore: record branch Pages deployment [skip ci]"
           git push origin HEAD:main
 
-          test "$code" = "200"
-          test "$marker" = "true"
+          test "$verified" = "true"
