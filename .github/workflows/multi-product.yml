@@ -25,7 +25,7 @@ on:
       - ".github/workflows/multi-product.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   python-contracts:
@@ -53,6 +53,8 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -63,3 +65,26 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Publish verified current UI to GitHub Pages
+        if: github.event_name == 'pull_request' && github.head_ref == 'ops/publish-current-ui' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          npm --prefix web run verify:publication
+          rm -rf /tmp/dropfinder-current-ui
+          mkdir -p /tmp/dropfinder-current-ui
+          cp -a cloud_pages/. /tmp/dropfinder-current-ui/
+          touch /tmp/dropfinder-current-ui/.nojekyll
+          test -s /tmp/dropfinder-current-ui/data/catalog.json
+          test -s /tmp/dropfinder-current-ui/data/status.json
+          test -s /tmp/dropfinder-current-ui/assets/vite-manifest.json
+          git config user.name "DropFinder UI Publisher"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --orphan pr-ui-pages-next
+          git rm -rf . >/dev/null 2>&1 || true
+          git clean -fdx >/dev/null 2>&1 || true
+          cp -a /tmp/dropfinder-current-ui/. .
+          git add -A
+          git commit -m "Publish verified multi-product UI ${GITHUB_SHA}"
+          git push --force origin HEAD:gh-pages
+          node "$GITHUB_WORKSPACE/web/scripts/verify-publication.mjs" "$GITHUB_WORKSPACE"
