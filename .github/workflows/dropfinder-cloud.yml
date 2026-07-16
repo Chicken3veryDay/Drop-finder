@@ -13,6 +13,7 @@ on:
       - "scripts/autonomous_worker_v2.py"
       - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
+      - "scripts/publication_generation.py"
       - "cloud_pages/index.html"
       - "cloud_pages/manifest.webmanifest"
       - "cloud_pages/icon.svg"
@@ -23,6 +24,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "scripts/publication_generation.py"
       - "cloud_pages/manifest.webmanifest"
       - "cloud_pages/icon.svg"
       - "cloud_pages/sw.js"
@@ -55,11 +57,12 @@ jobs:
             scripts/cloud_scan.py scripts/cloud_scan_v2.py \
             scripts/autonomous_worker.py scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \
-            web/scripts/publication_gate.py
+            scripts/publication_generation.py web/scripts/publication_gate.py
           python scripts/cloud_scan_v2.py --self-test
           python scripts/autonomous_worker_v4.py --self-test
           rm -rf /tmp/dropfinder-autonomous-merge-test
           python scripts/autonomous_merge.py --self-test
+          python scripts/publication_generation.py self-test
 
   frontend:
     name: Frontend foundation validation
@@ -139,6 +142,9 @@ jobs:
           python scripts/autonomous_worker_v4.py \
             --shard "${{ matrix.shard }}" --shards 6 --workers 3 \
             --output "scan-output/${{ matrix.shard }}"
+          python scripts/publication_generation.py stamp-shard \
+            "scan-output/${{ matrix.shard }}/shard-${{ matrix.shard }}.json" \
+            "$GITHUB_SHA"
       - uses: actions/upload-artifact@v4
         with:
           name: autonomous-shard-${{ matrix.shard }}
@@ -155,7 +161,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
@@ -165,6 +171,16 @@ jobs:
           pattern: autonomous-shard-*
           path: scan-results
           merge-multiple: true
+      - name: Verify immutable generation inputs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python scripts/publication_generation.py verify-shards scan-results "$GITHUB_SHA"
+          git fetch origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "main advanced after this generation started; refusing stale publication" >&2
+            exit 75
+          fi
       - name: Admit a zero-degraded production snapshot
         run: |
           set -euo pipefail
@@ -173,20 +189,27 @@ jobs:
           python scripts/autonomous_merge.py \
             --input scan-results --output cloud_pages/data \
             --min-active 5 --min-products 25
+          python scripts/publication_generation.py stamp-outputs cloud_pages/data "$GITHUB_SHA"
+          python scripts/publication_generation.py verify-outputs cloud_pages/data "$GITHUB_SHA"
           python web/scripts/publication_gate.py validate-snapshot
-      - name: Commit runtime state to main
+      - name: Commit runtime state to main with compare-and-swap
         run: |
           set -euo pipefail
-          mkdir -p deployment
-          cp cloud_pages/data/runtime.json deployment/autonomous-runtime.json
           git config user.name "DropFinder Autonomous Worker"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "main advanced before generated-state commit; refusing rebase" >&2
+            exit 75
+          fi
+          mkdir -p deployment
+          cp cloud_pages/data/runtime.json deployment/autonomous-runtime.json
           git add cloud_pages/data deployment/autonomous-runtime.json
           if ! git diff --cached --quiet; then
             git commit -m "Refresh zero-degraded DropFinder catalog [skip ci]"
-            git pull --rebase origin main
             git push origin HEAD:main
           fi
+          echo "DROP_FINDER_GENERATED_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -226,18 +249,24 @@ jobs:
           git worktree add --detach /tmp/dropfinder-published origin/gh-pages
           node web/scripts/verify-publication.mjs /tmp/dropfinder-published
           python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-published
-      - name: Record synchronized deployment receipt
+          python scripts/publication_generation.py verify-outputs /tmp/dropfinder-published/data "$GITHUB_SHA"
+      - name: Record synchronized deployment receipt with compare-and-swap
         run: |
           set -euo pipefail
-          git switch --force main
-          git pull --rebase origin main
+          git switch --detach "$DROP_FINDER_GENERATED_COMMIT"
+          git fetch origin main
           git fetch origin gh-pages
           python web/scripts/publication_gate.py record-receipt
+          python scripts/publication_generation.py stamp-receipt \
+            deployment/cdn.json cloud_pages/data/runtime.json
           git config user.name "DropFinder Autonomous Publisher"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "$(git rev-parse origin/main)" != "$DROP_FINDER_GENERATED_COMMIT" ]; then
+            echo "main advanced before receipt commit; refusing rebase" >&2
+            exit 75
+          fi
           git add deployment/cdn.json
           if ! git diff --cached --quiet; then
             git commit -m "Record current autonomous deployment [skip ci]"
-            git pull --rebase origin main
             git push origin HEAD:main
           fi
