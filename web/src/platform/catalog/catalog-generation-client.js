@@ -191,16 +191,23 @@ export class CatalogGenerationClient {
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt += 1) {
       try {
         const response = await this.fetchImpl(input, { ...init, signal });
-        if (!response.ok) throw new PlatformError('http_error', `Catalog request failed with ${response.status}`);
-        const declared = Number(response.headers.get('content-length'));
+        if (!response.ok) {
+          await cancelResponseBody(response, `HTTP ${response.status}`);
+          const error = new PlatformError('http_error', `Catalog request failed with ${response.status}`);
+          error.status = response.status;
+          throw error;
+        }
+        const contentLength = response.headers.get('content-length');
+        const declared = contentLength === null ? null : Number(contentLength);
         if (Number.isFinite(declared) && declared > maxBytes) {
+          await cancelResponseBody(response, 'Catalog asset exceeds its size limit');
           throw new PlatformError('asset_oversized', 'Catalog asset exceeds its size limit');
         }
-        return boundedResponse(response, maxBytes);
+        return await boundedResponse(response, maxBytes, signal);
       } catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw abortError();
         lastError = error;
-        if (attempt >= this.options.maxRetries) break;
+        if (attempt >= this.options.maxRetries || !isRetryableFetchError(error)) break;
         await delay(50 * (2 ** attempt), signal);
       }
     }
@@ -239,10 +246,64 @@ export class MemoryGenerationCache {
   async putComplete(value) { this.complete = value; }
 }
 
-async function boundedResponse(response, maxBytes) {
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > maxBytes) throw new PlatformError('asset_oversized', 'Catalog asset exceeds its size limit');
+async function boundedResponse(response, maxBytes, signal) {
+  if (!response.body) {
+    return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers });
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  const onAbort = () => { void cancelReader(reader, signal?.reason); };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    while (true) {
+      if (signal?.aborted) throw abortError();
+      const { done, value } = await reader.read();
+      if (signal?.aborted) throw abortError();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      if (totalBytes + chunk.byteLength > maxBytes) {
+        await cancelReader(reader, 'Catalog asset exceeds its size limit');
+        throw new PlatformError('asset_oversized', 'Catalog asset exceeds its size limit');
+      }
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+  } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') {
+      await cancelReader(reader, signal?.reason);
+      throw abortError();
+    }
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    try { reader.releaseLock(); } catch { /* already released by stream implementation */ }
+  }
+
+  const buffer = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   return new Response(buffer, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+function isRetryableFetchError(error) {
+  if (!(error instanceof PlatformError)) return true;
+  if (error.code !== 'http_error') return false;
+  return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+}
+
+async function cancelResponseBody(response, reason) {
+  if (!response.body) return;
+  try { await response.body.cancel(reason); } catch { /* best-effort transport cleanup */ }
+}
+
+async function cancelReader(reader, reason) {
+  try { await reader.cancel(reason); } catch { /* best-effort transport cleanup */ }
 }
 
 async function verifyHash(text, expected) {
