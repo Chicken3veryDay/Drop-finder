@@ -1,4 +1,5 @@
 import { PlatformError, assertGenerationEnvelope, abortError } from '../contracts.js';
+import { coordinateCatalogGeneration } from '../pwa/pwa-generation-coordinator.js';
 
 const DEFAULTS = Object.freeze({
   manifestUrl: './data/catalog-v4/manifest.json',
@@ -42,6 +43,7 @@ export class CatalogGenerationClient {
       force,
       allowCachedFallback: true,
     });
+    await coordinateCatalogGeneration(generation.generationId, { signal });
     return this.activatePrepared(generation, generation.source ?? 'network');
   }
 
@@ -76,6 +78,7 @@ export class CatalogGenerationClient {
       force: true,
       allowCachedFallback,
     });
+    await coordinateCatalogGeneration(generation.generationId, { signal });
     return this.activatePrepared(generation, generation.source ?? 'network');
   }
 
