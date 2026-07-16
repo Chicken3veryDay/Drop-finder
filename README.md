@@ -15,10 +15,10 @@ The deployed artifact is an isolated `gh-pages` publication branch containing th
 The current catalog supports separate, type-aware records for:
 
 - cannabis flower;
-- cannabis vape products with coherent volume and price-per-volume evidence;
+- cannabis vape products;
 - psilocybin mushroom metadata for informational use only, with purchase links removed.
 
-Each product type has its own evidence, quantity, comparison, and publication requirements. Records that cannot satisfy the applicable contract are rejected or quarantined rather than being coerced into another type. The application does not infer unsafe conversions between incompatible units such as grams and milliliters.
+Each product type has its own evidence, normalization, comparison, and publication rules. Records that cannot satisfy the applicable contract are rejected or quarantined rather than being coerced into another type. The application does not infer unsafe conversions between incompatible units such as grams and milliliters.
 
 ## Autonomous runtime
 
@@ -28,7 +28,7 @@ The admission controller then:
 
 1. Admits only sources whose current workers returned products that satisfy the relevant type contract, with valid public URLs and current prices where purchasing is permitted.
 2. Requires product-level evidence rather than relying on category context alone.
-3. Rejects unsupported forms and incomplete quantity, price, stock, or identity records.
+3. Rejects unsupported forms and records that fail current price, stock, identity, or type-specific evidence gates.
 4. Removes purchase links from informational-only product types.
 5. Quarantines failed candidates instead of publishing them as degraded active services.
 6. Writes catalog, status, runtime, quarantine, and product-rejection records.
