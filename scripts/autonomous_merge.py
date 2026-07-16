@@ -9,6 +9,7 @@ separate, source-level decision.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -90,11 +91,47 @@ def _source_status(row: dict[str, Any], accepted_count: int, rejected_count: int
     }
 
 
+def _reconcile_source_quality(
+    sources: list[dict[str, Any]],
+    products: list[dict[str, Any]],
+) -> None:
+    """Replace worker-population metrics with final published-population metrics."""
+    products_by_source: dict[str, list[dict[str, Any]]] = {}
+    for product in products:
+        source_id = str(product.get("source_id") or "")
+        products_by_source.setdefault(source_id, []).append(product)
+
+    for source in sources:
+        source_id = str(source.get("source_id") or "")
+        accepted = products_by_source.get(source_id, [])
+        quality = dict(source.get("quality") or {})
+        quality.update(
+            products=len(accepted),
+            priced_products=sum(product.get("price") not in (None, "") for product in accepted),
+            evidenced_products=sum(
+                isinstance(product.get("classification_evidence"), dict)
+                and product["classification_evidence"].get("primary_type") == product.get("primary_type")
+                for product in accepted
+            ),
+            products_by_type=dict(sorted(Counter(
+                str(product.get("primary_type") or "") for product in accepted
+            ).items())),
+            # Every accepted row passed the internal HTTP(S) URL admission gate.
+            # Controlled-product URLs are intentionally redacted only afterward.
+            url_coverage=1.0 if accepted else 0.0,
+        )
+        source["quality"] = quality
+
+
 def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int) -> dict[str, Any]:
     runtime = _original_merge(input_dir, output_dir, min_active, min_products)
     status_path = output_dir / "status.json"
+    catalog_path = output_dir / "catalog.json"
     status = json.loads(status_path.read_text(encoding="utf-8"))
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     sources = status.get("sources") or []
+    products = catalog.get("products") or []
+    _reconcile_source_quality(sources, products)
     status["healthy_routes"] = sum(int(source.get("healthy_routes") or 0) for source in sources)
     status["non_healthy_routes"] = sum(int(source.get("non_healthy_routes") or 0) for source in sources)
     status["fallback_active_sources"] = sum(bool(source.get("fallback_active")) for source in sources)
@@ -110,12 +147,32 @@ def self_test(root: Path) -> int:
         input_dir = temp / "input"
         output_dir = temp / "output"
         input_dir.mkdir(parents=True)
-        product = publication._fixture(
+        flower = publication._fixture(
             product_id="flower",
             primary_type=publication.CANNABIS_FLOWER,
             name="Blue Dream THCA Flower",
             url="https://example.test/products/flower",
             evidence={"explicit_thca": True, "explicit_flower": True, "explicit_vape": False},
+        )
+        mushroom = publication._fixture(
+            product_id="mushroom",
+            primary_type=publication.PSILOCYBIN_MUSHROOM,
+            name="Psilocybe Cubensis Psilocybin Mushrooms 7g",
+            url="https://example.test/products/mushroom",
+            evidence={
+                "explicit_psilocybin": True,
+                "explicit_mushroom": True,
+                "explicit_vape": False,
+                "amanita_signal": False,
+            },
+        )
+        rejected = publication._fixture(
+            product_id="rejected",
+            primary_type=publication.CANNABIS_FLOWER,
+            name="Rejected THCA Flower",
+            url="https://example.test/products/rejected",
+            evidence={"explicit_thca": True, "explicit_flower": True, "explicit_vape": False},
+            availability="out_of_stock",
         )
         routes = [
             {
@@ -135,7 +192,7 @@ def self_test(root: Path) -> int:
                 "source_type": "html_card_product_detail",
                 "status": "healthy",
                 "http_status": 200,
-                "products": 1,
+                "products": 2,
                 "retry_attempt": 2,
             },
         ]
@@ -143,14 +200,21 @@ def self_test(root: Path) -> int:
             json.dumps(
                 {
                     "schema_version": publication.SHARD_SCHEMA,
-                    "products": [product],
+                    "products": [flower, mushroom, rejected],
                     "sources": [
                         {
                             "source_id": "a",
                             "name": "A",
                             "admitted": True,
                             "status": "healthy",
-                            "products": 1,
+                            "products": 3,
+                            "quality": {
+                                "products": 3,
+                                "priced_products": 3,
+                                "evidenced_products": 3,
+                                "products_by_type": {publication.CANNABIS_FLOWER: 2, publication.PSILOCYBIN_MUSHROOM: 1},
+                                "url_coverage": 1.0,
+                            },
                             "active_route": "https://example.test/fallback",
                             "routes_attempted": len(routes),
                             "route_results": routes,
@@ -164,6 +228,7 @@ def self_test(root: Path) -> int:
         status = json.loads((output_dir / "status.json").read_text(encoding="utf-8"))
         source = status["sources"][0]
         assert source["status"] == "healthy"
+        assert source["products"] == 2
         assert source["routes_attempted"] == 2
         assert source["healthy_routes"] == 1
         assert source["non_healthy_routes"] == 1
@@ -173,6 +238,17 @@ def self_test(root: Path) -> int:
         assert source["route_results"][0]["http_status"] == 429
         assert "response_body" not in source["route_results"][0]
         assert "headers" not in source["route_results"][0]
+        assert source["quality"] == {
+            "evidenced_products": 2,
+            "priced_products": 2,
+            "products": 2,
+            "products_by_type": {
+                publication.CANNABIS_FLOWER: 1,
+                publication.PSILOCYBIN_MUSHROOM: 1,
+            },
+            "rejected_products": 1,
+            "url_coverage": 1.0,
+        }
         assert status["healthy_routes"] == 1
         assert status["non_healthy_routes"] == 1
         assert status["fallback_active_sources"] == 1
