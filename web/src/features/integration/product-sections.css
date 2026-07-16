@@ -1,0 +1,93 @@
+.df-product-sections {
+  min-width: 0;
+}
+
+.df-product-section-nav {
+  margin: 0 0 0.8rem;
+  border-bottom: 1px solid var(--color-border, #262a30);
+}
+
+.df-product-section-tabs {
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.df-product-section-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.8rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted, #9ba2ad);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.df-product-section-tab:hover {
+  color: var(--color-text, #f2f3f5);
+  background: rgb(255 255 255 / 3%);
+}
+
+.df-product-section-tab[aria-selected="true"] {
+  color: var(--color-text, #f2f3f5);
+  border-bottom-color: currentColor;
+}
+
+.df-product-section-tab:focus-visible {
+  outline: 2px solid var(--color-focus, #94b8ff);
+  outline-offset: -2px;
+}
+
+.df-product-section-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.65rem;
+  min-height: 1.35rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--color-border, #262a30);
+  border-radius: 999px;
+  color: var(--color-text-muted, #9ba2ad);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.df-product-section-notice {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--color-border, #262a30);
+  border-radius: 0.4rem;
+  background: var(--color-surface, #101215);
+  color: var(--color-text-muted, #9ba2ad);
+  font-size: 0.8rem;
+}
+
+/* Controlled mushroom records remain informational in the public shopper UI. */
+.df-section-mushrooms .df-expanded-actions > a:first-child {
+  display: none;
+}
+
+@media (max-width: 48rem) {
+  .df-product-section-nav {
+    margin-inline: -0.25rem;
+  }
+
+  .df-product-section-tab {
+    min-height: 2.875rem;
+    padding-inline: 0.75rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .df-product-section-tab[aria-selected="true"] {
+    border-bottom-color: Highlight;
+  }
+}
