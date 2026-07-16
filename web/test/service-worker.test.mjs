@@ -7,8 +7,12 @@ const ORIGIN = 'https://app.test';
 const BASE = `${ORIGIN}/cloud_pages/`;
 
 class FakeCache {
-  constructor(fetcher) { this.fetcher = fetcher; this.entries = new Map(); }
-  key(input) { return new URL(input?.url ?? String(input), BASE).href.split('#')[0]; }
+  constructor(fetcher, base) {
+    this.fetcher = fetcher;
+    this.base = base;
+    this.entries = new Map();
+  }
+  key(input) { return new URL(input?.url ?? String(input), this.base).href.split('#')[0]; }
   async match(input, options = {}) {
     const key = this.key(input);
     if (!options.ignoreSearch) return this.entries.get(key)?.clone() ?? undefined;
@@ -32,8 +36,21 @@ class FakeCache {
 }
 
 class FakeCacheStorage {
-  constructor(fetcher) { this.fetcher = fetcher; this.caches = new Map(); }
-  async open(name) { if (!this.caches.has(name)) this.caches.set(name, new FakeCache(this.fetcher)); return this.caches.get(name); }
+  constructor() {
+    this.caches = new Map();
+    this.fetcher = async () => new Response('', { status: 404 });
+    this.base = BASE;
+  }
+  setRuntime(fetcher, base) {
+    this.fetcher = fetcher;
+    this.base = base;
+  }
+  async open(name) {
+    if (!this.caches.has(name)) {
+      this.caches.set(name, new FakeCache(this.fetcher, this.base));
+    }
+    return this.caches.get(name);
+  }
   async keys() { return [...this.caches.keys()]; }
   async delete(name) { return this.caches.delete(name); }
   async has(name) { return this.caches.has(name); }
@@ -46,23 +63,27 @@ class FakeCacheStorage {
   }
 }
 
-async function createRuntime() {
+async function createRuntime(options = {}) {
+  const base = options.base ?? BASE;
+  const origin = new URL(base).origin;
   const listeners = new Map();
   const messages = [];
   const network = new Map();
   let offline = false;
   const fetcher = async input => {
     if (offline) throw new TypeError('offline');
-    const url = new URL(input?.url ?? String(input), BASE).href;
-    if (url === `${BASE}app-shell.json`) return json({ schema_version: 'dropfinder-app-shell-v1', assets: ['./', './index.html', './manifest.webmanifest', './icon.svg'] });
-    if ([BASE, `${BASE}index.html`, `${BASE}manifest.webmanifest`, `${BASE}icon.svg`].includes(url)) return new Response(`asset:${url}`);
+    const url = new URL(input?.url ?? String(input), base).href;
+    if (url === `${base}app-shell.json`) return json({ schema_version: 'dropfinder-app-shell-v1', assets: ['./', './index.html', './manifest.webmanifest', './icon.svg'] });
+    if ([base, `${base}index.html`, `${base}manifest.webmanifest`, `${base}icon.svg`].includes(url)) return new Response(`asset:${url}`);
     const response = network.get(url);
     if (!response) return new Response('', { status: 404 });
     return response.clone();
   };
-  const caches = new FakeCacheStorage(fetcher);
+  const caches = options.cacheStorage ?? new FakeCacheStorage();
+  caches.setRuntime(fetcher, base);
   const self = {
-    location: { origin: ORIGIN },
+    location: { origin, href: `${base}sw.js` },
+    registration: { scope: base },
     clients: { claim: async () => {}, matchAll: async () => [{ postMessage: message => messages.push(message) }] },
     addEventListener: (name, listener) => listeners.set(name, listener),
   };
@@ -83,10 +104,18 @@ async function createRuntime() {
     return responsePromise ? responsePromise : undefined;
   }
   return {
-    network, caches, messages, dispatch,
+    base, network, caches, messages, dispatch,
     setOffline(value) { offline = value; },
-    setJson(path, value, headers = {}) { network.set(new URL(path, BASE).href, json(value, headers)); },
+    setJson(path, value, headers = {}) { network.set(new URL(path, base).href, json(value, headers)); },
   };
+}
+
+async function activateLegacy(runtime, generation, productId) {
+  const products = productId ? [{ id: productId }] : [];
+  runtime.setJson('data/catalog.json', { generated_at: generation, product_count: products.length, products });
+  runtime.setJson('data/status.json', { generated_at: generation, product_count: products.length });
+  await runtime.dispatch('fetch', { request: new Request(`${runtime.base}data/catalog.json`) });
+  await runtime.dispatch('fetch', { request: new Request(`${runtime.base}data/status.json`) });
 }
 
 test('service worker installs shell from metadata and activates a complete legacy generation', async () => {
@@ -99,10 +128,7 @@ test('service worker installs shell from metadata and activates a complete legac
   assert.ok(await appCache.match(`${BASE}index.html`));
 
   const generation = '2026-07-15T00:00:00Z';
-  runtime.setJson('data/catalog.json', { generated_at: generation, product_count: 1, products: [{ id: 'p1' }] });
-  runtime.setJson('data/status.json', { generated_at: generation, product_count: 1 });
-  await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog.json`) });
-  await runtime.dispatch('fetch', { request: new Request(`${BASE}data/status.json`) });
+  await activateLegacy(runtime, generation, 'p1');
   assert.ok(runtime.messages.some(message => message.type === 'generation-active' && message.generationId === generation));
 
   runtime.setOffline(true);
@@ -114,10 +140,7 @@ test('service worker installs shell from metadata and activates a complete legac
 test('service worker does not activate incomplete snapshots and switches only after an explicit update', async () => {
   const runtime = await createRuntime();
   const first = 'g1';
-  runtime.setJson('data/catalog.json', { generated_at: first, product_count: 0, products: [] });
-  runtime.setJson('data/status.json', { generated_at: first, product_count: 0 });
-  await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog.json`) });
-  await runtime.dispatch('fetch', { request: new Request(`${BASE}data/status.json`) });
+  await activateLegacy(runtime, first, null);
 
   const second = 'g2';
   runtime.setJson('data/catalog.json', { generated_at: second, product_count: 1, products: [{ id: 'p2' }] });
@@ -134,13 +157,63 @@ test('service worker does not activate incomplete snapshots and switches only af
 
 test('service worker rejects detail shards from another active generation', async () => {
   const runtime = await createRuntime();
-  const generation = 'g1';
-  runtime.setJson('data/catalog.json', { generated_at: generation, product_count: 0, products: [] });
-  runtime.setJson('data/status.json', { generated_at: generation, product_count: 0 });
-  await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog.json`) });
-  await runtime.dispatch('fetch', { request: new Request(`${BASE}data/status.json`) });
+  await activateLegacy(runtime, 'g1', null);
   const response = await runtime.dispatch('fetch', { request: new Request(`${BASE}data/details/00.json?generation=g2`) });
   assert.equal(response.status, 409);
+});
+
+test('same-origin deployment workers retain separate shell, metadata, and generation caches', async () => {
+  const cacheStorage = new FakeCacheStorage();
+  const main = await createRuntime({
+    base: `${ORIGIN}/Chicken3veryDay/Drop-finder/main/`,
+    cacheStorage,
+  });
+  await main.dispatch('install');
+  await activateLegacy(main, 'main-generation', 'main-product');
+
+  const production = await createRuntime({
+    base: `${ORIGIN}/Chicken3veryDay/Drop-finder/gh-pages/`,
+    cacheStorage,
+  });
+  await production.dispatch('install');
+  await activateLegacy(production, 'production-generation', 'production-product');
+  await main.dispatch('activate');
+  await production.dispatch('activate');
+
+  const names = await cacheStorage.keys();
+  assert.equal(names.filter(name => name.startsWith('dropfinder-app-')).length, 2);
+  assert.equal(names.filter(name => name.startsWith('dropfinder-generation-meta-v2-')).length, 2);
+  assert.equal(names.filter(name => name.startsWith('dropfinder-data-v2-')).length, 2);
+
+  main.setOffline(true);
+  production.setOffline(true);
+  const mainFallback = await main.dispatch('fetch', {
+    request: new Request(`${main.base}data/catalog.json?offline=1`),
+  });
+  const productionFallback = await production.dispatch('fetch', {
+    request: new Request(`${production.base}data/catalog.json?offline=1`),
+  });
+  assert.equal((await mainFallback.json()).products[0].id, 'main-product');
+  assert.equal((await productionFallback.json()).products[0].id, 'production-product');
+});
+
+test('service worker clears active metadata when its generation cache is missing', async () => {
+  const cacheStorage = new FakeCacheStorage();
+  const runtime = await createRuntime({ cacheStorage });
+  await activateLegacy(runtime, 'g1', 'p1');
+  const generationCache = (await cacheStorage.keys()).find(name => name.startsWith('dropfinder-data-v2-'));
+  assert.ok(generationCache);
+  await cacheStorage.delete(generationCache);
+
+  const restarted = await createRuntime({ cacheStorage });
+  const status = [];
+  await restarted.dispatch('message', {
+    data: { type: 'generation-status' },
+    source: { postMessage: message => status.push(message) },
+  });
+
+  assert.deepEqual(status, [{ type: 'generation-status' }]);
+  assert.equal((await cacheStorage.keys()).some(name => name === generationCache), false);
 });
 
 function json(value, headers = {}) {
