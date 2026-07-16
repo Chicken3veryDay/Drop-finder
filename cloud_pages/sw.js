@@ -9,6 +9,7 @@ const MAX_DETAIL_ENTRIES = 96;
 const MAX_DOCUMENT_ENTRIES = 12;
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 const MAX_SHELL_ASSETS = 256;
+const NAVIGATION_FALLBACK_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 let activeGeneration = null;
 let preparing = null;
@@ -235,10 +236,10 @@ async function cacheOpenedDocument(document, source) {
   }
 }
 
-async function safeCachePut(cache, request, response) {
+async function safeCachePut(cache, request, response, resource = 'generation') {
   try { await cache.put(request, response); }
   catch (error) {
-    if (error?.name === 'QuotaExceededError') await broadcast({ type: 'cache-quota', resource: 'generation' });
+    if (error?.name === 'QuotaExceededError') await broadcast({ type: 'cache-quota', resource });
     throw error;
   }
 }
@@ -272,6 +273,30 @@ function isLegacyCatalogMember(path) { return /\/(?:catalog|status)\.json$/i.tes
 function isDetailShard(path) { return /(?:details?|shards?)\/.*\.json$/i.test(path); }
 async function cacheFirst(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request, { ignoreSearch: true }); if (hit) return hit; const response = await fetch(request); if (response.ok) await safeCachePut(cache, request, response.clone()); return response; }
 async function staleWhileRevalidate(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request, { ignoreSearch: true }); const network = fetch(request).then(response => { if (response.ok) safeCachePut(cache, request, response.clone()); return response; }).catch(() => null); if (hit) { void network; return hit; } return (await network) || new Response('', { status: 503 }); }
-async function networkFirst(request, cacheName, fallback) { const cache = await caches.open(cacheName); try { const response = await fetch(request); if (response.ok) await safeCachePut(cache, request, response.clone()); return response; } catch { return (await cache.match(request, { ignoreSearch: true })) || (await cache.match(fallback, { ignoreSearch: true })) || new Response('Offline', { status: 503 }); } }
+async function navigationFallback(cache, request, fallback, terminal) {
+  return (await cache.match(request, { ignoreSearch: true }))
+    || (await cache.match(fallback, { ignoreSearch: true }))
+    || terminal;
+}
+async function networkFirst(request, cacheName, fallback) {
+  const cache = await caches.open(cacheName);
+  let response;
+  try {
+    response = await fetch(request);
+  } catch {
+    return navigationFallback(cache, request, fallback, new Response('Offline', { status: 503 }));
+  }
+  if (!response.ok && NAVIGATION_FALLBACK_STATUS.has(response.status)) {
+    return navigationFallback(cache, request, fallback, response);
+  }
+  if (response.ok) {
+    try {
+      await safeCachePut(cache, request, response.clone(), 'navigation');
+    } catch (error) {
+      if (error?.name !== 'QuotaExceededError') await broadcast({ type: 'cache-error', resource: 'navigation' });
+    }
+  }
+  return response;
+}
 async function broadcast(message) { for (const client of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) client.postMessage(message); }
 function jsonResponse(value) { return new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } }); }
