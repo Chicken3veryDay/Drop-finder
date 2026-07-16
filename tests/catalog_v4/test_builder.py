@@ -41,6 +41,48 @@ class CatalogBuilderTests(unittest.TestCase):
         self.assertEqual(reasons["out_of_stock_variant"], 1)
         self.assertEqual(reasons["unknown_stock_variant"], 1)
 
+    def test_pound_context_controls_builder_weight_and_price_projection(self) -> None:
+        base = {
+            "source_id": "bulk-vendor",
+            "vendor": "Bulk Vendor",
+            "source_product_id": "bulk-product",
+            "source_variant_id": "quarter-pound",
+            "name": "Bulk THCA Flower",
+            "variant": "Quarter Pound",
+            "url": "https://bulk.example/products/flower?variant=quarter-pound",
+            "availability": "in_stock",
+            "price": 112,
+        }
+        quarter = build_catalog(
+            [base],
+            generated_at="2026-01-01T00:00:00Z",
+            detail_shards=1,
+        )
+        index = read_json_bytes(quarter.files["catalog-v4/index.json"])
+        self.assertEqual(quarter.product_count, 1)
+        self.assertEqual(quarter.variant_count, 1)
+        variant = index["products"][0]["variants"][0]
+        self.assertEqual(variant["grams"], 112.0)
+        self.assertAlmostEqual(variant["price_per_gram"], 1.0, places=4)
+
+        half = build_catalog(
+            [
+                {
+                    **base,
+                    "source_product_id": "unsupported-half-pound",
+                    "source_variant_id": "half-pound",
+                    "variant": "1/2 lb",
+                    "url": "https://bulk.example/products/flower?variant=half-pound",
+                    "price": 224,
+                }
+            ],
+            generated_at="2026-01-01T00:00:00Z",
+            detail_shards=1,
+        )
+        self.assertEqual(half.product_count, 0)
+        self.assertEqual(half.variant_count, 0)
+        self.assertEqual(half.rejections["reason_counts"]["invalid_or_missing_weight"], 1)
+
     def test_duplicate_weight_resolution_prefers_fresher_more_complete(self) -> None:
         rows, stamp = self.load_rows()
         result = build_catalog(rows, generated_at=stamp, detail_shards=2)
