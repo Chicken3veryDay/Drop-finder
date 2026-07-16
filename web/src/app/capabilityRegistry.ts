@@ -131,6 +131,7 @@ export class RuntimeCapabilityRegistry implements CapabilityRegistrationTarget, 
       const result = registrar(target);
       closed = true;
       if (isThenable(result)) {
+        void Promise.resolve(result).catch(() => undefined);
         this.recordedDiagnostics.push({
           source,
           code: "registrar-error",
