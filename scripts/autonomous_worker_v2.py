@@ -30,7 +30,6 @@ worker.FALLBACK_HTML_ROUTES.setdefault(
 )
 
 _original_scan_all_routes = worker.aggregate.scan_all_routes
-_original_candidate_to_row = worker.candidate_to_row
 
 
 def _slug_title(target: str) -> str:
@@ -103,11 +102,8 @@ def scored_card_candidates(payload: str, route: tuple) -> list[dict]:
 
 
 def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -> dict | None:
-    """Resolve taxonomy-fragment anchors from the product's own metadata."""
+    """Admit an HTML card only after its own product detail confirms the product."""
     name = worker.core.text(candidate.get("name"))
-    if not GENERIC_LABEL.fullmatch(name):
-        return _original_candidate_to_row(candidate, source_id, vendor)
-
     target = str(candidate.get("url") or "")
     detail_route = ("html", target, "product_detail")
     try:
@@ -124,6 +120,7 @@ def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -
     title = (
         meta.get("og:title")
         or meta.get("twitter:title")
+        or (name if not GENERIC_LABEL.fullmatch(name) else "")
         or _slug_title(target)
         or name
     )
@@ -175,8 +172,8 @@ def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
     return final_products, final_status
 
 
-# Patch the proven strict worker in place. Its admission, product-evidence, and
-# publication contracts remain unchanged.
+# Patch the proven strict worker in place. HTML card discovery remains useful, but
+# every discovered card must cross the product-detail verification boundary.
 worker.card_candidates = scored_card_candidates
 worker.candidate_to_row = descriptive_candidate_to_row
 worker.aggregate.scan_all_routes = resilient_scan_all_routes
@@ -196,6 +193,42 @@ def self_test() -> int:
     assert _is_retryable({"products": 0, "route_results": [{"http_status": 202}]})
     assert not _is_retryable({"products": 0, "route_results": [{"http_status": 404}]})
     assert _slug_title("https://example.test/products/archive-runtz-indoor-thca-flower") == "Archive Runtz Indoor Thca Flower"
+
+    candidate = {
+        "name": "Blue Dream THCA Flower",
+        "url": "https://example.test/products/blue-dream-thca-flower",
+        "price": 24.99,
+        "stock": "in_stock",
+        "card_evidence": "Blue Dream THCA Flower /products/blue-dream-thca-flower",
+    }
+    valid_detail = """
+      <html><head>
+        <meta property="og:title" content="Blue Dream THCA Flower">
+        <meta property="product:price:amount" content="24.99">
+        <meta property="product:availability" content="in stock">
+        <meta name="description" content="Loose indoor THCA flower buds">
+      </head><body></body></html>
+    """
+    original_fetch = worker.core.fetch
+    calls: list[str] = []
+    try:
+        worker.core.fetch = lambda target: (calls.append(target) or (valid_detail, "text/html", 200))
+        verified = descriptive_candidate_to_row(candidate, "fixture", "Fixture")
+        assert verified is not None
+        assert calls == [candidate["url"]]
+        assert verified["classification_evidence"]["evidence_source"] == "product_detail_metadata"
+
+        worker.core.fetch = lambda target: ("not found", "text/html", 404)
+        assert descriptive_candidate_to_row(candidate, "fixture", "Fixture") is None
+
+        worker.core.fetch = lambda target: (
+            "<html><head><title>Unrelated accessory</title></head></html>",
+            "text/html",
+            200,
+        )
+        assert descriptive_candidate_to_row(candidate, "fixture", "Fixture") is None
+    finally:
+        worker.core.fetch = original_fetch
     return 0
 
 
