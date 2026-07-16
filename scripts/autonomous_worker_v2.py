@@ -113,7 +113,9 @@ def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -
     if status != 200 or content_type not in {"text/html", "application/xhtml+xml"}:
         return None
 
-    evidence = worker.product_detail_evidence(payload, target)
+    # The card URL is discovery input, not confirming evidence. Exclude it so
+    # a stale THCA-flower slug cannot validate unrelated response content.
+    evidence = worker.product_detail_evidence(payload, "")
     if not worker.has_product_evidence(evidence):
         return None
     meta = worker.core.meta_values(payload)
@@ -195,8 +197,8 @@ def self_test() -> int:
 
     category_url = "https://example.test/collections/verification"
     responses = {
-        "https://example.test/products/gone": ("", "text/html", 404),
-        "https://example.test/products/unrelated": (
+        "https://example.test/products/gone-thca-flower": ("", "text/html", 404),
+        "https://example.test/products/stale-thca-flower": (
             '<meta property="og:title" content="Ceramic Coffee Mug">',
             "text/html",
             200,
@@ -223,7 +225,7 @@ def self_test() -> int:
         ),
         category_url: (
             """
-            <a href="/products/gone">Removed Listing THCA Flower</a>
+            <a href="/products/gone-thca-flower">Removed Listing THCA Flower</a>
             <span>$24.99</span>
             """,
             "text/html",
@@ -252,7 +254,7 @@ def self_test() -> int:
     worker.core.fetch = fake_fetch
     worker.FALLBACK_HTML_ROUTES["verification_fixture"] = [category_url]
     try:
-        for rejected in ("gone", "timeout", "unrelated", "cbd-flower", "thca-gummies"):
+        for rejected in ("gone-thca-flower", "timeout", "stale-thca-flower", "cbd-flower", "thca-gummies"):
             assert descriptive_candidate_to_row(
                 candidate(rejected), "verification_fixture", "Verification Fixture"
             ) is None
@@ -273,7 +275,7 @@ def self_test() -> int:
         assert fallback_attempts[0]["status"] == "empty"
         assert fallback_attempts[0]["candidates"] == 1
         assert fallback_attempts[0]["products"] == 0
-        assert fetch_calls.count("https://example.test/products/gone") == 2
+        assert fetch_calls.count("https://example.test/products/gone-thca-flower") == 2
     finally:
         worker.core.fetch = original_fetch
         if original_routes is None:
