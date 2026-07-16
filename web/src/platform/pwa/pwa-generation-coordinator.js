@@ -3,6 +3,14 @@ import { PlatformError, abortError } from '../contracts.js';
 const DEFAULT_ACTIVATION_TIMEOUT_MS = 10_000;
 let defaultCoordinator = null;
 
+function registerDefaultCoordinator(coordinator) {
+  if (!defaultCoordinator) defaultCoordinator = coordinator;
+}
+
+function unregisterDefaultCoordinator(coordinator) {
+  if (defaultCoordinator === coordinator) defaultCoordinator = null;
+}
+
 export async function coordinateCatalogGeneration(generationId, options = {}) {
   if (!defaultCoordinator) {
     if (!globalThis.navigator?.serviceWorker?.controller) {
@@ -27,7 +35,7 @@ export class PwaGenerationCoordinator {
     this.activeGenerationId = null;
     this.readyGenerationId = null;
     this.messageHandler = event => this.handleMessage(event.data);
-    if (!defaultCoordinator) defaultCoordinator = this;
+    registerDefaultCoordinator(this);
   }
 
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -194,6 +202,6 @@ export class PwaGenerationCoordinator {
     this.listening = false;
     this.activeGenerationId = null;
     this.readyGenerationId = null;
-    if (defaultCoordinator === this) defaultCoordinator = null;
+    unregisterDefaultCoordinator(this);
   }
 }
