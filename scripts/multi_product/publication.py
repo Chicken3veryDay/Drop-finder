@@ -109,7 +109,6 @@ def reject_reason(product: dict[str, Any]) -> str | None:
         product.get("variant"),
         internal_url,
         product.get("public_purchase_url"),
-        product.get("route_url"),
     ):
         return "unsupported_mixed_offer"
     if not _http_url(internal_url):
