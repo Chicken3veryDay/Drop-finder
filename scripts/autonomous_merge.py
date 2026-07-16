@@ -4,7 +4,8 @@
 The generalized publication module owns product admission and serialization. This
 entry point adds the repository-specific source-health policy: every attempted
 route is retained in a bounded public shape while source admission remains a
-separate, source-level decision.
+separate, source-level decision. The final entry point stages and validates the
+complete publication as browser-compatible strict JSON before replacement.
 """
 from __future__ import annotations
 
@@ -183,6 +184,8 @@ publication._source_status = _source_status
 publication.merge = merge
 publication.self_test = self_test
 
+from multi_product.strict_publication import main as strict_publication_main
+
 
 if __name__ == "__main__":
-    raise SystemExit(publication.main())
+    raise SystemExit(strict_publication_main())
