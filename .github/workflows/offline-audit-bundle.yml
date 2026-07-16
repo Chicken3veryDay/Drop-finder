@@ -1,0 +1,163 @@
+name: Offline audit bundle
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/offline-audit-bundle.yml"
+      - "project/scripts/create_audit_bundle.py"
+      - "project/scripts/test_create_audit_bundle.py"
+      - "project/OFFLINE_AUDIT_BUNDLE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: offline-audit-bundle-${{ github.event.comment.id || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (
+        github.event_name != 'issue_comment' ||
+        (
+          github.event.comment.body == '/audit-bundle' &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+        )
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner_name: github
+            runner_label: ubuntu-24.04
+          - runner_name: blacksmith
+            runner_label: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ${{ matrix.runner_label }}
+    timeout-minutes: 30
+    steps:
+      - name: Resolve requested revision
+        id: revision
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            ref="$PR_HEAD_SHA"
+          else
+            ref="$DEFAULT_BRANCH"
+          fi
+          if [[ -z "$ref" ]]; then
+            echo "Unable to resolve an audit ref" >&2
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.revision.outputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate audit bundle generator
+        shell: bash
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/audit-pycache
+        run: |
+          set -euo pipefail
+          python3 -m py_compile project/scripts/create_audit_bundle.py project/scripts/test_create_audit_bundle.py
+          python3 project/scripts/test_create_audit_bundle.py -v
+
+      - name: Create complete offline bundle
+        shell: bash
+        env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/audit-pycache
+        run: |
+          set -euo pipefail
+          python3 project/scripts/create_audit_bundle.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/offline-audit-bundle" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Read revision receipt
+        id: receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "offline-audit-bundle" / "manifest.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          print(f"commit={manifest['commit']}")
+          print(f"tree={manifest['tree']}")
+          print(f"count={manifest['tracked_file_count']}")
+          PY
+
+      - name: Upload offline audit bundle
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-audit-${{ matrix.runner_name }}-${{ steps.receipt.outputs.commit }}
+          path: ${{ runner.temp }}/offline-audit-bundle
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+      - name: Publish connector-readable artifact receipt
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          AUDIT_COMMIT: ${{ steps.receipt.outputs.commit }}
+          AUDIT_TREE: ${{ steps.receipt.outputs.tree }}
+          TRACKED_COUNT: ${{ steps.receipt.outputs.count }}
+          RUNNER_NAME: ${{ matrix.runner_name }}
+        with:
+          script: |
+            const marker = {
+              version: 1,
+              type: "offline_audit_bundle",
+              request_comment_id: context.payload.comment.id,
+              run_id: context.runId,
+              artifact_id: Number(process.env.ARTIFACT_ID),
+              repository: context.repo.owner + "/" + context.repo.repo,
+              commit: process.env.AUDIT_COMMIT,
+              tree: process.env.AUDIT_TREE,
+              tracked_file_count: Number(process.env.TRACKED_COUNT),
+              runner: process.env.RUNNER_NAME,
+              status: "ready"
+            };
+            const body = [
+              "## Offline audit bundle ready",
+              `- Commit: \`${marker.commit}\``,
+              `- Tree: \`${marker.tree}\``,
+              `- Tracked files: \`${marker.tracked_file_count}\``,
+              `- Runner: \`${marker.runner}\``,
+              `- Artifact ID: \`${marker.artifact_id}\``,
+              `- Artifact: ${process.env.ARTIFACT_URL}`,
+              "",
+              "Download the artifact by ID, verify `SHA256SUMS`, then clone the contained `.bundle` file.",
+              `<!-- offline-audit-bundle:${JSON.stringify(marker)} -->`
+            ].join("\n");
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
