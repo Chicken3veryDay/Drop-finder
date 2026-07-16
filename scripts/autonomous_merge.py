@@ -35,6 +35,18 @@ _MAX_VERIFICATION_FAILURES = 100_000
 
 _original_merge = publication.merge
 _original_self_test = publication.self_test
+_original_reject_reason = publication.reject_reason
+
+
+def reject_reason(product: dict[str, Any]) -> str | None:
+    """Reject the legacy self-validating listing-card provenance at publication."""
+    evidence = product.get("classification_evidence")
+    if (
+        isinstance(evidence, dict)
+        and evidence.get("evidence_source") == "product_card_title_or_url"
+    ):
+        return "unverified_listing_card_evidence"
+    return _original_reject_reason(product)
 
 
 def _public_verification_reasons(value: Any) -> dict[str, int]:
@@ -161,6 +173,25 @@ def self_test(root: Path) -> int:
             url="https://example.test/products/flower",
             evidence={"explicit_thca": True, "explicit_flower": True, "explicit_vape": False},
         )
+        detail_verified = dict(product)
+        detail_verified["classification_evidence"] = {
+            **product["classification_evidence"],
+            "evidence_source": "product_detail_metadata",
+        }
+        structured = dict(product)
+        structured["classification_evidence"] = {
+            **product["classification_evidence"],
+            "evidence_source": "storefront_record",
+        }
+        card_derived = dict(product)
+        card_derived["classification_evidence"] = {
+            **product["classification_evidence"],
+            "evidence_source": "product_card_title_or_url",
+        }
+        assert publication.reject_reason(detail_verified) is None
+        assert publication.reject_reason(structured) is None
+        assert publication.reject_reason(card_derived) == "unverified_listing_card_evidence"
+
         routes = [
             {
                 "route_id": "a-1",
@@ -195,7 +226,7 @@ def self_test(root: Path) -> int:
             json.dumps(
                 {
                     "schema_version": publication.SHARD_SCHEMA,
-                    "products": [product],
+                    "products": [detail_verified],
                     "sources": [
                         {
                             "source_id": "a",
@@ -240,6 +271,7 @@ def self_test(root: Path) -> int:
     return 0
 
 
+publication.reject_reason = reject_reason
 publication._source_status = _source_status
 publication.merge = merge
 publication.self_test = self_test
