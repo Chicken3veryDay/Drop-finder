@@ -22,11 +22,29 @@ const readBoundedText = async (response, label, maxBytes) => {
     throw new Error(`${label} exceeds the ${maxBytes}-byte verification limit.`);
   }
 
-  const body = new Uint8Array(await response.arrayBuffer());
-  if (body.byteLength > maxBytes) {
-    throw new Error(`${label} exceeds the ${maxBytes}-byte verification limit.`);
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parts = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new Error(`${label} exceeds the ${maxBytes}-byte verification limit.`);
+      }
+      parts.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    reader.releaseLock();
   }
-  return new TextDecoder().decode(body);
+
+  parts.push(decoder.decode());
+  return parts.join("");
 };
 
 const fetchText = async (fetchImpl, url, label, { maxBytes, timeoutMs }) => {
@@ -97,6 +115,8 @@ export const verifyPagesEndpoint = async (
     status.degraded_sources !== 0 ||
     status.healthy_sources !== status.enabled_sources ||
     !status.services ||
+    typeof status.services !== "object" ||
+    Array.isArray(status.services) ||
     Object.values(status.services).some((value) => value !== "healthy")
   ) {
     throw new Error("data/status.json does not describe a zero-degraded healthy publication.");
