@@ -32,14 +32,34 @@ def declared_product_type(product: dict[str, Any]) -> str:
     return ""
 
 
+def _weight_evidence_label(product: dict[str, Any]) -> Any:
+    return next(
+        (
+            product.get(key)
+            for key in (
+                "source_weight_label",
+                "weight_label",
+                "variant",
+                "weight",
+                "size",
+                "source_title",
+                "name",
+                "title",
+            )
+            if product.get(key) not in (None, "")
+        ),
+        None,
+    )
+
+
 def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     """Adapt the generalized raw catalog to the mature flower catalog-v4 contract.
 
     Explicit non-flower records remain available to the type-aware raw-catalog UI
     but are excluded from the flower-specific catalog-v4 builder. Legacy untyped
-    rows remain eligible. When generalized retrieval could not normalize a flower
-    weight, recover it conservatively from the variant or source title using the
-    catalog-v4 parser, which retains historical fraction and word-weight support.
+    rows remain eligible. Package weights require explicit source text. Newly
+    generated cloud-scan rows carry `source_weight_label`; older admitted rows
+    may recover the same evidence conservatively from their variant or title.
     """
     admitted: list[dict[str, Any]] = []
     excluded = 0
@@ -51,18 +71,12 @@ def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[st
             excluded += 1
             continue
         prepared = dict(product)
-        if prepared.get("grams") in (None, "") and prepared.get("weight_grams") in (None, ""):
-            label = next(
-                (
-                    prepared.get(key)
-                    for key in ("source_weight_label", "weight_label", "variant", "weight", "size", "source_title", "name", "title")
-                    if prepared.get(key) not in (None, "")
-                ),
-                None,
-            )
-            grams, _ = normalize_weight(None, label)
-            if grams is not None:
-                prepared["grams"] = float(grams)
+        label = _weight_evidence_label(prepared)
+        direct = prepared.get("grams") if prepared.get("grams") not in (None, "") else prepared.get("weight_grams")
+        grams, matched_label = normalize_weight(direct, label)
+        if grams is not None:
+            prepared["grams"] = float(grams)
+            prepared["source_weight_label"] = matched_label
         admitted.append(prepared)
     return admitted, excluded
 
