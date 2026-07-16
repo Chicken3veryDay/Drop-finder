@@ -76,6 +76,8 @@ def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[st
     rows remain eligible. Package weights require explicit source text. Newly
     generated cloud-scan rows carry `source_weight_label`; older admitted rows
     may recover the same evidence conservatively from their variant or title.
+    Numeric grams without matching text are removed at this legacy boundary so
+    the builder cannot mistake inherited Tier/count/potency values for packages.
     """
     admitted: list[dict[str, Any]] = []
     excluded = 0
@@ -88,6 +90,7 @@ def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[st
             continue
         prepared = dict(product)
         direct = prepared.get("grams") if prepared.get("grams") not in (None, "") else prepared.get("weight_grams")
+        confirmed_weight = False
         for label in _weight_evidence_labels(prepared):
             grams, matched_label = normalize_weight(direct, label)
             if grams is None:
@@ -96,7 +99,13 @@ def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[st
                 continue
             prepared["grams"] = float(grams)
             prepared["source_weight_label"] = matched_label
+            prepared.pop("weight_grams", None)
+            confirmed_weight = True
             break
+        if not confirmed_weight:
+            prepared.pop("grams", None)
+            prepared.pop("weight_grams", None)
+            prepared.pop("source_weight_label", None)
         admitted.append(prepared)
     return admitted, excluded
 
