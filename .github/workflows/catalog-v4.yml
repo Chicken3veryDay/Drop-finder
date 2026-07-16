@@ -28,45 +28,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  agent-repair:
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/c245b2f4/04922595/fix-weight-evidence'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/c245b2f4/04922595/fix-weight-evidence
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Apply and validate compatibility repair
-        run: |
-          set -euo pipefail
-          if [[ ! -f scripts/agent_repair_weight_evidence.py ]]; then
-            echo "repair already applied"
-            exit 0
-          fi
-          python scripts/agent_repair_weight_evidence.py
-          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
-          python -m scripts.catalog_v4.selftest
-          python -m unittest discover -s tests/catalog_v4 -v
-      - name: Commit validated repair
-        run: |
-          set -euo pipefail
-          if [[ ! -f scripts/agent_repair_weight_evidence.py ]]; then
-            exit 0
-          fi
-          git config user.name "dropfinder-agent"
-          git config user.email "actions@users.noreply.github.com"
-          git fetch origin main
-          git checkout origin/main -- .github/workflows/catalog-v4.yml
-          git rm scripts/agent_repair_weight_evidence.py .github/workflows/agent-repair-weight-evidence.yml
-          git add scripts/catalog_v4/normalization.py tests/catalog_v4/test_normalization.py tests/catalog_v4/test_weight_evidence.py tests/catalog_v4/test_cli.py .github/workflows/catalog-v4.yml
-          git diff --cached --check
-          git commit -m "fix(catalog-v4): preserve structured numeric weights"
-          git push origin HEAD:agent/c245b2f4/04922595/fix-weight-evidence
-
   validate:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
