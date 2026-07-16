@@ -33,9 +33,12 @@ AMBIGUOUS_FORM=re.compile(r'\b(joints?|blunts?|cones?|diamonds?|sauce|wax|resin|
 FORM_CONTEXT=re.compile(r'\b(pack|piece|infused|coated|dusted|sprayed|extract|dab|concentrate|ready[- ]?to[- ]?smoke|filled|rolled|1\s*g)\b',re.I)
 EXPLICIT_FLOWER=re.compile(r'\b(?:thca|hemp|high\s+thca)\s+flower\b',re.I)
 FLOWER=re.compile(r'\b(thca\s+flower|hemp\s+flower|flower|buds?|smalls|shake)\b',re.I); THCA=re.compile(r'\b(thca|thc-a|high\s+thca|type\s+[i1])\b',re.I)
-GRAM=re.compile(r'(?<!\d)(0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b',re.I)
-OUNCE=re.compile(r'(?<!\d)(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)?\b',re.I)
-WORD_WEIGHT=re.compile(r'\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b',re.I)
+GRAM=re.compile(r'(?<![\d.])(0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b',re.I)
+POUND=re.compile(r'(?<![\d.])(1/4|1/2|1|2|4)\s*(?:lb|lbs|pounds?)\b',re.I)
+WORD_POUND=re.compile(r'\b(quarter|half|one|two|four)\s+pounds?\b',re.I)
+OUNCE=re.compile(r'(?<![\d.])(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)\b',re.I)
+BARE_FRACTION_OUNCE=re.compile(r'(?<![\d.])(1/8|1/4|1/2)(?:st|nd|rd|th)?\b',re.I)
+WORD_WEIGHT=re.compile(r'\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b(?!\s*(?:lb|lbs|pounds?)\b)',re.I)
 POTENCY=re.compile(r'\bTHC-?A\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%',re.I)
 LD=re.compile(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',re.I|re.S); TAG=re.compile(r'<[^>]+>'); WS=re.compile(r'\s+')
 ANCHOR=re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',re.I|re.S)
@@ -48,13 +51,19 @@ def num(v):
  try: n=float(str(v).replace(',','').replace('$','').strip())
  except (TypeError,ValueError): return None
  return round(n,4) if math.isfinite(n) and 0<n<100000 else None
-def grams(s):
+def weight(s):
  m=GRAM.search(s)
- if m:return num(m.group(1))
- m=OUNCE.search(s)
- if m:return round({'1/8':3.5437,'1/4':7.0874,'1/2':14.1748}.get(m.group(1),(num(m.group(1)) or 0)*28.3495),3)
+ if m:return num(m.group(1)),text(m.group(0))
+ m=POUND.search(s)
+ if m:return {'1/4':112.0,'1/2':224.0,'1':448.0,'2':896.0,'4':1792.0}[m.group(1)],text(m.group(0))
+ m=WORD_POUND.search(s)
+ if m:return {'quarter':112.0,'half':224.0,'one':448.0,'two':896.0,'four':1792.0}[m.group(1).lower()],text(m.group(0))
+ m=OUNCE.search(s) or BARE_FRACTION_OUNCE.search(s)
+ if m:return round({'1/8':3.5437,'1/4':7.0874,'1/2':14.1748}.get(m.group(1),(num(m.group(1)) or 0)*28.3495),3),text(m.group(0))
  m=WORD_WEIGHT.search(s)
- return {'eighth':3.5437,'quarter':7.0874,'half ounce':14.1748,'half-oz':14.1748,'half oz':14.1748,'ounce':28.3495,'one ounce':28.3495,'zip':28.3495}.get(m.group(1).lower()) if m else None
+ if m:return {'eighth':3.5437,'quarter':7.0874,'half ounce':14.1748,'half-oz':14.1748,'half oz':14.1748,'ounce':28.3495,'one ounce':28.3495,'zip':28.3495}.get(m.group(1).lower()),text(m.group(0))
+ return None,''
+def grams(s):return weight(s)[0]
 def url(v,base):
  try:p=urllib.parse.urlsplit(urllib.parse.urljoin(base,str(v or '')))
  except ValueError:return ''
@@ -77,8 +86,8 @@ def record(sid,vendor,route,name,target,desc='',price=None,stock='',image='',var
  if not name or not target or HARD_EXCLUDE.search(combined) or not FLOWER.search(combined) or not (THCA.search(combined) or 'thca' in route[1].lower()):return None
  ambiguous=AMBIGUOUS_FORM.search(combined)
  if ambiguous and FORM_CONTEXT.search(combined) and not EXPLICIT_FLOWER.search(name):return None
- p=num(price);g=grams(combined);pots=[num(x) for x in POTENCY.findall(combined)];pot=max([x for x in pots if x and x<=100],default=None)
- return {'id':hashlib.sha256(f'{sid}|{target}|{variant}'.encode()).hexdigest()[:24],'source_id':sid,'vendor':vendor,'name':name,'url':target,'image':url(image,route[1]) if image else '', 'price':p,'grams':g,'price_per_gram':round(p/g,4) if p and g else None,'thca':pot,'availability':availability(stock),'variant':text(variant),'source_type':route[0],'route_url':route[1],'collected_at':now()}
+ p=num(price);g,weight_label=weight(combined);pots=[num(x) for x in POTENCY.findall(combined)];pot=max([x for x in pots if x and x<=100],default=None)
+ return {'id':hashlib.sha256(f'{sid}|{target}|{variant}'.encode()).hexdigest()[:24],'source_id':sid,'vendor':vendor,'name':name,'url':target,'image':url(image,route[1]) if image else '', 'price':p,'grams':g,'source_weight_label':weight_label,'weight_provenance':'explicit_text' if weight_label else 'unavailable','price_per_gram':round(p/g,4) if p and g else None,'thca':pot,'availability':availability(stock),'variant':text(variant),'source_type':route[0],'route_url':route[1],'collected_at':now()}
 def shopify(payload,sid,vendor,route):
  data=json.loads(payload);rows=[];base=route[1].split('/collections/',1)[0].split('/products.json',1)[0]
  for item in data.get('products',[]) if isinstance(data,dict) else []:
@@ -202,7 +211,8 @@ def merge(inp,out,previous=None):
  write(out/'catalog.json',{'schema_version':'dropfinder-cloud-catalog-v1','generated_at':stamp,'product_count':len(products),'products':products})
  write(out/'status.json',{'schema_version':'dropfinder-cloud-status-v1','generated_at':stamp,'version':'9.0.0-cloud','mode':'credential_free_github_pages','source_count':35,'enabled_sources':len(SOURCES),'healthy_sources':healthy,'degraded_sources':len(SOURCES)-healthy,'healthy_routes':healthy,'product_count':len(products),'sources':sorted(statuses,key=lambda x:x['source_id']),'limitations':['Read-only static snapshot; GitHub Pages cannot run the FastAPI/TUI worker service.','Only normalized public fields are published; raw responses, headers, cookies, databases and evidence are never uploaded.','Cloud scan health is not equivalent to full v9 live-source certification.']});print(f'merged {len(products)} products, {healthy}/{len(SOURCES)} healthy');return 0
 def selftest():
- assert grams('1/8th ounce')==3.544;assert grams('quarter oz')==7.0874
+ assert grams('1/8th ounce')==3.544;assert grams('quarter oz')==7.0874;assert grams('Quarter Pound')==112.0
+ assert all(grams(value) is None for value in ('Tier 1','Type 1','4 pack','THCA 24.1%','THCA 18.2%','THCA 22.4%'))
  route=('shopify','https://example.com/collections/thca-flower/products.json','thca_flower');payload=json.dumps({'products':[{'title':'Blue Dream THCA Flower','handle':'blue','body_html':'3.5g THCA 24.1%','variants':[{'id':1,'title':'3.5g','price':'35','available':True}]},{'title':'THCA Pre-Rolls','handle':'rolls','variants':[{'id':2,'price':'20'}]}]});rows=shopify(payload,'fixture','Fixture',route);assert len(rows)==1 and rows[0]['price_per_gram']==10;print('cloud scanner self-test passed');return 0
 def main():
  p=argparse.ArgumentParser();p.add_argument('--output',type=Path,default=DEFAULT);p.add_argument('--shard',type=int);p.add_argument('--shards',type=int,default=6);p.add_argument('--merge',type=Path);p.add_argument('--previous-catalog',type=Path);p.add_argument('--self-test',action='store_true');a=p.parse_args()
