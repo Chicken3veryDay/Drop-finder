@@ -40,10 +40,19 @@ function generationFetch(fixture, calls, shouldFail = () => false) {
   };
 }
 
+function makeActiveStateStale(client) {
+  const staleAt = Date.now() - 1_000;
+  client.active = Object.freeze({ ...client.snapshot(), activatedAt: staleAt });
+  client.lastNetworkVerification = Object.freeze({
+    generationId: client.active.generationId,
+    verifiedAt: staleAt,
+  });
+  return staleAt;
+}
+
 test('same-generation verification refreshes freshness without reactivation', async () => {
   const fixture = generationFixture();
   const calls = [];
-  let now = 1_000;
   const client = new CatalogGenerationClient({
     manifestUrl: 'https://example.test/manifest.json',
     fetchImpl: generationFetch(fixture, calls),
@@ -53,53 +62,45 @@ test('same-generation verification refreshes freshness without reactivation', as
   });
   const events = [];
   client.subscribe(event => events.push(event));
-  const originalNow = Date.now;
-  Date.now = () => now;
 
-  try {
-    await client.initialize();
-    const active = client.snapshot();
-    assert.equal(calls.length, 2);
-    assert.equal(events.length, 1);
-    assert.equal(active.activatedAt, 1_000);
+  await client.initialize();
+  const staleAt = makeActiveStateStale(client);
+  const active = client.snapshot();
+  assert.equal(calls.length, 2);
+  assert.equal(events.length, 1);
+  assert.equal(active.activatedAt, staleAt);
 
-    let aborts = 0;
-    client.detailLru.set('g1:sentinel', { retained: true });
-    client.inflight.set('sentinel', {
-      controller: { abort: () => { aborts += 1; } },
-      promise: Promise.resolve(),
-    });
+  let aborts = 0;
+  client.detailLru.set('g1:sentinel', { retained: true });
+  client.inflight.set('sentinel', {
+    controller: { abort: () => { aborts += 1; } },
+    promise: Promise.resolve(),
+  });
 
-    now = 1_201;
-    const [first, second] = await Promise.all([client.initialize(), client.initialize()]);
-    assert.equal(first.generationId, 'g1');
-    assert.equal(second.generationId, 'g1');
-    assert.equal(calls.length, 4);
-    assert.strictEqual(client.snapshot(), active);
-    assert.equal(client.snapshot().activatedAt, 1_000);
-    assert.equal(events.length, 1);
-    assert.equal(aborts, 0);
-    assert.equal(client.detailLru.has('g1:sentinel'), true);
-    assert.equal(client.inflight.has('sentinel'), true);
+  const [first, second] = await Promise.all([client.initialize(), client.initialize()]);
+  assert.equal(first.generationId, 'g1');
+  assert.equal(second.generationId, 'g1');
+  assert.equal(calls.length, 4);
+  assert.strictEqual(client.snapshot(), active);
+  assert.equal(client.snapshot().activatedAt, staleAt);
+  assert.equal(events.length, 1);
+  assert.equal(aborts, 0);
+  assert.equal(client.detailLru.has('g1:sentinel'), true);
+  assert.equal(client.inflight.has('sentinel'), true);
 
-    now = 1_250;
-    await client.initialize();
-    assert.equal(calls.length, 4);
+  await client.initialize();
+  assert.equal(calls.length, 4);
 
-    await client.initialize({ force: true });
-    assert.equal(calls.length, 6);
-    assert.strictEqual(client.snapshot(), active);
-    assert.equal(events.length, 1);
-    assert.equal(aborts, 0);
-  } finally {
-    Date.now = originalNow;
-  }
+  await client.initialize({ force: true });
+  assert.equal(calls.length, 6);
+  assert.strictEqual(client.snapshot(), active);
+  assert.equal(events.length, 1);
+  assert.equal(aborts, 0);
 });
 
 test('cached fallback does not advance successful-network freshness', async () => {
   const fixture = generationFixture();
   const calls = [];
-  let now = 10_000;
   let failNetwork = false;
   const client = new CatalogGenerationClient({
     manifestUrl: 'https://example.test/manifest.json',
@@ -110,29 +111,22 @@ test('cached fallback does not advance successful-network freshness', async () =
   });
   const events = [];
   client.subscribe(event => events.push(event));
-  const originalNow = Date.now;
-  Date.now = () => now;
 
-  try {
-    await client.initialize();
-    const active = client.snapshot();
-    assert.equal(calls.length, 2);
-    assert.equal(events.length, 1);
+  await client.initialize();
+  makeActiveStateStale(client);
+  const active = client.snapshot();
+  assert.equal(calls.length, 2);
+  assert.equal(events.length, 1);
 
-    failNetwork = true;
-    now = 10_200;
-    const fallback = await client.initialize();
-    assert.equal(fallback.generationId, 'g1');
-    assert.equal(calls.length, 3);
-    assert.strictEqual(client.snapshot(), active);
-    assert.equal(events.length, 1);
+  failNetwork = true;
+  const fallback = await client.initialize();
+  assert.equal(fallback.generationId, 'g1');
+  assert.equal(calls.length, 3);
+  assert.strictEqual(client.snapshot(), active);
+  assert.equal(events.length, 1);
 
-    now = 10_201;
-    await client.initialize();
-    assert.equal(calls.length, 4);
-    assert.strictEqual(client.snapshot(), active);
-    assert.equal(events.length, 1);
-  } finally {
-    Date.now = originalNow;
-  }
+  await client.initialize();
+  assert.equal(calls.length, 4);
+  assert.strictEqual(client.snapshot(), active);
+  assert.equal(events.length, 1);
 });
