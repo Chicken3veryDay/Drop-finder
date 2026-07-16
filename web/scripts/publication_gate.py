@@ -7,9 +7,16 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from scripts.multi_product.strict_json import load as load_strict_json
 
 CONTROLLED_PRODUCT_TYPES = {"psilocybin_mushroom", "psilocybin_vape"}
 ENABLED_PRODUCT_TYPES = {
@@ -21,7 +28,10 @@ ENABLED_PRODUCT_TYPES = {
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload = load_strict_json(path)
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected JSON object in {path}")
+    return payload
 
 
 def git(*args: str) -> str:
