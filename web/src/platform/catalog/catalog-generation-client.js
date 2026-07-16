@@ -41,7 +41,9 @@ export class CatalogGenerationClient {
     try {
       return await this.refresh({ signal, allowCachedFallback: true });
     } catch (error) {
+      if (error?.name === 'AbortError') throw error;
       const cached = await this.cache.getLastComplete();
+      throwIfAborted(signal);
       if (cached) {
         this.activate(cached, 'cache-fallback');
         return cached;
@@ -51,26 +53,44 @@ export class CatalogGenerationClient {
   }
 
   async refresh({ signal, allowCachedFallback = false } = {}) {
-    if (this.pending) return this.pending;
-    const controller = new AbortController();
-    const linkedAbort = () => controller.abort(signal?.reason);
-    signal?.addEventListener('abort', linkedAbort, { once: true });
-    this.pending = this.loadCompleteGeneration(controller.signal)
-      .catch(async error => {
-        if (allowCachedFallback && error?.name !== 'AbortError') {
-          const cached = await this.cache.getLastComplete();
-          if (cached) return cached;
+    let entry = this.pending;
+    if (!entry) {
+      const controller = new AbortController();
+      entry = createSharedRequest(
+        controller,
+        this.loadCompleteGeneration(controller.signal),
+        {
+          onSettled: current => {
+            if (this.pending === current) this.pending = null;
+          },
+          onOrphaned: current => {
+            if (this.pending === current) this.pending = null;
+          },
+        },
+      );
+      this.pending = entry;
+    }
+
+    let generation;
+    try {
+      generation = await consumeSharedRequest(entry, signal);
+    } catch (error) {
+      if (allowCachedFallback && error?.name !== 'AbortError') {
+        const cached = await this.cache.getLastComplete();
+        throwIfAborted(signal);
+        if (cached) {
+          if (cached.generationId !== this.active?.generationId) this.activate(cached, 'cache-fallback');
+          return cached;
         }
-        throw error;
-      })
-      .finally(() => {
-        signal?.removeEventListener('abort', linkedAbort);
-        this.pending = null;
-      });
-    const generation = await this.pending;
+      }
+      throw error;
+    }
+
+    throwIfAborted(signal);
     if (generation.generationId !== this.active?.generationId) {
       await this.cache.putComplete(generation);
-      this.activate(generation, 'network');
+      throwIfAborted(signal);
+      if (generation.generationId !== this.active?.generationId) this.activate(generation, 'network');
     }
     return generation;
   }
@@ -114,6 +134,7 @@ export class CatalogGenerationClient {
   }
 
   async loadDetail(productId, { signal, prefetch = false } = {}) {
+    throwIfAborted(signal);
     const generation = this.active;
     if (!generation) throw new PlatformError('not_initialized', 'Catalog generation is not initialized');
     const legacy = generation.manifest.details?.[productId] ?? generation.index.detail_shards?.[productId];
@@ -132,6 +153,7 @@ export class CatalogGenerationClient {
     );
     const cacheKey = `${generation.generationId}:${detailUrl}`;
     if (this.detailLru.has(cacheKey)) {
+      throwIfAborted(signal);
       const hit = this.detailLru.get(cacheKey);
       this.detailLru.delete(cacheKey);
       this.detailLru.set(cacheKey, hit);
@@ -142,14 +164,18 @@ export class CatalogGenerationClient {
       maxBytes: Math.min(descriptor.bytes ?? this.options.maxDetailBytes, this.options.maxDetailBytes),
       cache: prefetch ? 'force-cache' : 'default',
     });
+    throwIfAborted(signal);
     const text = await response.text();
+    throwIfAborted(signal);
     await verifyHash(text, descriptor.sha256);
+    throwIfAborted(signal);
     let detail;
     try { detail = JSON.parse(text); }
     catch (cause) { throw new PlatformError('malformed_detail', 'Product detail data is malformed', cause); }
     if (detail.generation_id !== generation.generationId) {
       throw new PlatformError('generation_mismatch', 'Detail data belongs to another generation');
     }
+    throwIfAborted(signal);
     this.detailLru.set(cacheKey, detail);
     while (this.detailLru.size > this.options.maxDetailShards) {
       this.detailLru.delete(this.detailLru.keys().next().value);
@@ -158,8 +184,9 @@ export class CatalogGenerationClient {
   }
 
   cancelObsolete(reason = 'Catalog request superseded') {
-    for (const entry of this.inflight.values()) entry.controller.abort(reason);
+    const entries = [...this.inflight.values()];
     this.inflight.clear();
+    for (const entry of entries) abortSharedRequest(entry, reason, { notifyOrphaned: false });
   }
 
   activate(generation, source) {
@@ -171,18 +198,25 @@ export class CatalogGenerationClient {
   }
 
   async fetchDeduped(key, input, init) {
-    const existing = this.inflight.get(key);
-    if (existing) return existing.promise.then(response => response.clone());
-    const controller = new AbortController();
-    const abort = () => controller.abort(init.signal?.reason);
-    init.signal?.addEventListener('abort', abort, { once: true });
-    const promise = this.fetchBounded(input, { ...init, signal: controller.signal })
-      .finally(() => {
-        init.signal?.removeEventListener('abort', abort);
-        this.inflight.delete(key);
-      });
-    this.inflight.set(key, { controller, promise });
-    return promise.then(response => response.clone());
+    let entry = this.inflight.get(key);
+    if (!entry) {
+      const controller = new AbortController();
+      const { signal: _consumerSignal, ...requestInit } = init;
+      entry = createSharedRequest(
+        controller,
+        this.fetchBounded(input, { ...requestInit, signal: controller.signal }),
+        {
+          onSettled: current => {
+            if (this.inflight.get(key) === current) this.inflight.delete(key);
+          },
+          onOrphaned: current => {
+            if (this.inflight.get(key) === current) this.inflight.delete(key);
+          },
+        },
+      );
+      this.inflight.set(key, entry);
+    }
+    return consumeSharedRequest(entry, init.signal, response => response.clone());
   }
 
   async fetchBounded(input, { signal, maxBytes, ...init }) {
@@ -237,6 +271,81 @@ export class MemoryGenerationCache {
   constructor() { this.complete = null; }
   async getLastComplete() { return this.complete; }
   async putComplete(value) { this.complete = value; }
+}
+
+function createSharedRequest(controller, operation, { onSettled, onOrphaned } = {}) {
+  const entry = {
+    controller,
+    consumers: new Set(),
+    settled: false,
+    orphaned: false,
+    onOrphaned,
+    promise: null,
+  };
+  entry.promise = Promise.resolve(operation).finally(() => {
+    entry.settled = true;
+    onSettled?.(entry);
+  });
+  entry.promise.catch(() => undefined);
+  return entry;
+}
+
+function consumeSharedRequest(entry, signal, project = value => value) {
+  if (signal?.aborted) {
+    abortSharedIfUnused(entry, signal.reason);
+    return Promise.reject(abortError());
+  }
+
+  const consumer = {};
+  entry.consumers.add(consumer);
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return false;
+      finished = true;
+      signal?.removeEventListener('abort', onAbort);
+      entry.consumers.delete(consumer);
+      return true;
+    };
+    const onAbort = () => {
+      if (!finish()) return;
+      abortSharedIfUnused(entry, signal?.reason);
+      reject(abortError());
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+
+    entry.promise.then(
+      value => {
+        if (!finish()) return;
+        try { resolve(project(value)); }
+        catch (error) { reject(error); }
+      },
+      error => {
+        if (!finish()) return;
+        reject(error);
+      },
+    );
+  });
+}
+
+function abortSharedIfUnused(entry, reason) {
+  if (entry.consumers.size === 0) abortSharedRequest(entry, reason);
+}
+
+function abortSharedRequest(entry, reason, { notifyOrphaned = true } = {}) {
+  if (entry.settled || entry.orphaned) return;
+  entry.orphaned = true;
+  if (notifyOrphaned) entry.onOrphaned?.(entry);
+  entry.controller.abort(reason);
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortError();
 }
 
 async function boundedResponse(response, maxBytes) {
