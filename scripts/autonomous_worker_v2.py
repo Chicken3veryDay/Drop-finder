@@ -32,6 +32,7 @@ worker.FALLBACK_HTML_ROUTES.setdefault(
 )
 
 _original_scan_all_routes = worker.aggregate.scan_all_routes
+_original_verify_products = worker.verify_products
 
 
 def _slug_title(target: str) -> str:
@@ -205,6 +206,30 @@ def verified_fallback_scan(source: tuple) -> tuple[list[dict], list[dict]]:
     return worker.core.dedupe(rows), attempts
 
 
+def _authoritative_structured_product(product: dict) -> bool:
+    """Recognize rows created by the installed Shopify/Woo product parsers."""
+    if str(product.get("source_type") or "") not in {"shopify", "woo"}:
+        return False
+    evidence = product.get("classification_evidence")
+    if not isinstance(evidence, dict) or evidence.get("evidence_source") != "storefront_record":
+        return False
+    primary = str(product.get("primary_type") or "")
+    tags = {str(value) for value in product.get("type_tags") or evidence.get("type_tags") or []}
+    return bool(primary and evidence.get("primary_type") == primary and primary in tags)
+
+
+def provenance_aware_verify_products(products: list[dict], source_id: str, vendor: str) -> list[dict]:
+    """Preserve authoritative structured records; verify every other row independently."""
+    authoritative: list[dict] = []
+    unresolved: list[dict] = []
+    for product in worker.core.dedupe(products):
+        if _authoritative_structured_product(product):
+            authoritative.append(product)
+        else:
+            unresolved.append(product)
+    return worker.core.dedupe([*authoritative, *_original_verify_products(unresolved, source_id, vendor)])
+
+
 def _is_retryable(status: dict) -> bool:
     if status.get("products"):
         return False
@@ -243,10 +268,11 @@ def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
 
 
 # Patch the proven strict worker in place. HTML card admission now requires
-# product-detail metadata; the downstream evidence and publication contracts stay unchanged.
+# product-detail metadata; structured product parsers retain distinct provenance.
 worker.card_candidates = scored_card_candidates
 worker.candidate_to_row = descriptive_candidate_to_row
 worker.fallback_scan = verified_fallback_scan
+worker.verify_products = provenance_aware_verify_products
 worker.aggregate.scan_all_routes = resilient_scan_all_routes
 
 
@@ -312,13 +338,13 @@ def self_test() -> int:
             raise TimeoutError("synthetic timeout")
         return responses[target]
 
-    def candidate(slug: str) -> dict:
+    def candidate(slug: str, name: str = "Listing Claims THCA Flower") -> dict:
         return {
-            "name": "Listing Claims THCA Flower",
+            "name": name,
             "url": f"https://example.test/products/{slug}",
             "price": 24.99,
             "stock": "in_stock",
-            "card_evidence": f"Listing Claims THCA Flower /products/{slug}",
+            "card_evidence": f"{name} /products/{slug}",
         }
 
     worker.core.fetch = fake_fetch
@@ -346,6 +372,12 @@ def self_test() -> int:
         assert verified["price"] == 31.0
         assert verified["classification_evidence"]["evidence_source"] == "product_detail_metadata"
         assert worker.gate([verified])[0]
+
+        generic_verified = descriptive_candidate_to_row(
+            candidate("verified", "Hybrid"), "verification_fixture", "Verification Fixture"
+        )
+        assert generic_verified is not None
+        assert generic_verified["classification_evidence"]["evidence_source"] == "product_detail_metadata"
 
         fallback_rows, fallback_attempts = worker.fallback_scan(
             ("verification_fixture", "Verification Fixture", [])
