@@ -429,12 +429,22 @@ export function MarketplaceFeature({
   asyncQueryEngine,
   virtualization,
   initialSort = "lowest_price_per_gram",
-}: MarketplaceFeatureProps) {
+  catalogGenerationId = null,
+}: MarketplaceFeatureProps & { catalogGenerationId?: string | null }) {
   const [filters, setFilters] = useState<MarketplaceFilters>(DEFAULT_FILTERS);
   const [sort, setSort] = useState<SortOption>(initialSort);
   const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
   const [selectedVariantIds, setSelectedVariantIds] = useState<Record<string, string>>({});
-  const [loadedDetails, setLoadedDetails] = useState<Record<string, MarketplaceProductDetail>>({});
+  const [loadedDetailState, setLoadedDetailState] = useState<{
+    generationId: string | null;
+    details: Record<string, MarketplaceProductDetail>;
+  }>({ generationId: catalogGenerationId, details: {} });
+  const loadedDetails = useMemo(
+    () => loadedDetailState.generationId === catalogGenerationId
+      ? loadedDetailState.details
+      : {},
+    [catalogGenerationId, loadedDetailState],
+  );
   const [fallbackDocument, setFallbackDocument] = useState<{
     document: MarketplaceDocument;
     returnFocus: HTMLElement | null;
@@ -518,11 +528,16 @@ export function MarketplaceFeature({
     const controller = new AbortController();
     void loadDetail(expandedProductId, controller.signal).then((detail) => {
       if (!controller.signal.aborted) {
-        setLoadedDetails((current) => ({ ...current, [detail.productId]: detail }));
+        setLoadedDetailState((current) => ({
+          generationId: catalogGenerationId,
+          details: current.generationId === catalogGenerationId
+            ? { ...current.details, [detail.productId]: detail }
+            : { [detail.productId]: detail },
+        }));
       }
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [expandedProductId, loadDetail, detailsByProductId, loadedDetails]);
+  }, [catalogGenerationId, expandedProductId, loadDetail, detailsByProductId, loadedDetails]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
