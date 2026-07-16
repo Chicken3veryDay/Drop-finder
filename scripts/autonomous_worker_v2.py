@@ -171,8 +171,8 @@ def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
     return final_products, final_status
 
 
-# Patch the proven strict worker in place. Its admission, product-evidence, and
-# publication contracts remain unchanged.
+# Patch the proven strict worker in place. HTML card admission now requires
+# product-detail metadata; the downstream evidence and publication contracts stay unchanged.
 worker.card_candidates = scored_card_candidates
 worker.candidate_to_row = descriptive_candidate_to_row
 worker.aggregate.scan_all_routes = resilient_scan_all_routes
