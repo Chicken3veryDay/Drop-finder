@@ -26,7 +26,7 @@ This is a static progressive web application backed by scheduled GitHub Actions 
 
 ## Future update procedure
 
-1. Read `README.md`, `AGENTS.md`, `deployment/cdn.json`, `deployment/autonomous-runtime.json`, and `.github/workflows/dropfinder-cloud.yml`.
+1. Read `README.md`, `deployment/cdn.json`, `deployment/autonomous-runtime.json`, and `.github/workflows/dropfinder-cloud.yml`.
 2. Make source changes on `main`; never patch `gh-pages` directly.
 3. Preserve workflow `contents: write` permission, concurrency fencing, per-source timeouts, sanitizer rules, zero-degraded admission, and publication verification.
 4. Run the affected Python self-tests and compile checks before committing.
