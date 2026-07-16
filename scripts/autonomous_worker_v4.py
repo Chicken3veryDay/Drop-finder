@@ -40,12 +40,15 @@ def self_test() -> int:
     reliability.self_test()
     safe_fetch_self_test()
     state = install_multi_product_runtime(reliability)
+    install_safe_fetch(worker.core)
     runtime_self_test(reliability)
     vendors = VENDOR_EXPANSION["vendors"]
     source_ids = {source[0] for source in worker.core.SOURCES}
 
     assert state["installed"] is True
     assert state["source_count"] >= 38
+    assert getattr(worker.core.fetch, "_dropfinder_safe_fetch", False)
+    assert getattr(worker.core.record, "_dropfinder_safe_record", False)
     assert 403 in reliability.RETRYABLE_HTTP
     assert "/cbd-hemp-flower/" in worker.PRODUCT_PATHS
     assert "green_unicorn_farms" in worker.FALLBACK_HTML_ROUTES
@@ -62,6 +65,7 @@ def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
     install_multi_product_runtime(reliability)
+    install_safe_fetch(worker.core)
     return worker.main()
 
 
