@@ -11,9 +11,11 @@ from .classification import (
     PSILOCYBIN_VAPE,
 )
 
-GRAM = re.compile(r"(?<!\d)(0\.25|0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b", re.I)
-OUNCE = re.compile(r"(?<!\d)(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:(?:oz|ounces?)\b)?", re.I)
-WORD_WEIGHT = re.compile(r"\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b", re.I)
+GRAM = re.compile(r"(?<![\d.])(0\.25|0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b", re.I)
+OUNCE = re.compile(r"(?<![\d.])(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)\b", re.I)
+BARE_FRACTION_OUNCE = re.compile(r"(?<![\d.])(1/8|1/4|1/2)(?:st|nd|rd|th)?\b", re.I)
+POUND_CONTEXT = re.compile(r"\b(?:lb|lbs|pounds?)\b", re.I)
+WORD_WEIGHT = re.compile(r"\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b", re.I)
 ML = re.compile(r"(?<!\d)(0\.25|0\.3|0\.5|0\.8|1|1\.5|2|3|5|10)\s*(?:ml|milliliters?)\b", re.I)
 PSILOCYBIN_PERCENT = re.compile(r"\bpsilocybin\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%", re.I)
 POTENCY_PERCENT = re.compile(r"\bpotency\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%", re.I)
@@ -52,9 +54,11 @@ def _first_decimal(pattern: re.Pattern[str], text: str) -> Decimal | None:
 def quantity_fields(text: str, primary_type: str) -> dict[str, float | str | None]:
     grams: Decimal | None = None
     volume_ml: Decimal | None = None
+    source_weight_label: str | None = None
     gram_match = GRAM.search(text)
     if gram_match:
         grams = decimal_value(gram_match.group(1))
+        source_weight_label = gram_match.group(0)
     else:
         ounce_match = OUNCE.search(text)
         if ounce_match:
@@ -64,28 +68,46 @@ def quantity_fields(text: str, primary_type: str) -> dict[str, float | str | Non
                 "1/2": Decimal("0.5"),
             }.get(ounce_match.group(1), decimal_value(ounce_match.group(1)))
             grams = ounces * Decimal("28.3495") if ounces else None
-        else:
-            word_match = WORD_WEIGHT.search(text)
-            if word_match:
-                label = re.sub(r"\s+", " ", word_match.group(1).lower().replace("-", " ")).strip()
-                grams = {
-                    "eighth": Decimal("3.5437"),
-                    "quarter": Decimal("7.0874"),
-                    "half ounce": Decimal("14.1748"),
-                    "half oz": Decimal("14.1748"),
-                    "ounce": Decimal("28.3495"),
-                    "one ounce": Decimal("28.3495"),
-                    "zip": Decimal("28.3495"),
-                }.get(label)
+            source_weight_label = ounce_match.group(0)
+        elif not POUND_CONTEXT.search(text):
+            fraction_match = BARE_FRACTION_OUNCE.search(text)
+            if fraction_match:
+                ounces = {
+                    "1/8": Decimal("0.125"),
+                    "1/4": Decimal("0.25"),
+                    "1/2": Decimal("0.5"),
+                }[fraction_match.group(1)]
+                grams = ounces * Decimal("28.3495")
+                source_weight_label = fraction_match.group(0)
+            else:
+                word_match = WORD_WEIGHT.search(text)
+                if word_match:
+                    label = re.sub(r"\s+", " ", word_match.group(1).lower().replace("-", " ")).strip()
+                    grams = {
+                        "eighth": Decimal("3.5437"),
+                        "quarter": Decimal("7.0874"),
+                        "half ounce": Decimal("14.1748"),
+                        "half oz": Decimal("14.1748"),
+                        "ounce": Decimal("28.3495"),
+                        "one ounce": Decimal("28.3495"),
+                        "two ounces": Decimal("56.699"),
+                        "two ounce": Decimal("56.699"),
+                        "four ounces": Decimal("113.398"),
+                        "four ounce": Decimal("113.398"),
+                        "zip": Decimal("28.3495"),
+                    }.get(label)
+                    source_weight_label = word_match.group(0) if grams else None
     volume_ml = _first_decimal(ML, text)
     if primary_type in (CANNABIS_FLOWER, PSILOCYBIN_MUSHROOM):
         volume_ml = None
     if primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE):
         grams = None
+        source_weight_label = None
     return {
         "grams": float(grams.quantize(Decimal("0.0001"))) if grams else None,
         "volume_ml": float(volume_ml.quantize(Decimal("0.0001"))) if volume_ml else None,
         "quantity_unit": "g" if grams else "ml" if volume_ml else None,
+        "source_weight_label": source_weight_label,
     }
 
 
