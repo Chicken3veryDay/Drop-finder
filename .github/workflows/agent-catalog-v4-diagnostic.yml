@@ -1,0 +1,25 @@
+name: Agent Catalog V4 Diagnostic
+
+on:
+  pull_request:
+    paths:
+      - "scripts/catalog_v4/**"
+      - "tests/catalog_v4/**"
+      - ".github/workflows/agent-catalog-v4-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run focused catalog tests
+        run: |
+          python3 -m unittest \
+            tests.catalog_v4.test_normalization \
+            tests.catalog_v4.test_cli \
+            tests.catalog_v4.test_weight_evidence \
+            -v
