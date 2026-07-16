@@ -282,13 +282,22 @@ async function boundedResponse(response, maxBytes, signal) {
     try { reader.releaseLock(); } catch { /* already released by stream implementation */ }
   }
 
-  const buffer = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    buffer.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new Response(buffer, { status: response.status, statusText: response.statusText, headers: response.headers });
+  let chunkIndex = 0;
+  const boundedBody = new ReadableStream({
+    pull(controller) {
+      if (chunkIndex >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunks[chunkIndex]);
+      chunks[chunkIndex] = null;
+      chunkIndex += 1;
+    },
+    cancel() {
+      chunks.length = 0;
+    },
+  });
+  return new Response(boundedBody, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 function isRetryableFetchError(error) {
