@@ -7,7 +7,7 @@ const ORIGIN = 'https://app.test';
 const BASE = `${ORIGIN}/cloud_pages/`;
 
 class FakeCache {
-  constructor(fetcher) { this.fetcher = fetcher; this.entries = new Map(); }
+  constructor(fetcher) { this.fetcher = fetcher; this.entries = new Map(); this.writeCount = 0; }
   key(input) { return new URL(input?.url ?? String(input), BASE).href.split('#')[0]; }
   async match(input, options = {}) {
     const key = this.key(input);
@@ -19,7 +19,7 @@ class FakeCache {
     }
     return undefined;
   }
-  async put(input, response) { this.entries.set(this.key(input), response.clone()); }
+  async put(input, response) { this.writeCount += 1; this.entries.set(this.key(input), response.clone()); }
   async addAll(inputs) {
     for (const input of inputs) {
       const response = await this.fetcher(input);
@@ -50,10 +50,12 @@ async function createRuntime() {
   const listeners = new Map();
   const messages = [];
   const network = new Map();
+  const fetches = [];
   let offline = false;
   const fetcher = async input => {
     if (offline) throw new TypeError('offline');
     const url = new URL(input?.url ?? String(input), BASE).href;
+    fetches.push(url);
     if (url === `${BASE}app-shell.json`) return json({ schema_version: 'dropfinder-app-shell-v1', assets: ['./', './index.html', './manifest.webmanifest', './icon.svg'] });
     if ([BASE, `${BASE}index.html`, `${BASE}manifest.webmanifest`, `${BASE}icon.svg`].includes(url)) return new Response(`asset:${url}`);
     const response = network.get(url);
@@ -83,7 +85,9 @@ async function createRuntime() {
     return responsePromise ? responsePromise : undefined;
   }
   return {
-    network, caches, messages, dispatch,
+    network, caches, messages, fetches, dispatch,
+    resetFetches() { fetches.length = 0; },
+    isHashedAsset(path) { return context.isHashedAsset(path); },
     setOffline(value) { offline = value; },
     setJson(path, value, headers = {}) { network.set(new URL(path, BASE).href, json(value, headers)); },
   };
@@ -109,6 +113,60 @@ test('service worker installs shell from metadata and activates a complete legac
   const cached = await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog.json?offline=1`) });
   assert.equal(cached.status, 200);
   assert.equal((await cached.json()).product_count, 1);
+});
+
+test('service worker routes current Vite assets cache-first without network revalidation', async () => {
+  const runtime = await createRuntime();
+  await runtime.dispatch('install');
+
+  const shell = JSON.parse(await readFile(new URL('../../cloud_pages/app-shell.json', import.meta.url), 'utf8'));
+  const generatedAssets = shell.assets.filter(asset => asset.startsWith('./assets/'));
+  assert.ok(generatedAssets.length > 0);
+
+  const appCacheName = (await runtime.caches.keys()).find(name => name.startsWith('dropfinder-app-'));
+  const appCache = await runtime.caches.open(appCacheName);
+  for (const asset of generatedAssets) {
+    const url = new URL(asset, BASE).href;
+    await appCache.put(url, new Response(`cached:${asset}`));
+    runtime.network.set(new URL(`${asset}?cache-bust=ignored`, BASE).href, new Response(`network:${asset}`));
+  }
+
+  runtime.resetFetches();
+  const writesBefore = appCache.writeCount;
+  for (const asset of generatedAssets) {
+    const response = await runtime.dispatch('fetch', { request: new Request(new URL(`${asset}?cache-bust=ignored`, BASE)) });
+    assert.equal(await response.text(), `cached:${asset}`);
+  }
+
+  assert.deepEqual(runtime.fetches, []);
+  assert.equal(appCache.writeCount, writesBefore);
+});
+
+test('hashed-asset classification follows the configured Vite filename contract', async () => {
+  const runtime = await createRuntime();
+  const viteConfig = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+  assert.match(viteConfig, /entryFileNames:\s*["']assets\/app-\[hash\]\.js["']/);
+  assert.match(viteConfig, /chunkFileNames:\s*["']assets\/chunk-\[hash\]\.js["']/);
+  assert.match(viteConfig, /assetFileNames:\s*["']assets\/\[name\]-\[hash\]\[extname\]["']/);
+
+  for (const path of [
+    '/cloud_pages/assets/app-D1_HGx2j.js',
+    '/cloud_pages/assets/chunk-CgeV8iME.js',
+    '/cloud_pages/assets/index-UDKaS5UJ.css',
+    '/cloud_pages/assets/marketplace-query-worker-CNdCK8BC.js',
+    '/cloud_pages/assets/pdf.worker.min-B9x_2-qa.mjs',
+    '/cloud_pages/assets/font-B9x_2-qa.woff2',
+    '/cloud_pages/assets/image-B9x_2-qa.avif',
+  ]) assert.equal(runtime.isHashedAsset(path), true, path);
+
+  for (const path of [
+    '/cloud_pages/index.html',
+    '/cloud_pages/manifest.webmanifest',
+    '/cloud_pages/assets/app.js',
+    '/cloud_pages/assets/chunk-latest.js',
+    '/cloud_pages/assets/chunk-latest-build.js',
+    '/cloud_pages/data/catalog-B9x_2-qa.json',
+  ]) assert.equal(runtime.isHashedAsset(path), false, path);
 });
 
 test('service worker does not activate incomplete snapshots and switches only after an explicit update', async () => {
