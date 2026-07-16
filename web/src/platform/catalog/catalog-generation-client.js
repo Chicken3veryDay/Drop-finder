@@ -21,6 +21,7 @@ export class CatalogGenerationClient {
     if (!this.fetchImpl) throw new PlatformError('fetch_unavailable', 'Fetch is unavailable');
     this.cache = options.cache ?? createDefaultGenerationCache(options.cacheName);
     this.active = null;
+    this.lastNetworkRefreshAt = 0;
     this.pending = null;
     this.inflight = new Map();
     this.detailLru = new Map();
@@ -37,7 +38,7 @@ export class CatalogGenerationClient {
   }
 
   async initialize({ signal, force = false } = {}) {
-    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) return this.active;
+    if (!force && this.active && Date.now() - this.lastNetworkRefreshAt <= this.options.staleMs) return this.active;
     try {
       return await this.refresh({ signal, allowCachedFallback: true });
     } catch (error) {
@@ -56,6 +57,10 @@ export class CatalogGenerationClient {
     const linkedAbort = () => controller.abort(signal?.reason);
     signal?.addEventListener('abort', linkedAbort, { once: true });
     this.pending = this.loadCompleteGeneration(controller.signal)
+      .then(generation => {
+        this.lastNetworkRefreshAt = generation.activatedAt;
+        return generation;
+      })
       .catch(async error => {
         if (allowCachedFallback && error?.name !== 'AbortError') {
           const cached = await this.cache.getLastComplete();
