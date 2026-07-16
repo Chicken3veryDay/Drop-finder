@@ -123,10 +123,77 @@ class CatalogBuilderTests(unittest.TestCase):
         ]
         result = build_catalog(rows, generated_at="2026-01-01T00:00:00Z", detail_shards=1)
         self.assertEqual(result.product_count, 1)
+        self.assertEqual(result.variant_count, 1)
         detail = read_json_bytes(result.files["catalog-v4/details/000.json"])["products"][0]
         resolution = detail["provenance"]["product_url_conflict_resolution"]
         self.assertEqual(resolution["method"], "source_authority_then_variant_coverage_then_completeness_then_freshness")
+        self.assertEqual(resolution["variant_reconciliation_method"], "variant_id_then_normalized_weight_completeness_then_freshness")
+        self.assertEqual(resolution["candidate_variant_count"], 2)
+        self.assertEqual(resolution["retained_variant_count"], 1)
         self.assertEqual(len(resolution["discarded_product_ids"]), 1)
+        self.assertEqual(detail["provenance"]["identity"]["method"], "source_product_identity")
+
+    def test_duplicate_product_url_reconciliation_preserves_unique_weights_and_documents(self) -> None:
+        url = "https://vendor.example/products/blue-dream"
+        rows = [
+            {
+                "source_id": "vendor", "vendor": "Vendor", "source_product_id": "123", "source_variant_id": "v-35",
+                "name": "Blue Dream THCA Flower | 3.5g", "variant": "3.5g", "url": url,
+                "availability": "in_stock", "price": 25,
+                "documents": [{"kind": "coa", "scope": "variant", "source_variant_id": "v-35", "url": "https://lab.example/35.pdf"}],
+            },
+            {
+                "source_id": "vendor", "vendor": "Vendor", "source_variant_id": "v-7",
+                "name": "Blue Dream THCA Flower | 7g", "variant": "7g", "url": url,
+                "availability": "in_stock", "price": 40,
+                "documents": [{"kind": "coa", "scope": "variant", "source_variant_id": "v-7", "url": "https://lab.example/7.pdf"}],
+            },
+        ]
+        result = build_catalog(rows, generated_at="2026-01-01T00:00:00Z", detail_shards=1)
+        self.assertEqual(result.product_count, 1)
+        self.assertEqual(result.variant_count, 2)
+        index_product = read_json_bytes(result.files["catalog-v4/index.json"])["products"][0]
+        self.assertEqual({float(variant["grams"]) for variant in index_product["variants"]}, {3.5, 7.0})
+
+        detail = read_json_bytes(result.files["catalog-v4/details/000.json"])["products"][0]
+        self.assertEqual(detail["provenance"]["identity"]["method"], "source_product_identity")
+        self.assertEqual({float(variant["grams"]) for variant in detail["variants"]}, {3.5, 7.0})
+        self.assertEqual(
+            {document["public_url"] for variant in detail["variants"] for document in variant["documents"]},
+            {"https://lab.example/35.pdf", "https://lab.example/7.pdf"},
+        )
+        self.assertTrue(
+            all(
+                document["product_id"] == detail["product_id"]
+                for variant in detail["variants"]
+                for document in variant["documents"]
+            )
+        )
+        resolution = detail["provenance"]["product_url_conflict_resolution"]
+        self.assertEqual(resolution["candidate_variant_count"], 2)
+        self.assertEqual(resolution["retained_variant_count"], 2)
+        self.assertEqual(resolution["discarded_variant_count"], 0)
+
+    def test_duplicate_product_url_reconciliation_does_not_restore_rejected_stock(self) -> None:
+        url = "https://vendor.example/products/blue-dream"
+        rows = [
+            {
+                "source_id": "vendor", "vendor": "Vendor", "source_product_id": "123", "source_variant_id": "v-35",
+                "name": "Blue Dream THCA Flower | 3.5g", "variant": "3.5g", "url": url,
+                "availability": "in_stock", "price": 25,
+            },
+            {
+                "source_id": "vendor", "vendor": "Vendor", "source_variant_id": "v-7",
+                "name": "Blue Dream THCA Flower | 7g", "variant": "7g", "url": url,
+                "availability": "out_of_stock", "price": 40,
+            },
+        ]
+        result = build_catalog(rows, generated_at="2026-01-01T00:00:00Z", detail_shards=1)
+        self.assertEqual(result.product_count, 1)
+        self.assertEqual(result.variant_count, 1)
+        index_product = read_json_bytes(result.files["catalog-v4/index.json"])["products"][0]
+        self.assertEqual([float(variant["grams"]) for variant in index_product["variants"]], [3.5])
+        self.assertEqual(result.rejections["reason_counts"]["out_of_stock_variant"], 1)
 
     def test_write_and_verify_publication(self) -> None:
         rows, stamp = self.load_rows()
