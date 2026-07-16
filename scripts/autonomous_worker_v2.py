@@ -30,7 +30,6 @@ worker.FALLBACK_HTML_ROUTES.setdefault(
 )
 
 _original_scan_all_routes = worker.aggregate.scan_all_routes
-_original_candidate_to_row = worker.candidate_to_row
 
 
 def _slug_title(target: str) -> str:
@@ -103,11 +102,8 @@ def scored_card_candidates(payload: str, route: tuple) -> list[dict]:
 
 
 def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -> dict | None:
-    """Resolve taxonomy-fragment anchors from the product's own metadata."""
+    """Verify every HTML card candidate against the product's own metadata."""
     name = worker.core.text(candidate.get("name"))
-    if not GENERIC_LABEL.fullmatch(name):
-        return _original_candidate_to_row(candidate, source_id, vendor)
-
     target = str(candidate.get("url") or "")
     detail_route = ("html", target, "product_detail")
     try:
@@ -196,6 +192,94 @@ def self_test() -> int:
     assert _is_retryable({"products": 0, "route_results": [{"http_status": 202}]})
     assert not _is_retryable({"products": 0, "route_results": [{"http_status": 404}]})
     assert _slug_title("https://example.test/products/archive-runtz-indoor-thca-flower") == "Archive Runtz Indoor Thca Flower"
+
+    category_url = "https://example.test/collections/verification"
+    responses = {
+        "https://example.test/products/gone": ("", "text/html", 404),
+        "https://example.test/products/unrelated": (
+            '<meta property="og:title" content="Ceramic Coffee Mug">',
+            "text/html",
+            200,
+        ),
+        "https://example.test/products/cbd-flower": (
+            '<meta property="og:title" content="CBD Flower">',
+            "text/html",
+            200,
+        ),
+        "https://example.test/products/thca-gummies": (
+            '<meta property="og:title" content="THCA Gummies">',
+            "text/html",
+            200,
+        ),
+        "https://example.test/products/verified": (
+            """
+            <meta property="og:title" content="Verified THCA Flower">
+            <meta name="description" content="Loose indoor THCA flower buds">
+            <meta property="product:price:amount" content="31.00">
+            <meta property="product:availability" content="in stock">
+            """,
+            "text/html",
+            200,
+        ),
+        category_url: (
+            """
+            <a href="/products/gone">Removed Listing THCA Flower</a>
+            <span>$24.99</span>
+            """,
+            "text/html",
+            200,
+        ),
+    }
+    fetch_calls: list[str] = []
+    original_fetch = worker.core.fetch
+    original_routes = worker.FALLBACK_HTML_ROUTES.get("verification_fixture")
+
+    def fake_fetch(target: str) -> tuple[str, str, int]:
+        fetch_calls.append(target)
+        if target == "https://example.test/products/timeout":
+            raise TimeoutError("synthetic timeout")
+        return responses[target]
+
+    def candidate(slug: str) -> dict:
+        return {
+            "name": "Listing Claims THCA Flower",
+            "url": f"https://example.test/products/{slug}",
+            "price": 24.99,
+            "stock": "in_stock",
+            "card_evidence": f"Listing Claims THCA Flower /products/{slug}",
+        }
+
+    worker.core.fetch = fake_fetch
+    worker.FALLBACK_HTML_ROUTES["verification_fixture"] = [category_url]
+    try:
+        for rejected in ("gone", "timeout", "unrelated", "cbd-flower", "thca-gummies"):
+            assert descriptive_candidate_to_row(
+                candidate(rejected), "verification_fixture", "Verification Fixture"
+            ) is None
+
+        verified = descriptive_candidate_to_row(
+            candidate("verified"), "verification_fixture", "Verification Fixture"
+        )
+        assert verified is not None
+        assert verified["name"] == "Verified THCA Flower"
+        assert verified["price"] == 31.0
+        assert verified["classification_evidence"]["evidence_source"] == "product_detail_metadata"
+        assert worker.gate([verified])[0]
+
+        fallback_rows, fallback_attempts = worker.fallback_scan(
+            ("verification_fixture", "Verification Fixture", [])
+        )
+        assert fallback_rows == []
+        assert fallback_attempts[0]["status"] == "empty"
+        assert fallback_attempts[0]["candidates"] == 1
+        assert fallback_attempts[0]["products"] == 0
+        assert fetch_calls.count("https://example.test/products/gone") == 2
+    finally:
+        worker.core.fetch = original_fetch
+        if original_routes is None:
+            worker.FALLBACK_HTML_ROUTES.pop("verification_fixture", None)
+        else:
+            worker.FALLBACK_HTML_ROUTES["verification_fixture"] = original_routes
     return 0
 
 
