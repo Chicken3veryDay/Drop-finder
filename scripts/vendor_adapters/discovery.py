@@ -113,7 +113,7 @@ def discover_json_documents(
 ) -> list[DocumentCandidate]:
     data = json.loads(payload) if isinstance(payload, (str, bytes, bytearray)) else payload
     results: list[DocumentCandidate] = []
-    seen: set[str] = set()
+    seen_document_ids: set[str] = set()
     url_keys = {"url", "href", "document_url", "coa_url", "lab_url", "pdf", "download"}
     for obj in _walk(data):
         context = json.dumps(obj, sort_keys=True, default=str)[:12000]
@@ -130,10 +130,7 @@ def discover_json_documents(
                 target = canonicalize_url(value, base_url=source_url, allowed_hosts=allowed_hosts)
             except UnsafeUrl:
                 continue
-            if target in seen:
-                continue
-            seen.add(target)
-            results.append(DocumentCandidate(
+            candidate = DocumentCandidate(
                 vendor_id=vendor_id,
                 url=target,
                 document_kind=_kind(f"{key} {title} {target}"),  # type: ignore[arg-type]
@@ -143,5 +140,9 @@ def discover_json_documents(
                 batch_id=batch_id,
                 content_type_hint="application/pdf" if PDF_WORDS.search(target) else "",
                 provenance=Provenance(source_url, "structured_json", observed_at),
-            ))
+            )
+            if candidate.document_id in seen_document_ids:
+                continue
+            seen_document_ids.add(candidate.document_id)
+            results.append(candidate)
     return sorted(results, key=lambda row: (row.document_kind, row.url, row.document_id))
