@@ -1,5 +1,6 @@
 name: DropFinder UI Publish
 
+# Publishes the current validated frontend without forcing a storefront rescan.
 on:
   workflow_dispatch:
   push:
@@ -72,5 +73,3 @@ jobs:
           git worktree add --detach /tmp/dropfinder-ui-published origin/gh-pages
           node web/scripts/verify-publication.mjs /tmp/dropfinder-ui-published
           python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-ui-published
-
-# Keep UI deployment independent from storefront rescans.
