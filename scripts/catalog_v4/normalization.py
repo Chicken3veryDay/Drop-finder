@@ -14,13 +14,18 @@ GRAM_PATTERN = re.compile(
     r"(?<![\d.-])(?P<value>0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b",
     re.I,
 )
+POUND_PATTERN = re.compile(
+    r"(?<![\d.-])(?P<value>1/4|1/2|1|2|4)\s*(?:lb|lbs|pounds?)\b",
+    re.I,
+)
+WORD_POUND_PATTERN = re.compile(r"\b(?P<value>quarter|half|one|two|four)\s+pounds?\b", re.I)
 OUNCE_PATTERN = re.compile(
     r"(?<![\d.-])(?P<value>1/8|1/4|1/2|1|2|4)\s*(?:st|nd|rd|th)?\s*(?:oz|ounces?)\b",
     re.I,
 )
 BARE_FRACTION_OUNCE_PATTERN = re.compile(r"(?<![\d.-])(?P<value>1/8|1/4|1/2)\s*(?:th|st|nd|rd)?\b", re.I)
 WORD_WEIGHT_PATTERN = re.compile(
-    r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b",
+    r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b(?!\s*(?:lb|lbs|pounds?)\b)",
     re.I,
 )
 PERCENT_PATTERN = re.compile(r"(?<!\d)(?P<value>\d{1,3}(?:\.\d+)?)\s*%")
@@ -138,17 +143,36 @@ def _snap_commercial_weight(value: Decimal) -> Decimal:
     standards = (
         Decimal("0.5"), Decimal("1"), Decimal("2"), Decimal("3.5"),
         Decimal("4"), Decimal("7"), Decimal("14"), Decimal("28"),
-        Decimal("56"), Decimal("112"),
+        Decimal("56"), Decimal("112"), Decimal("224"), Decimal("448"),
+        Decimal("896"), Decimal("1792"),
     )
     closest = min(standards, key=lambda candidate: abs(candidate - value))
     tolerance = max(Decimal("0.02"), closest * Decimal("0.02"))
     return closest if abs(closest - value) <= tolerance else value
 
 
-def _weight_from_label(text: str) -> Decimal | None:
+def _weight_from_label(text: str) -> tuple[Decimal | None, str]:
     match = GRAM_PATTERN.search(text)
     if match:
-        return Decimal(match.group("value"))
+        return Decimal(match.group("value")), clean_text(match.group(0))
+    match = POUND_PATTERN.search(text)
+    if match:
+        return {
+            "1/4": Decimal("112"),
+            "1/2": Decimal("224"),
+            "1": Decimal("448"),
+            "2": Decimal("896"),
+            "4": Decimal("1792"),
+        }[match.group("value")], clean_text(match.group(0))
+    match = WORD_POUND_PATTERN.search(text)
+    if match:
+        return {
+            "quarter": Decimal("112"),
+            "half": Decimal("224"),
+            "one": Decimal("448"),
+            "two": Decimal("896"),
+            "four": Decimal("1792"),
+        }[normalized_search(match.group("value"))], clean_text(match.group(0))
     match = OUNCE_PATTERN.search(text) or BARE_FRACTION_OUNCE_PATTERN.search(text)
     if match:
         return {
@@ -158,7 +182,7 @@ def _weight_from_label(text: str) -> Decimal | None:
             "1": Decimal("28"),
             "2": Decimal("56"),
             "4": Decimal("112"),
-        }[match.group("value")]
+        }[match.group("value")], clean_text(match.group(0))
     match = WORD_WEIGHT_PATTERN.search(text)
     if match:
         return {
@@ -173,15 +197,15 @@ def _weight_from_label(text: str) -> Decimal | None:
             "four ounces": Decimal("112"),
             "four ounce": Decimal("112"),
             "zip": Decimal("28"),
-        }.get(normalized_search(match.group("value")))
-    return None
+        }.get(normalized_search(match.group("value"))), clean_text(match.group(0))
+    return None, ""
 
 
 def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str]:
     direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
     supplied_label = clean_text(label)
     source_label = supplied_label or clean_text(value)
-    label_weight = _weight_from_label(supplied_label) if supplied_label else None
+    label_weight, matched_label = _weight_from_label(supplied_label) if supplied_label else (None, "")
 
     # Direct numeric values are not self-authenticating package-weight
     # evidence. Require a source label with an explicit unit or recognized
@@ -192,9 +216,9 @@ def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str
         snapped = _snap_commercial_weight(direct)
         if label_weight is None or label_weight != snapped:
             return None, source_label
-        return label_weight, supplied_label
+        return label_weight, matched_label
 
-    return label_weight, source_label
+    return label_weight, matched_label or source_label
 
 
 def canonical_url(value: Any, *, keep_variant: bool = False) -> str:
