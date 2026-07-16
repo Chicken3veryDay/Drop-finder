@@ -23,44 +23,55 @@ replace_once(
         snapped = _snap_commercial_weight(direct)
         if label_weight is None or label_weight != snapped:
             return None, source_label
-        return label_weight, supplied_label
+        return label_weight, matched_label
 ''',
     '''    # A dedicated numeric grams field is an established structured-adapter
     # contract and remains valid when no competing textual label is supplied.
-    # When a label is supplied, however, it must contain explicit weight
-    # evidence and agree with the numeric field. This rejects inherited
-    # Tier/count/potency numbers and unitless legacy labels without discarding
-    # trusted structured grams or the CLI's conservative title recovery.
+    # When a label is supplied, it must contain explicit weight evidence and
+    # agree with the numeric field. This rejects inherited Tier/count/potency
+    # numbers and unitless labels without discarding trusted structured grams.
     if direct is not None:
         snapped = _snap_commercial_weight(direct)
         if not supplied_label:
             return snapped, source_label
         if label_weight is None or label_weight != snapped:
             return None, source_label
-        return label_weight, supplied_label
+        return label_weight, matched_label
 ''',
 )
 
 replace_once(
     "tests/catalog_v4/test_normalization.py",
-    '''    def test_weight_normalization_rejects_unitless_numeric_evidence(self) -> None:
-        for value, label in ((28.3495, None), ("28.3495", None), (28.3495, "28.3495"), (7, "Tier 7")):
-            with self.subTest(value=value, label=label):
-                grams, _ = normalize_weight(value, label)
-                self.assertIsNone(grams)
+    '''        self.assertIsNone(normalize_weight("7")[0])
 ''',
-    '''    def test_weight_normalization_preserves_structured_numeric_grams_without_competing_label(self) -> None:
-        for value in (28.3495, "28.3495"):
-            with self.subTest(value=value):
-                grams, source_label = normalize_weight(value)
-                self.assertEqual(grams, Decimal("28"))
-                self.assertEqual(source_label, "28.3495")
+    '''        self.assertEqual(normalize_weight("7"), (Decimal("7"), "7"))
+''',
+)
 
-    def test_weight_normalization_rejects_unitless_or_non_weight_supplied_labels(self) -> None:
-        for value, label in ((28.3495, "28.3495"), (7, "Tier 7")):
+replace_once(
+    "tests/catalog_v4/test_normalization.py",
+    '''    def test_numeric_weight_requires_matching_text_evidence(self) -> None:
+        for value, label in (
+            ("28.3495", None),
+            ("28.3495", "28.3495"),
+            ("28.3495", "Tier 1"),
+            ("28.3495", "THCA 24.1%"),
+            ("56.699", "4 pack"),
+            ("28.3495", "Quarter oz"),
+        ):
             with self.subTest(value=value, label=label):
-                grams, _ = normalize_weight(value, label)
-                self.assertIsNone(grams)
+                self.assertIsNone(normalize_weight(value, label)[0])
+''',
+    '''    def test_numeric_weight_requires_matching_supplied_text_evidence(self) -> None:
+        for value, label in (
+            ("28.3495", "28.3495"),
+            ("28.3495", "Tier 1"),
+            ("28.3495", "THCA 24.1%"),
+            ("56.699", "4 pack"),
+            ("28.3495", "Quarter oz"),
+        ):
+            with self.subTest(value=value, label=label):
+                self.assertIsNone(normalize_weight(value, label)[0])
 ''',
 )
 
@@ -92,17 +103,9 @@ replace_once(
 
 replace_once(
     "tests/catalog_v4/test_cli.py",
-    '''import subprocess
-import sys
-import tempfile
-import unittest
+    '''from scripts.catalog_v4.cli import strict_flower_products
 ''',
-    '''import subprocess
-import sys
-import tempfile
-import unittest
-
-from scripts.catalog_v4 import build_catalog
+    '''from scripts.catalog_v4 import build_catalog
 from scripts.catalog_v4.cli import strict_flower_products
 ''',
 )
@@ -113,19 +116,22 @@ replace_once(
     def test_cli_build_and_verify(self) -> None:
 ''',
     '''class CliTests(unittest.TestCase):
-    def test_source_title_weight_recovery_remains_publishable(self) -> None:
+    def test_structured_numeric_weight_without_text_label_reaches_builder(self) -> None:
         prepared, excluded = strict_flower_products([{
             "source_id": "structured",
             "vendor": "Structured Vendor",
             "source_product_id": "blue-dream",
             "source_variant_id": "blue-dream-3-5",
-            "name": "Blue Dream THCA Flower 3.5g",
+            "name": "Blue Dream THCA Flower",
+            "variant": "",
+            "grams": 3.5,
             "url": "https://structured.example/products/blue-dream",
             "availability": "in_stock",
             "price": 35,
         }])
         self.assertEqual(excluded, 0)
         self.assertEqual(prepared[0]["grams"], 3.5)
+        self.assertNotIn("source_weight_label", prepared[0])
 
         result = build_catalog(
             prepared,
