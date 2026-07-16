@@ -6,12 +6,38 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.catalog_v4 import build_catalog
 from scripts.catalog_v4.cli import strict_flower_products
 
 FIXTURE = Path(__file__).parent / "fixtures" / "legacy_rows.json"
 
 
 class CliTests(unittest.TestCase):
+    def test_structured_numeric_weight_without_text_label_reaches_builder(self) -> None:
+        prepared, excluded = strict_flower_products([{
+            "source_id": "structured",
+            "vendor": "Structured Vendor",
+            "source_product_id": "blue-dream",
+            "source_variant_id": "blue-dream-3-5",
+            "name": "Blue Dream THCA Flower",
+            "variant": "",
+            "grams": 3.5,
+            "url": "https://structured.example/products/blue-dream",
+            "availability": "in_stock",
+            "price": 35,
+        }])
+        self.assertEqual(excluded, 0)
+        self.assertEqual(prepared[0]["grams"], 3.5)
+        self.assertNotIn("source_weight_label", prepared[0])
+
+        result = build_catalog(
+            prepared,
+            generated_at="2026-07-16T00:00:00Z",
+            detail_shards=1,
+        )
+        self.assertEqual(result.product_count, 1)
+        self.assertEqual(result.variant_count, 1)
+
     def test_cli_build_and_verify(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

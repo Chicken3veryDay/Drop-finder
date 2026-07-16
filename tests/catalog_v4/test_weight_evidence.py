@@ -38,6 +38,24 @@ class WeightEvidenceTests(unittest.TestCase):
         self.assertEqual(result.variant_count, 0)
         self.assertEqual(result.rejections["reason_counts"]["invalid_or_missing_weight"], 1)
 
+    def test_structured_numeric_grams_without_competing_label_remain_publishable(self) -> None:
+        result = build_catalog(
+            [row(
+                source_product_id="structured-product",
+                source_variant_id="structured-variant",
+                name="Blue Dream THCA Flower",
+                variant="",
+                grams=3.5,
+            )],
+            generated_at="2026-07-16T00:00:00Z",
+            detail_shards=1,
+        )
+        index = read_json_bytes(result.files["catalog-v4/index.json"])
+        variant = index["products"][0]["variants"][0]
+        self.assertEqual(variant["grams"], 3.5)
+        self.assertEqual(variant["source_weight_label"], "3.5")
+        self.assertAlmostEqual(variant["price_per_gram"], 9.9971, places=4)
+
     def test_matching_explicit_weight_evidence_remains_publishable(self) -> None:
         result = build_catalog(
             [row(grams=28.3495, source_weight_label="1 oz", variant="1 oz")],

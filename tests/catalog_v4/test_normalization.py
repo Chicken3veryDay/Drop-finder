@@ -32,13 +32,12 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(normalize_weight("7", "7 grams"), (Decimal("7"), "7 grams"))
         self.assertEqual(normalize_weight("28.3495", "Bulk flower 1 oz"), (Decimal("28"), "1 oz"))
         self.assertEqual(normalize_weight("448", "Bulk flower 1 Pound"), (Decimal("448"), "1 Pound"))
-        self.assertIsNone(normalize_weight("7")[0])
+        self.assertEqual(normalize_weight("7"), (Decimal("7"), "7"))
         self.assertIsNone(normalize_weight(None, "family pack")[0])
         self.assertIsNone(normalize_weight(-1, "-1g")[0])
 
-    def test_numeric_weight_requires_matching_text_evidence(self) -> None:
+    def test_numeric_weight_requires_matching_supplied_text_evidence(self) -> None:
         for value, label in (
-            ("28.3495", None),
             ("28.3495", "28.3495"),
             ("28.3495", "Tier 1"),
             ("28.3495", "THCA 24.1%"),

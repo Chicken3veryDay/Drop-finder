@@ -207,13 +207,15 @@ def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str
     source_label = supplied_label or clean_text(value)
     label_weight, matched_label = _weight_from_label(supplied_label) if supplied_label else (None, "")
 
-    # Direct numeric values are not self-authenticating package-weight
-    # evidence. Require a source label with an explicit unit or recognized
-    # weight term, then require that evidence to agree with the normalized
-    # numeric value. This prevents inherited Tier/count/potency numbers and
-    # unitless legacy grams from producing shopper-visible price-per-gram data.
+    # A dedicated numeric grams field is an established structured-adapter
+    # contract and remains valid when no competing textual label is supplied.
+    # When a label is supplied, it must contain explicit weight evidence and
+    # agree with the numeric field. This rejects inherited Tier/count/potency
+    # numbers and unitless labels without discarding trusted structured grams.
     if direct is not None:
         snapped = _snap_commercial_weight(direct)
+        if not supplied_label:
+            return snapped, source_label
         if label_weight is None or label_weight != snapped:
             return None, source_label
         return label_weight, matched_label
