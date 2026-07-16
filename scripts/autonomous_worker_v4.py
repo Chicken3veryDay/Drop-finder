@@ -12,6 +12,7 @@ if str(HERE) not in sys.path:
 # Keep the proven reliability and retry layer. Multi-product support patches its
 # classification, normalization, route registry, and admission seams only.
 import autonomous_worker_v2 as reliability  # type: ignore
+from multi_product import publication
 from multi_product.runtime import install_multi_product_runtime, runtime_self_test
 from vendor_expansion import apply_registry, load_registry
 
@@ -37,6 +38,53 @@ def self_test() -> int:
     reliability.self_test()
     state = install_multi_product_runtime(reliability)
     runtime_self_test(reliability)
+
+    original_fetch = worker.core.fetch
+    responses = {
+        "https://example.test/products/stale-thca-flower": (
+            '<meta property="og:title" content="Ceramic Coffee Mug">',
+            "text/html",
+            200,
+        ),
+        "https://example.test/products/verified": (
+            """
+            <meta property="og:title" content="Verified THCA Flower">
+            <meta name="description" content="Loose indoor THCA flower buds">
+            <meta property="product:price:amount" content="31.00">
+            <meta property="product:availability" content="in stock">
+            """,
+            "text/html",
+            200,
+        ),
+    }
+
+    def fake_fetch(target: str) -> tuple[str, str, int]:
+        return responses[target]
+
+    def candidate(slug: str) -> dict:
+        return {
+            "name": "Listing Claims THCA Flower",
+            "url": f"https://example.test/products/{slug}",
+            "price": 24.99,
+            "stock": "in_stock",
+            "card_evidence": f"Listing Claims THCA Flower /products/{slug}",
+        }
+
+    worker.core.fetch = fake_fetch
+    try:
+        assert reliability.descriptive_candidate_to_row(
+            candidate("stale-thca-flower"), "fixture", "Fixture"
+        ) is None
+        verified = reliability.descriptive_candidate_to_row(
+            candidate("verified"), "fixture", "Fixture"
+        )
+        assert verified is not None
+        assert verified["primary_type"] == "cannabis_flower"
+        assert verified["classification_evidence"]["evidence_source"] == "product_detail_metadata"
+        assert publication.reject_reason(verified) is None
+    finally:
+        worker.core.fetch = original_fetch
+
     vendors = VENDOR_EXPANSION["vendors"]
     source_ids = {source[0] for source in worker.core.SOURCES}
 
