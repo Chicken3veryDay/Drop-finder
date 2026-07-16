@@ -1,6 +1,20 @@
 import { PlatformError, abortError } from '../contracts.js';
 
 const DEFAULT_ACTIVATION_TIMEOUT_MS = 10_000;
+let defaultCoordinator = null;
+
+export async function coordinateCatalogGeneration(generationId, options = {}) {
+  if (!defaultCoordinator) {
+    if (!globalThis.navigator?.serviceWorker?.controller) {
+      return Object.freeze({ status: 'uncontrolled', generationId: String(generationId ?? '') });
+    }
+    throw new PlatformError(
+      'service_worker_coordinator_unavailable',
+      'The catalog cannot switch generations until service-worker coordination is available',
+    );
+  }
+  return defaultCoordinator.activateWhenReady(generationId, options);
+}
 
 /** Typed bridge between the static application and the versioned service worker. */
 export class PwaGenerationCoordinator {
@@ -13,6 +27,7 @@ export class PwaGenerationCoordinator {
     this.activeGenerationId = null;
     this.readyGenerationId = null;
     this.messageHandler = event => this.handleMessage(event.data);
+    if (!defaultCoordinator) defaultCoordinator = this;
   }
 
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -60,6 +75,18 @@ export class PwaGenerationCoordinator {
     const target = String(generationId ?? '').trim();
     if (!target) throw new PlatformError('generation_missing', 'A catalog generation is required for service-worker activation');
     if (signal?.aborted) throw abortError();
+
+    if (this.navigator?.serviceWorker && !this.registrationPromise) {
+      try {
+        await this.register();
+      } catch (error) {
+        if (!this.navigator.serviceWorker.controller) {
+          return Object.freeze({ status: 'uncontrolled', generationId: target });
+        }
+        this.emit(Object.freeze({ type: 'generation-error', generationId: target, code: 'service_worker_registration_failed', error }));
+      }
+    }
+
     const worker = this.registration?.waiting ?? this.navigator?.serviceWorker?.controller;
     if (!worker) return Object.freeze({ status: 'uncontrolled', generationId: target });
     if (this.activeGenerationId === target) {
@@ -168,5 +195,6 @@ export class PwaGenerationCoordinator {
     this.listening = false;
     this.activeGenerationId = null;
     this.readyGenerationId = null;
+    if (defaultCoordinator === this) defaultCoordinator = null;
   }
 }
