@@ -3,10 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { FlowerMarketplaceFeature } from "./index";
 import type {
+  MarketplaceAsyncQueryOptions,
   MarketplaceAsyncQueryPage,
+  MarketplaceFilters,
   MarketplaceProduct,
   MarketplaceProductDetail,
   MarketplaceRowProjection,
+  SortOption,
 } from "./marketplace-core";
 
 const deferred = <T,>() => {
@@ -60,10 +63,10 @@ describe("FlowerMarketplaceFeature detail loading", () => {
 
     const asyncQueryEngine = {
       query: vi.fn((
-        _products,
-        _filters,
-        _sort,
-        options: { expandedProductId: string | null },
+        _products: readonly MarketplaceProduct[],
+        _filters: MarketplaceFilters,
+        _sort: SortOption,
+        options: MarketplaceAsyncQueryOptions,
       ) => options.expandedProductId ? expandedQuery.promise : Promise.resolve(page)),
     };
     const loadDetail = vi.fn((_productId: string, signal: AbortSignal) => {
