@@ -134,8 +134,6 @@ def delta9_value(value: Any) -> tuple[Decimal | None, str]:
     return parsed, "measured" if parsed is not None else "missing"
 
 
-
-
 def _snap_commercial_weight(value: Decimal) -> Decimal:
     standards = (
         Decimal("0.5"), Decimal("1"), Decimal("2"), Decimal("3.5"),
@@ -146,34 +144,24 @@ def _snap_commercial_weight(value: Decimal) -> Decimal:
     tolerance = max(Decimal("0.02"), closest * Decimal("0.02"))
     return closest if abs(closest - value) <= tolerance else value
 
-def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str]:
-    direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
-    source_label = clean_text(label if label not in (None, "") else value)
-    # The first argument is a normalized grams field when supplied by an
-    # adapter. Numeric strings are therefore valid here; arbitrary labels are
-    # parsed only from the second argument below.
-    if direct is not None:
-        return _snap_commercial_weight(direct), source_label or f"{direct.normalize()}g"
-    text = source_label
+
+def _weight_from_label(text: str) -> Decimal | None:
     match = GRAM_PATTERN.search(text)
     if match:
-        return Decimal(match.group("value")), text
+        return Decimal(match.group("value"))
     match = OUNCE_PATTERN.search(text) or BARE_FRACTION_OUNCE_PATTERN.search(text)
     if match:
-        amount = match.group("value")
-        grams = {
+        return {
             "1/8": Decimal("3.5"),
             "1/4": Decimal("7"),
             "1/2": Decimal("14"),
             "1": Decimal("28"),
             "2": Decimal("56"),
             "4": Decimal("112"),
-        }[amount]
-        return grams, text
+        }[match.group("value")]
     match = WORD_WEIGHT_PATTERN.search(text)
     if match:
-        token = normalized_search(match.group("value"))
-        grams = {
+        return {
             "eighth": Decimal("3.5"),
             "quarter": Decimal("7"),
             "half ounce": Decimal("14"),
@@ -185,10 +173,30 @@ def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str
             "four ounces": Decimal("112"),
             "four ounce": Decimal("112"),
             "zip": Decimal("28"),
-        }.get(token)
-        if grams is not None:
-            return grams, text
-    return None, text
+        }.get(normalized_search(match.group("value")))
+    return None
+
+
+def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str]:
+    direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
+    supplied_label = clean_text(label)
+    source_label = supplied_label or clean_text(value)
+    label_weight = _weight_from_label(supplied_label) if supplied_label else None
+
+    # A numeric grams field may come from a structured adapter, but when the
+    # same record also supplies a textual weight label the two pieces of
+    # evidence must agree. This prevents inherited legacy values such as
+    # `28.3495` paired with `Tier 1`, decimal potency, or another unitless label
+    # from becoming a shopper-visible package weight and price-per-gram value.
+    if direct is not None:
+        snapped = _snap_commercial_weight(direct)
+        if supplied_label:
+            if label_weight is None or label_weight != snapped:
+                return None, supplied_label
+            return label_weight, supplied_label
+        return snapped, f"{direct.normalize()}g"
+
+    return label_weight, source_label
 
 
 def canonical_url(value: Any, *, keep_variant: bool = False) -> str:
