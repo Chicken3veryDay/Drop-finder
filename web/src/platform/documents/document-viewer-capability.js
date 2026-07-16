@@ -17,6 +17,7 @@ export class DocumentViewerCapability {
     this.options = { ...DEFAULTS, ...options };
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
     this.loadPdfJs = options.loadPdfJs ?? (() => loadPdfJsRuntime({ workerSrc: options.pdfWorkerUrl }));
+    this.decodeImage = options.decodeImage ?? decodeImageUrl;
     this.state = closedState();
     this.listeners = new Set();
     this.session = null;
@@ -55,7 +56,7 @@ export class DocumentViewerCapability {
       else this.setState({ ...this.state, status: 'unsupported' });
     } catch (error) {
       if (controller.signal.aborted || sessionId !== this.session?.id) return this.state;
-      this.setState({ ...this.state, status: 'error', error: conciseDocumentError(error) });
+      this.setState({ ...this.state, status: 'error', displayUrl: null, error: conciseDocumentError(error) });
     }
     return this.state;
   }
@@ -98,6 +99,8 @@ export class DocumentViewerCapability {
 
   async openImage(documentRef, sessionId, signal) {
     if (!this.fetchImpl) {
+      await this.decodeImage(documentRef.url, signal);
+      if (sessionId !== this.session?.id || signal.aborted) return;
       this.setState({ ...this.state, status: 'ready', displayUrl: documentRef.url });
       return;
     }
@@ -110,7 +113,23 @@ export class DocumentViewerCapability {
     if (sessionId !== this.session?.id || signal.aborted) return;
     const blob = new Blob([bytes], { type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream' });
     const objectUrl = URL.createObjectURL(blob);
-    this.session.objectUrl = objectUrl;
+    const session = this.session;
+    if (!session || session.id !== sessionId || signal.aborted) {
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
+    session.objectUrl = objectUrl;
+    try {
+      await this.decodeImage(objectUrl, signal);
+    } catch (error) {
+      releaseObjectUrl(session, objectUrl);
+      if (signal.aborted || this.session !== session) return;
+      throw new PlatformError('image_decode_failed', 'Image could not be decoded', error);
+    }
+    if (signal.aborted || this.session !== session) {
+      releaseObjectUrl(session, objectUrl);
+      return;
+    }
     this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
   }
 
@@ -187,7 +206,10 @@ export class DocumentViewerCapability {
       try { await session.renderSequence; } catch {}
       try { await session.loadingTask?.destroy?.(); } catch {}
       try { await session.pdf?.cleanup?.(); } catch {}
-      if (session.objectUrl) URL.revokeObjectURL(session.objectUrl);
+      if (session.objectUrl) {
+        URL.revokeObjectURL(session.objectUrl);
+        session.objectUrl = null;
+      }
     }
     this.unlockScroll();
     this.setState(closedState());
@@ -245,9 +267,49 @@ function conciseDocumentError(error) {
     document_too_many_pages: 'This document has too many pages to open here.',
     document_unavailable: 'This document could not be loaded.',
     document_worker_timeout: 'This document worker could not start.',
+    image_decode_failed: 'This image could not be displayed.',
+    image_decode_unavailable: 'This image could not be displayed here.',
     malformed: 'This document could not be read.',
   };
   return { code, message: messages[code] ?? 'This document could not be opened.', action: 'open-original' };
+}
+
+function decodeImageUrl(url, signal) {
+  if (signal?.aborted) return Promise.reject(abortError());
+  const ImageConstructor = globalThis.Image;
+  if (typeof ImageConstructor !== 'function') {
+    return Promise.reject(new PlatformError('image_decode_unavailable', 'Image decoding is unavailable'));
+  }
+  return new Promise((resolve, reject) => {
+    const image = new ImageConstructor();
+    let settled = false;
+    const cleanup = () => {
+      image.onload = null;
+      image.onerror = null;
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = callback => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onAbort = () => finish(() => {
+      try { image.src = ''; } catch {}
+      reject(abortError());
+    });
+    image.decoding = 'async';
+    image.onload = () => finish(resolve);
+    image.onerror = () => finish(() => reject(new PlatformError('image_decode_failed', 'Image could not be decoded')));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    image.src = url;
+  });
+}
+
+function releaseObjectUrl(session, objectUrl) {
+  if (session.objectUrl !== objectUrl) return;
+  URL.revokeObjectURL(objectUrl);
+  session.objectUrl = null;
 }
 
 function settleWithin(promise, timeoutMs, signal, code) {
