@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from scripts.catalog_v4.document_urls import canonical_document_url
 from scripts.catalog_v4.documents import normalize_documents
-from scripts.catalog_v4.normalization import canonical_document_url
 
 
 class DocumentNormalizationTests(unittest.TestCase):
