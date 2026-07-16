@@ -19,6 +19,7 @@ OUNCE_PATTERN = re.compile(
     re.I,
 )
 BARE_FRACTION_OUNCE_PATTERN = re.compile(r"(?<![\d.-])(?P<value>1/8|1/4|1/2)\s*(?:th|st|nd|rd)?\b", re.I)
+POUND_CONTEXT_PATTERN = re.compile(r"\b(?:lb|lbs|pounds?)\b", re.I)
 WORD_WEIGHT_PATTERN = re.compile(
     r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b",
     re.I,
@@ -148,17 +149,20 @@ def _snap_commercial_weight(value: Decimal) -> Decimal:
 
 def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str]:
     direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
-    source_label = clean_text(label if label not in (None, "") else value)
-    # The first argument is a normalized grams field when supplied by an
-    # adapter. Numeric strings are therefore valid here; arbitrary labels are
-    # parsed only from the second argument below.
-    if direct is not None:
-        return _snap_commercial_weight(direct), source_label or f"{direct.normalize()}g"
+    source_label = clean_text(label)
+    if not source_label and isinstance(value, str) and direct is None:
+        source_label = clean_text(value)
     text = source_label
+
+    def accept_labeled(parsed: Decimal) -> tuple[Decimal | None, str]:
+        if direct is not None and _snap_commercial_weight(direct) != parsed:
+            return None, text
+        return parsed, text
+
     match = GRAM_PATTERN.search(text)
     if match:
-        return Decimal(match.group("value")), text
-    match = OUNCE_PATTERN.search(text) or BARE_FRACTION_OUNCE_PATTERN.search(text)
+        return accept_labeled(Decimal(match.group("value")))
+    match = OUNCE_PATTERN.search(text)
     if match:
         amount = match.group("value")
         grams = {
@@ -169,7 +173,18 @@ def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str
             "2": Decimal("56"),
             "4": Decimal("112"),
         }[amount]
-        return grams, text
+        return accept_labeled(grams)
+    if POUND_CONTEXT_PATTERN.search(text):
+        return None, text
+    match = BARE_FRACTION_OUNCE_PATTERN.search(text)
+    if match:
+        amount = match.group("value")
+        grams = {
+            "1/8": Decimal("3.5"),
+            "1/4": Decimal("7"),
+            "1/2": Decimal("14"),
+        }[amount]
+        return accept_labeled(grams)
     match = WORD_WEIGHT_PATTERN.search(text)
     if match:
         token = normalized_search(match.group("value"))
@@ -187,7 +202,15 @@ def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str
             "zip": Decimal("28"),
         }.get(token)
         if grams is not None:
-            return grams, text
+            return accept_labeled(grams)
+
+    # A numeric field is derived data, not weight evidence by itself. The
+    # source label must independently identify a supported package weight.
+    # This prevents contaminated legacy values (for example, Tier 1 -> 28 g)
+    # from being promoted into the shopper catalog while retaining adapter
+    # values that carry an explicit source weight label.
+    if direct is not None:
+        return None, text
     return None, text
 
 
