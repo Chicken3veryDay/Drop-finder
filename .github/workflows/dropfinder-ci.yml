@@ -40,6 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m compileall -q scripts tests
+          python scripts/cloud_scan.py --self-test
           python scripts/cloud_scan_v2.py --self-test
           python scripts/autonomous_worker_v4.py --self-test
           rm -rf /tmp/dropfinder-autonomous-merge-test
