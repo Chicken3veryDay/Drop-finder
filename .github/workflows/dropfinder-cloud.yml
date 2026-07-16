@@ -245,11 +245,13 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin gh-pages
-          rm -rf /tmp/dropfinder-published
+          rm -rf /tmp/dropfinder-published /tmp/dropfinder-source
           git worktree add --detach /tmp/dropfinder-published origin/gh-pages
-          node web/scripts/verify-publication.mjs /tmp/dropfinder-published
-          python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-published
-          python scripts/publication_generation.py verify-outputs /tmp/dropfinder-published/data "$GITHUB_SHA"
+          git worktree add --detach /tmp/dropfinder-source "$DROP_FINDER_GENERATED_COMMIT"
+          node /tmp/dropfinder-source/web/scripts/verify-publication.mjs /tmp/dropfinder-published
+          python /tmp/dropfinder-source/web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-published
+          python /tmp/dropfinder-source/scripts/publication_generation.py \
+            verify-outputs /tmp/dropfinder-published/data "$GITHUB_SHA"
       - name: Record synchronized deployment receipt with compare-and-swap
         run: |
           set -euo pipefail
