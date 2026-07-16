@@ -66,11 +66,13 @@ class RuntimeTests(unittest.TestCase):
           <a href="/products/thca-vape">THCA Disposable Vape 1mL</a>
           <a href="/products/empty-cart">Empty Vape Cartridge</a>
           <a href="/products/psilo">Psilocybin Mushrooms 7g</a>
+          <a href="/collections/thca-flower">THCA Flower</a>
         """
         links = reliability.worker.core.product_links(
             payload,
             ("html", "https://example.test/shop", "storewide"),
         )
+        self.assertNotIn("/collections/", reliability.worker.PRODUCT_PATHS)
         self.assertEqual(
             links,
             [
