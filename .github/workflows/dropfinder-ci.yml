@@ -52,6 +52,7 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
+
           catalog=json.loads(Path('cloud_pages/data/catalog.json').read_text())
           status=json.loads(Path('cloud_pages/data/status.json').read_text())
           assert catalog['product_count']==len(catalog['products'])
@@ -59,9 +60,17 @@ jobs:
           assert status['enabled_sources']==len(status['sources'])
           assert status['healthy_sources']+status['degraded_sources']==status['enabled_sources']
           required={'id','source_id','vendor','name','url','availability','collected_at'}
+          controlled={'psilocybin_mushroom','psilocybin_vape'}
           for row in catalog['products']:
               assert required <= row.keys()
-              assert row['url'].startswith(('https://','http://'))
+              evidence=row.get('classification_evidence') or {}
+              primary=row.get('primary_type') or evidence.get('primary_type') or 'cannabis_flower'
+              if primary in controlled:
+                  assert not row.get('url')
+                  assert not row.get('public_purchase_url')
+                  assert not row.get('route_url')
+              else:
+                  assert row['url'].startswith(('https://','http://'))
           print(f"validated {len(catalog['products'])} products")
           PY
       - name: Verify catalog v4 generation
