@@ -23,23 +23,19 @@ The admission controller then:
 5. Writes catalog, status, runtime, quarantine, and product-rejection records.
 6. Publishes the validated tree atomically to `gh-pages`, then re-reads that branch and verifies the zero-degraded and evidence invariants.
 
-## Current verified production state
+## Authoritative production state
 
-Generated **2026-07-14 11:28:58 UTC**:
+Production counts, active-source membership, route health, quarantine reasons, and rejection totals change with each publication. The README intentionally does not copy those fast-changing snapshot values.
 
-- **273** accepted THCA-flower products
-- **12** active sources
-- **12** healthy sources
-- **0** degraded active sources
-- **14** healthy retrieval routes
-- **5** quarantined candidates
-- **1** rejected non-flower product
-- **6** retrieval shards
-- Retrieval workers, admission controller, product sanitizer, catalog merge, and publisher all report `healthy`
+Use the generated records as the source of truth:
 
-The currently active sources are Black Tie CBD, Crysp, Green Unicorn Farms, Hello Mary, Holy City Farms, Loud House Hemp, Lucky Elk, Pure Roots Botanicals, Quantum Exotics, Sherlocks Glass & Dispensary, Smoky Mountain CBD, and Stoney Branch Farms.
+- `cloud_pages/data/status.json` reports current source, route, product, rejection, and service health with its `generated_at` timestamp.
+- `deployment/autonomous-runtime.json` reports the current worker receipt, shard count, product totals, and zero-degraded status.
+- `cloud_pages/data/quarantine.json` records every currently quarantined candidate and its evidence-backed reason.
+- `cloud_pages/data/rejections.json` records current product-level rejection evidence.
+- `deployment/cdn.json` identifies the exact public publication and verified blob hashes.
 
-The five quarantined candidates are not counted as active services: Arete currently blocks GitHub-hosted requests with HTTP 403 after bounded retries; Five Leaf currently exposes no qualifying flower products; Preston's rendered listing does not expose product-level THCA evidence and canonical product links to the worker; Secret Nature's configured collection is empty and its old flower routes return 404; WNC's category shell does not expose product records that pass product-detail verification.
+The live GitHub Pages app is published from the same validated generation. Historical counts or source-specific failure explanations belong in immutable deployment records, not in this continuously reused overview.
 
 ## Accuracy and privacy boundary
 
