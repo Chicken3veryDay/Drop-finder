@@ -23,19 +23,22 @@ class FakeWorker {
   }
 }
 
-test('worker query engine runs one request and retains only the latest queued query', async () => {
+test('worker query engine retains only the latest request from a rapid burst', async () => {
   const worker = new FakeWorker();
   const engine = new MarketplaceQueryEngine({ workerFactory: () => worker });
   await engine.initialize('g1', fixtureProducts());
 
-  const first = engine.query({ search: 'one' });
-  const firstOutcome = first.catch(error => error);
-  const second = engine.query({ search: 'two' });
-  const secondOutcome = second.catch(error => error);
-  const third = engine.query({ search: 'three' });
+  const superseded = [];
+  let latest;
+  for (let index = 1; index <= 20; index += 1) {
+    const pending = engine.query({ search: `query ${index}` });
+    if (index < 20) superseded.push(pending.catch(error => error));
+    else latest = pending;
+  }
 
-  assert.equal((await firstOutcome).name, 'AbortError');
-  assert.equal((await secondOutcome).name, 'AbortError');
+  const supersededErrors = await Promise.all(superseded);
+  assert.equal(supersededErrors.length, 19);
+  assert.ok(supersededErrors.every(error => error.name === 'AbortError'));
   assert.deepEqual(
     worker.messages.filter(message => message.type === 'query').map(message => message.version),
     [1],
@@ -44,12 +47,12 @@ test('worker query engine runs one request and retains only the latest queued qu
   worker.complete(1);
   assert.deepEqual(
     worker.messages.filter(message => message.type === 'query').map(message => message.version),
-    [1, 3],
+    [1, 20],
   );
 
-  const latestResult = { version: 3, rows: [] };
-  worker.complete(3, latestResult);
-  assert.equal(await third, latestResult);
+  const latestResult = { version: 20, rows: [] };
+  worker.complete(20, latestResult);
+  assert.equal(await latest, latestResult);
   assert.equal(engine.pending.size, 0);
   engine.dispose();
 });
