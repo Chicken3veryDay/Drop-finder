@@ -187,6 +187,7 @@ export class CatalogGenerationClient {
 
   async fetchBounded(input, { signal, maxBytes, ...init }) {
     if (signal?.aborted) throw abortError();
+    const byteLimit = assertByteLimit(maxBytes);
     let lastError;
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt += 1) {
       try {
@@ -199,11 +200,11 @@ export class CatalogGenerationClient {
         }
         const contentLength = response.headers.get('content-length');
         const declared = contentLength === null ? null : Number(contentLength);
-        if (Number.isFinite(declared) && declared > maxBytes) {
+        if (Number.isFinite(declared) && declared > byteLimit) {
           await cancelResponseBody(response, 'Catalog asset exceeds its size limit');
           throw new PlatformError('asset_oversized', 'Catalog asset exceeds its size limit');
         }
-        return await boundedResponse(response, maxBytes, signal);
+        return await boundedResponse(response, byteLimit, signal);
       } catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw abortError();
         lastError = error;
@@ -298,6 +299,13 @@ async function boundedResponse(response, maxBytes, signal) {
     },
   });
   return new Response(boundedBody, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+function assertByteLimit(value) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new PlatformError('invalid_size_limit', 'Catalog asset size limit must be a nonnegative safe integer');
+  }
+  return value;
 }
 
 function isRetryableFetchError(error) {
