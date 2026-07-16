@@ -2,6 +2,7 @@
 """Stable production wrapper for generalized autonomous DropFinder workers."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -32,11 +33,37 @@ VENDOR_EXPANSION = load_registry()
 INSTALLED_VENDOR_IDS = apply_registry(worker, VENDOR_EXPANSION)
 
 
+def install_runtime() -> dict:
+    """Install generalized classification and the listing-card provenance gate."""
+    state = install_multi_product_runtime(reliability)
+    if getattr(worker, "_listing_card_provenance_gate_installed", False):
+        return state
+    original_gate = worker.gate
+
+    def provenance_gate(products: list[dict]) -> tuple[bool, list[str], dict]:
+        _, reasons, quality = original_gate(products)
+        reasons = list(reasons)
+        quality = dict(quality)
+        unverified_cards = sum(
+            isinstance(row.get("classification_evidence"), dict)
+            and row["classification_evidence"].get("evidence_source") == "product_card_title_or_url"
+            for row in products
+        )
+        if unverified_cards:
+            reasons.append("unverified_listing_card_evidence")
+            quality["unverified_listing_cards"] = unverified_cards
+        return not reasons, reasons, quality
+
+    worker.gate = provenance_gate
+    worker._listing_card_provenance_gate_installed = True
+    return state
+
+
 def self_test() -> int:
     # Validate the pre-existing reliability layer, the generalized runtime, and
     # the independently validated vendor registry as one production composition.
     reliability.self_test()
-    state = install_multi_product_runtime(reliability)
+    state = install_runtime()
     runtime_self_test(reliability)
 
     original_fetch = worker.core.fetch
@@ -81,9 +108,53 @@ def self_test() -> int:
         assert verified is not None
         assert verified["primary_type"] == "cannabis_flower"
         assert verified["classification_evidence"]["evidence_source"] == "product_detail_metadata"
+        assert worker.gate([verified])[0]
         assert publication.reject_reason(verified) is None
+
+        card_derived = dict(verified)
+        card_derived["classification_evidence"] = {
+            **verified["classification_evidence"],
+            "evidence_source": "product_card_title_or_url",
+        }
+        admitted, reasons, quality = worker.gate([card_derived])
+        assert admitted is False
+        assert "unverified_listing_card_evidence" in reasons
+        assert quality["unverified_listing_cards"] == 1
     finally:
         worker.core.fetch = original_fetch
+
+    structured_route = (
+        "shopify",
+        "https://example.test/collections/thca-flower/products.json?limit=250",
+        "thca_flower",
+    )
+    structured_payload = json.dumps(
+        {
+            "products": [
+                {
+                    "title": "Blue Dream THCA Flower",
+                    "handle": "blue-dream",
+                    "body_html": "Loose indoor THCA flower buds 3.5g",
+                    "variants": [
+                        {
+                            "id": 101,
+                            "title": "3.5g",
+                            "price": "35.00",
+                            "available": True,
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    structured = worker.core.shopify(
+        structured_payload, "fixture", "Fixture", structured_route
+    )
+    structured = worker.verify_products(structured, "fixture", "Fixture")
+    assert len(structured) == 1
+    assert structured[0]["classification_evidence"]["evidence_source"] == "storefront_record"
+    assert worker.gate(structured)[0]
+    assert publication.reject_reason(structured[0]) is None
 
     vendors = VENDOR_EXPANSION["vendors"]
     source_ids = {source[0] for source in worker.core.SOURCES}
@@ -105,7 +176,7 @@ def self_test() -> int:
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
-    install_multi_product_runtime(reliability)
+    install_runtime()
     return worker.main()
 
 
