@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .builder import build_catalog, write_result
-from .normalization import normalize_weight
+from .normalization import clean_text, normalize_weight
 from .vendor_profiles import merge_vendor_profiles, optional_json, write_public_age_index
 from .verify import verify_publication
 
@@ -32,24 +32,24 @@ def declared_product_type(product: dict[str, Any]) -> str:
     return ""
 
 
-def _weight_evidence_label(product: dict[str, Any]) -> Any:
-    return next(
-        (
-            product.get(key)
-            for key in (
-                "source_weight_label",
-                "weight_label",
-                "variant",
-                "weight",
-                "size",
-                "source_title",
-                "name",
-                "title",
-            )
-            if product.get(key) not in (None, "")
-        ),
-        None,
-    )
+def _weight_evidence_labels(product: dict[str, Any]) -> Iterable[Any]:
+    seen: set[str] = set()
+    for key in (
+        "source_weight_label",
+        "weight_label",
+        "variant",
+        "weight",
+        "size",
+        "source_title",
+        "name",
+        "title",
+    ):
+        value = product.get(key)
+        normalized = clean_text(value).casefold()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        yield value
 
 
 def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
@@ -71,12 +71,14 @@ def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[st
             excluded += 1
             continue
         prepared = dict(product)
-        label = _weight_evidence_label(prepared)
         direct = prepared.get("grams") if prepared.get("grams") not in (None, "") else prepared.get("weight_grams")
-        grams, matched_label = normalize_weight(direct, label)
-        if grams is not None:
+        for label in _weight_evidence_labels(prepared):
+            grams, matched_label = normalize_weight(direct, label)
+            if grams is None:
+                continue
             prepared["grams"] = float(grams)
             prepared["source_weight_label"] = matched_label
+            break
         admitted.append(prepared)
     return admitted, excluded
 
