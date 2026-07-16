@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -107,5 +107,64 @@ describe("type-aware marketplace", () => {
       "href",
       "https://example.test/products/vape",
     );
+  });
+
+  it("keeps missing numeric values last in ascending and descending sorts", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response([
+      {
+        id: "missing",
+        source_id: "vendor",
+        vendor: "Example Vendor",
+        name: "Missing values",
+        primary_type: "cannabis_vape",
+        price: null,
+        price_per_ml: null,
+        completeness_score: null,
+      },
+      {
+        id: "high",
+        source_id: "vendor",
+        vendor: "Example Vendor",
+        name: "High values",
+        primary_type: "cannabis_vape",
+        price: 50,
+        price_per_ml: 25,
+        completeness_score: 90,
+      },
+      {
+        id: "low",
+        source_id: "vendor",
+        vendor: "Example Vendor",
+        name: "Low values",
+        primary_type: "cannabis_vape",
+        price: 10,
+        price_per_ml: 10,
+        completeness_score: 50,
+      },
+    ]));
+
+    const user = userEvent.setup();
+    render(<TypeAwareMarketplaceFeature products={[]} />);
+    await user.click(screen.getByRole("tab", { name: /Cannabis vapes/ }));
+    await waitFor(() => expect(screen.getByText("Missing values")).toBeInTheDocument());
+
+    const renderedNames = () => screen.getAllByRole("listitem").map((item) =>
+      within(item).getByRole("heading", { level: 3 }).textContent,
+    );
+    const sort = screen.getByRole("combobox", { name: "Sort" });
+
+    expect(renderedNames()).toEqual(["Low values", "High values", "Missing values"]);
+
+    await user.selectOptions(sort, "price_desc");
+    expect(renderedNames()).toEqual(["High values", "Low values", "Missing values"]);
+
+    await user.selectOptions(sort, "metric_asc");
+    expect(renderedNames()).toEqual(["Low values", "High values", "Missing values"]);
+
+    await user.selectOptions(sort, "metric_desc");
+    expect(renderedNames()).toEqual(["High values", "Low values", "Missing values"]);
+
+    await user.selectOptions(sort, "completeness_desc");
+    expect(renderedNames()).toEqual(["High values", "Low values", "Missing values"]);
   });
 });
