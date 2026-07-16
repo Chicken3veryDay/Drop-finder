@@ -19,6 +19,8 @@ OUNCE_PATTERN = re.compile(
     re.I,
 )
 BARE_FRACTION_OUNCE_PATTERN = re.compile(r"(?<![\d.-])(?P<value>1/8|1/4|1/2)\s*(?:th|st|nd|rd)?\b", re.I)
+QUARTER_POUND_PATTERN = re.compile(r"(?<![\d.-])(?:1/4|quarter)\s*(?:lb|lbs|pounds?)\b", re.I)
+POUND_UNIT_PATTERN = re.compile(r"\b(?:lb|lbs|pounds?)\b", re.I)
 WORD_WEIGHT_PATTERN = re.compile(
     r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b",
     re.I,
@@ -158,6 +160,10 @@ def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str
     match = GRAM_PATTERN.search(text)
     if match:
         return Decimal(match.group("value")), text
+    if QUARTER_POUND_PATTERN.search(text):
+        return Decimal("112"), text
+    if POUND_UNIT_PATTERN.search(text):
+        return None, text
     match = OUNCE_PATTERN.search(text) or BARE_FRACTION_OUNCE_PATTERN.search(text)
     if match:
         amount = match.group("value")
