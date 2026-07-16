@@ -34,7 +34,7 @@ FORM_CONTEXT=re.compile(r'\b(pack|piece|infused|coated|dusted|sprayed|extract|da
 EXPLICIT_FLOWER=re.compile(r'\b(?:thca|hemp|high\s+thca)\s+flower\b',re.I)
 FLOWER=re.compile(r'\b(thca\s+flower|hemp\s+flower|flower|buds?|smalls|shake)\b',re.I); THCA=re.compile(r'\b(thca|thc-a|high\s+thca|type\s+[i1])\b',re.I)
 GRAM=re.compile(r'(?<!\d)(0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b',re.I)
-OUNCE=re.compile(r'(?<!\d)(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)?\b',re.I)
+OUNCE=re.compile(r'(?<!\d)(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)\b',re.I)
 WORD_WEIGHT=re.compile(r'\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b',re.I)
 POTENCY=re.compile(r'\bTHC-?A\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%',re.I)
 LD=re.compile(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',re.I|re.S); TAG=re.compile(r'<[^>]+>'); WS=re.compile(r'\s+')
@@ -203,6 +203,9 @@ def merge(inp,out,previous=None):
  write(out/'status.json',{'schema_version':'dropfinder-cloud-status-v1','generated_at':stamp,'version':'9.0.0-cloud','mode':'credential_free_github_pages','source_count':35,'enabled_sources':len(SOURCES),'healthy_sources':healthy,'degraded_sources':len(SOURCES)-healthy,'healthy_routes':healthy,'product_count':len(products),'sources':sorted(statuses,key=lambda x:x['source_id']),'limitations':['Read-only static snapshot; GitHub Pages cannot run the FastAPI/TUI worker service.','Only normalized public fields are published; raw responses, headers, cookies, databases and evidence are never uploaded.','Cloud scan health is not equivalent to full v9 live-source certification.']});print(f'merged {len(products)} products, {healthy}/{len(SOURCES)} healthy');return 0
 def selftest():
  assert grams('1/8th ounce')==3.544;assert grams('quarter oz')==7.0874
+ for label,expected in (('1 oz',28.349),('2 ounces',56.699),('4 oz',113.398),('1/4 oz',7.087),('1/2 ounce',14.175),('3.5 grams',3.5)):assert grams(label)==expected
+ for label in ('Tier 1','Type 2','4 pack','After 8th Mark 1','THCA 24.1%','THCA 18.2%','THCA 22.4%'):assert grams(label) is None
+ assert grams('Blue Dream THCA Flower THCA 24.1% 3.5g')==3.5
  route=('shopify','https://example.com/collections/thca-flower/products.json','thca_flower');payload=json.dumps({'products':[{'title':'Blue Dream THCA Flower','handle':'blue','body_html':'3.5g THCA 24.1%','variants':[{'id':1,'title':'3.5g','price':'35','available':True}]},{'title':'THCA Pre-Rolls','handle':'rolls','variants':[{'id':2,'price':'20'}]}]});rows=shopify(payload,'fixture','Fixture',route);assert len(rows)==1 and rows[0]['price_per_gram']==10;print('cloud scanner self-test passed');return 0
 def main():
  p=argparse.ArgumentParser();p.add_argument('--output',type=Path,default=DEFAULT);p.add_argument('--shard',type=int);p.add_argument('--shards',type=int,default=6);p.add_argument('--merge',type=Path);p.add_argument('--previous-catalog',type=Path);p.add_argument('--self-test',action='store_true');a=p.parse_args()
