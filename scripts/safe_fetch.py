@@ -7,6 +7,7 @@ import socket
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from types import SimpleNamespace
 
 Resolver = Callable[..., list[tuple]]
 
@@ -87,43 +88,43 @@ class StorefrontRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def install_safe_fetch(core) -> None:  # noqa: ANN001
-    """Patch production scanner URL admission and fetch seams once."""
-    if getattr(core.fetch, "_dropfinder_safe_fetch", False):
-        return
+    """Patch the current production URL-admission and fetch seams independently."""
+    if not getattr(core.record, "_dropfinder_safe_record", False):
+        original_record = core.record
 
-    original_record = core.record
+        def safe_record(sid, vendor, route, name, target, desc="", price=None, stock="", image="", variant=""):  # noqa: ANN001
+            normalized_target = core.url(target, route[1])
+            try:
+                validate_storefront_target(normalized_target, route[1])
+            except ValueError:
+                return None
+            return original_record(sid, vendor, route, name, normalized_target, desc, price, stock, image, variant)
 
-    def safe_record(sid, vendor, route, name, target, desc="", price=None, stock="", image="", variant=""):  # noqa: ANN001
-        normalized_target = core.url(target, route[1])
-        try:
-            validate_storefront_target(normalized_target, route[1])
-        except ValueError:
-            return None
-        return original_record(sid, vendor, route, name, normalized_target, desc, price, stock, image, variant)
+        safe_record._dropfinder_safe_record = True  # type: ignore[attr-defined]
+        core.record = safe_record
 
-    def safe_fetch(target: str):
-        allowed_host, _ = validate_fetch_target(target)
-        request = urllib.request.Request(
-            target,
-            headers={
-                "User-Agent": core.UA,
-                "Accept": "application/json,text/html,application/xml;q=.8,*/*;q=.1",
-                "Accept-Encoding": "identity",
-            },
-        )
-        opener = urllib.request.build_opener(StorefrontRedirectHandler(allowed_host))
-        with opener.open(request, timeout=core.TIMEOUT) as response:
-            raw = response.read(core.LIMIT + 1)
-            if len(raw) > core.LIMIT:
-                raise ValueError("response too large")
-            charset = response.headers.get_content_charset() or "utf-8"
-            content_type = str(response.headers.get("Content-Type") or "").split(";")[0].lower()
-            return raw.decode(charset, "replace"), content_type, int(getattr(response, "status", 200))
+    if not getattr(core.fetch, "_dropfinder_safe_fetch", False):
+        def safe_fetch(target: str):
+            allowed_host, _ = validate_fetch_target(target)
+            request = urllib.request.Request(
+                target,
+                headers={
+                    "User-Agent": core.UA,
+                    "Accept": "application/json,text/html,application/xml;q=.8,*/*;q=.1",
+                    "Accept-Encoding": "identity",
+                },
+            )
+            opener = urllib.request.build_opener(StorefrontRedirectHandler(allowed_host))
+            with opener.open(request, timeout=core.TIMEOUT) as response:
+                raw = response.read(core.LIMIT + 1)
+                if len(raw) > core.LIMIT:
+                    raise ValueError("response too large")
+                charset = response.headers.get_content_charset() or "utf-8"
+                content_type = str(response.headers.get("Content-Type") or "").split(";")[0].lower()
+                return raw.decode(charset, "replace"), content_type, int(getattr(response, "status", 200))
 
-    safe_fetch._dropfinder_safe_fetch = True  # type: ignore[attr-defined]
-    safe_record._dropfinder_safe_record = True  # type: ignore[attr-defined]
-    core.fetch = safe_fetch
-    core.record = safe_record
+        safe_fetch._dropfinder_safe_fetch = True  # type: ignore[attr-defined]
+        core.fetch = safe_fetch
 
 
 def self_test() -> int:
@@ -153,6 +154,30 @@ def self_test() -> int:
             pass
         else:
             raise AssertionError(f"unsafe product target accepted: {target}")
+
+    def normalize_url(value, base):
+        return urllib.parse.urljoin(base, str(value or ""))
+
+    core = SimpleNamespace(
+        url=normalize_url,
+        record=lambda *args, **kwargs: {"url": args[4]},
+        fetch=lambda target: target,
+        UA="test",
+        TIMEOUT=1,
+        LIMIT=1024,
+    )
+    install_safe_fetch(core)
+    first_safe_fetch = core.fetch
+    assert core.record("s", "Seller", ("html", "https://example.test/shop", "storewide"), "Product", "https://attacker.test/product") is None
+
+    core.record = lambda *args, **kwargs: {"runtime_url": args[4]}
+    install_safe_fetch(core)
+    assert core.fetch is first_safe_fetch
+    assert getattr(core.record, "_dropfinder_safe_record", False)
+    assert core.record("s", "Seller", ("html", "https://example.test/shop", "storewide"), "Product", "/products/flower") == {
+        "runtime_url": "https://example.test/products/flower"
+    }
+    assert core.record("s", "Seller", ("html", "https://example.test/shop", "storewide"), "Product", "https://attacker.test/product") is None
     return 0
 
 
