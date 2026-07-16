@@ -138,41 +138,84 @@ def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -
     return worker.decorate(row, evidence, "product_detail_metadata") if row else None
 
 
-def _is_retryable(status: dict) -> bool:
-    if status.get("products"):
+def _route_is_retryable(route: dict) -> bool:
+    try:
+        return int(route.get("http_status")) in RETRYABLE_HTTP
+    except (TypeError, ValueError):
         return False
-    for route in status.get("route_results") or []:
-        try:
-            http_status = int(route.get("http_status"))
-        except (TypeError, ValueError):
-            continue
-        if http_status in RETRYABLE_HTTP:
-            return True
-    return False
+
+
+def _is_retryable(status: dict) -> bool:
+    return any(_route_is_retryable(route) for route in status.get("route_results") or [])
 
 
 def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
-    """Retry only transient transport failures; deterministic parse failures stay visible."""
+    """Retry transiently failed routes without repeating successful siblings."""
+    source_id, vendor, routes = source
+    started = time.monotonic()
+    pending = list(enumerate(routes, start=1))
     history: list[dict] = []
-    final_products: list[dict] = []
-    final_status: dict = {}
+    terminal_by_route: dict[int, dict] = {}
+    merged_products: list[dict] = []
+    final_status: dict = {
+        "source_id": source_id,
+        "name": vendor,
+        "enabled": True,
+    }
+
     for attempt, delay in enumerate(RETRY_DELAYS, start=1):
+        if not pending:
+            break
         if delay:
             time.sleep(delay)
-        products, status = _original_scan_all_routes(source)
-        status = dict(status)
-        for route in status.get("route_results") or []:
-            route = dict(route)
-            route["retry_attempt"] = attempt
-            history.append(route)
-        final_products, final_status = products, status
-        if products or not _is_retryable(status):
-            break
-    final_status = dict(final_status)
-    final_status["retry_attempts"] = max((row.get("retry_attempt", 1) for row in history), default=1)
-    final_status["route_results"] = history or list(final_status.get("route_results") or [])
-    final_status["routes_attempted"] = len(final_status["route_results"])
-    return final_products, final_status
+
+        attempt_routes = [route for _, route in pending]
+        products, status = _original_scan_all_routes((source_id, vendor, attempt_routes))
+        final_status.update(dict(status))
+        merged_products = worker.core.dedupe([*merged_products, *products])
+        route_results = list(status.get("route_results") or [])
+        retry_pending: list[tuple[int, tuple]] = []
+
+        for offset, (original_index, route) in enumerate(pending):
+            result = dict(route_results[offset]) if offset < len(route_results) else {
+                "url": route[1],
+                "source_type": route[0],
+                "status": "error",
+                "error": "aggregate scanner omitted route result",
+            }
+            result["route_id"] = f"{source_id}-{original_index}"
+            result["retry_attempt"] = attempt
+            history.append(result)
+            terminal_by_route[original_index] = result
+            if attempt < len(RETRY_DELAYS) and _route_is_retryable(result):
+                retry_pending.append((original_index, route))
+
+        pending = retry_pending
+
+    active_route = ""
+    active_count = -1
+    for original_index in sorted(terminal_by_route):
+        result = terminal_by_route[original_index]
+        if result.get("status") != "healthy":
+            continue
+        try:
+            product_count = int(result.get("products") or 0)
+        except (TypeError, ValueError):
+            product_count = 0
+        if product_count > active_count:
+            active_count = product_count
+            active_route = str(result.get("url") or "")
+
+    final_status.update(
+        status="healthy" if merged_products else "degraded",
+        products=len(merged_products),
+        routes_attempted=len(history),
+        active_route=active_route,
+        route_results=history,
+        retry_attempts=max((row.get("retry_attempt", 1) for row in history), default=1),
+        duration_seconds=round(time.monotonic() - started, 3),
+    )
+    return merged_products, final_status
 
 
 # Patch the proven strict worker in place. Its admission, product-evidence, and
@@ -180,6 +223,101 @@ def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
 worker.card_candidates = scored_card_candidates
 worker.candidate_to_row = descriptive_candidate_to_row
 worker.aggregate.scan_all_routes = resilient_scan_all_routes
+
+
+def _self_test_route_retries() -> None:
+    global _original_scan_all_routes, RETRY_DELAYS
+
+    source_id = "test_source"
+    vendor = "Test Vendor"
+    healthy_route = ("html", "https://example.test/flower", "thca_flower")
+    transient_route = ("woo", "https://example.test/api", "mixed_flower")
+    product_a = {
+        "source_id": source_id,
+        "vendor": vendor,
+        "name": "Alpha THCA Flower",
+        "url": "https://example.test/products/alpha",
+        "variant": "",
+    }
+    product_b = {
+        "source_id": source_id,
+        "vendor": vendor,
+        "name": "Beta THCA Flower",
+        "url": "https://example.test/products/beta",
+        "variant": "",
+    }
+    calls: list[tuple] = []
+
+    def partial_then_recovered(test_source: tuple) -> tuple[list[dict], dict]:
+        calls.append(test_source)
+        attempted = test_source[2]
+        if len(calls) == 1:
+            assert attempted == [healthy_route, transient_route]
+            return [product_a], {
+                "source_id": source_id,
+                "name": vendor,
+                "products": 1,
+                "route_results": [
+                    {"status": "healthy", "http_status": 200, "products": 1, "url": healthy_route[1]},
+                    {"status": "http_error", "http_status": 429, "products": 0, "url": transient_route[1]},
+                ],
+            }
+        assert attempted == [transient_route]
+        return [product_b], {
+            "source_id": source_id,
+            "name": vendor,
+            "products": 1,
+            "route_results": [
+                {"status": "healthy", "http_status": 200, "products": 1, "url": transient_route[1]},
+            ],
+        }
+
+    previous_scan = _original_scan_all_routes
+    previous_delays = RETRY_DELAYS
+    try:
+        _original_scan_all_routes = partial_then_recovered
+        RETRY_DELAYS = (0.0, 0.0, 0.0)
+        products, status = resilient_scan_all_routes(
+            (source_id, vendor, [healthy_route, transient_route])
+        )
+        assert [row["name"] for row in products] == ["Alpha THCA Flower", "Beta THCA Flower"]
+        assert len(calls) == 2
+        assert status["retry_attempts"] == 2
+        assert status["routes_attempted"] == 3
+        assert [row["route_id"] for row in status["route_results"]] == [
+            f"{source_id}-1",
+            f"{source_id}-2",
+            f"{source_id}-2",
+        ]
+        assert [row["retry_attempt"] for row in status["route_results"]] == [1, 1, 2]
+        assert status["products"] == 2
+        assert status["status"] == "healthy"
+
+        calls.clear()
+
+        def partial_with_terminal_404(test_source: tuple) -> tuple[list[dict], dict]:
+            calls.append(test_source)
+            return [product_a], {
+                "source_id": source_id,
+                "name": vendor,
+                "products": 1,
+                "route_results": [
+                    {"status": "healthy", "http_status": 200, "products": 1, "url": healthy_route[1]},
+                    {"status": "http_error", "http_status": 404, "products": 0, "url": transient_route[1]},
+                ],
+            }
+
+        _original_scan_all_routes = partial_with_terminal_404
+        products, status = resilient_scan_all_routes(
+            (source_id, vendor, [healthy_route, transient_route])
+        )
+        assert len(calls) == 1
+        assert products == [product_a]
+        assert status["retry_attempts"] == 1
+        assert status["route_results"][1]["http_status"] == 404
+    finally:
+        _original_scan_all_routes = previous_scan
+        RETRY_DELAYS = previous_delays
 
 
 def self_test() -> int:
@@ -193,8 +331,9 @@ def self_test() -> int:
     assert len(rows) == 1
     assert rows[0]["name"] == "Blue Dream THCA Flower"
     assert rows[0]["price"] == 24.99
-    assert _is_retryable({"products": 0, "route_results": [{"http_status": 202}]})
-    assert not _is_retryable({"products": 0, "route_results": [{"http_status": 404}]})
+    assert _is_retryable({"products": 1, "route_results": [{"http_status": 202}]})
+    assert not _is_retryable({"products": 1, "route_results": [{"http_status": 404}]})
+    _self_test_route_retries()
     assert _slug_title("https://example.test/products/archive-runtz-indoor-thca-flower") == "Archive Runtz Indoor Thca Flower"
     return 0
 
