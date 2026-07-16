@@ -13,9 +13,11 @@ if str(HERE) not in sys.path:
 # classification, normalization, route registry, and admission seams only.
 import autonomous_worker_v2 as reliability  # type: ignore
 from multi_product.runtime import install_multi_product_runtime, runtime_self_test
+from safe_fetch import install_safe_fetch, self_test as safe_fetch_self_test
 from vendor_expansion import apply_registry, load_registry
 
 worker = reliability.worker
+install_safe_fetch(worker.core)
 
 # Some storefront WAFs intermittently answer public category/API requests with
 # 403 before succeeding on a later request. Retry remains bounded.
@@ -32,9 +34,11 @@ INSTALLED_VENDOR_IDS = apply_registry(worker, VENDOR_EXPANSION)
 
 
 def self_test() -> int:
-    # Validate the pre-existing reliability layer, the generalized runtime, and
-    # the independently validated vendor registry as one production composition.
+    # Validate the pre-existing reliability layer, the generalized runtime, the
+    # public-network boundary, and the independently validated vendor registry
+    # as one production composition.
     reliability.self_test()
+    safe_fetch_self_test()
     state = install_multi_product_runtime(reliability)
     runtime_self_test(reliability)
     vendors = VENDOR_EXPANSION["vendors"]
