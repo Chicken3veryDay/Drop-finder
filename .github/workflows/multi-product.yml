@@ -40,3 +40,26 @@ jobs:
         run: python -m compileall -q scripts/multi_product tests/multi_product
       - name: Test multi-product contracts
         run: python -m unittest discover -s tests/multi_product -v
+      - name: Test production worker wrapper
+        run: python scripts/autonomous_worker_v4.py --self-test
+      - name: Test publication sanitizer
+        run: python scripts/autonomous_merge.py --self-test
+
+  web-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
