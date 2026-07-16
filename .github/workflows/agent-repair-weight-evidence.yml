@@ -7,12 +7,16 @@ on:
     paths:
       - scripts/agent_repair_weight_evidence.py
       - .github/workflows/agent-repair-weight-evidence.yml
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   repair-and-validate:
+    if: github.event_name == 'push' || github.head_ref == 'agent/c245b2f4/04922595/fix-weight-evidence'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
