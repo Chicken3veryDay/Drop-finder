@@ -5,8 +5,11 @@ import ipaddress
 import posixpath
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
 
+# Only remove identifiers whose names unambiguously describe campaign or click
+# tracking. Generic keys such as ``ref``, ``source``, and ``referrer`` can be
+# application-level resource selectors and must be preserved by default.
 TRACKING_KEYS = {
-    "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "referrer", "source",
+    "fbclid", "gclid", "mc_cid", "mc_eid",
     "utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term",
 }
 
