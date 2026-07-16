@@ -9,6 +9,7 @@ on:
     paths:
       - "scripts/catalog_v4/**"
       - "tests/catalog_v4/**"
+      - "tests/test_catalog_v4_workflow_permissions.py"
       - "docs/catalog/**"
       - ".github/workflows/catalog-v4.yml"
   push:
@@ -16,6 +17,7 @@ on:
     paths:
       - "scripts/catalog_v4/**"
       - "tests/catalog_v4/**"
+      - "tests/test_catalog_v4_workflow_permissions.py"
       - "docs/catalog/**"
       - ".github/workflows/catalog-v4.yml"
 
@@ -44,6 +46,7 @@ jobs:
           python -m compileall -q scripts/catalog_v4 tests/catalog_v4
           python -m scripts.catalog_v4.selftest
           python -m unittest discover -s tests/catalog_v4 -v
+          python -m unittest -v tests.test_catalog_v4_workflow_permissions
       - name: Re-run affected retrieval and merge self-tests
         run: |
           set -euo pipefail
