@@ -19,6 +19,10 @@ OUNCE_PATTERN = re.compile(
     re.I,
 )
 BARE_FRACTION_OUNCE_PATTERN = re.compile(r"(?<![\d.-])(?P<value>1/8|1/4|1/2)\s*(?:th|st|nd|rd)?\b", re.I)
+POUND_WEIGHT_PATTERN = re.compile(
+    r"\b(?:1/8|1/4|1/2|1|2|4|one|two|four|eighth|quarter|half)\s*(?:lb|lbs|pounds?)\b",
+    re.I,
+)
 WORD_WEIGHT_PATTERN = re.compile(
     r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b",
     re.I,
@@ -146,49 +150,58 @@ def _snap_commercial_weight(value: Decimal) -> Decimal:
     tolerance = max(Decimal("0.02"), closest * Decimal("0.02"))
     return closest if abs(closest - value) <= tolerance else value
 
-def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str]:
-    direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
-    source_label = clean_text(label if label not in (None, "") else value)
-    # The first argument is a normalized grams field when supplied by an
-    # adapter. Numeric strings are therefore valid here; arbitrary labels are
-    # parsed only from the second argument below.
-    if direct is not None:
-        return _snap_commercial_weight(direct), source_label or f"{direct.normalize()}g"
-    text = source_label
+def _weight_from_label(text: str) -> Decimal | None:
+    if not text or POUND_WEIGHT_PATTERN.search(text):
+        return None
     match = GRAM_PATTERN.search(text)
     if match:
-        return Decimal(match.group("value")), text
+        return Decimal(match.group("value"))
     match = OUNCE_PATTERN.search(text) or BARE_FRACTION_OUNCE_PATTERN.search(text)
     if match:
-        amount = match.group("value")
-        grams = {
+        return {
             "1/8": Decimal("3.5"),
             "1/4": Decimal("7"),
             "1/2": Decimal("14"),
             "1": Decimal("28"),
             "2": Decimal("56"),
             "4": Decimal("112"),
-        }[amount]
-        return grams, text
+        }[match.group("value")]
     match = WORD_WEIGHT_PATTERN.search(text)
-    if match:
-        token = normalized_search(match.group("value"))
-        grams = {
-            "eighth": Decimal("3.5"),
-            "quarter": Decimal("7"),
-            "half ounce": Decimal("14"),
-            "half oz": Decimal("14"),
-            "ounce": Decimal("28"),
-            "one ounce": Decimal("28"),
-            "two ounces": Decimal("56"),
-            "two ounce": Decimal("56"),
-            "four ounces": Decimal("112"),
-            "four ounce": Decimal("112"),
-            "zip": Decimal("28"),
-        }.get(token)
-        if grams is not None:
-            return grams, text
-    return None, text
+    if not match:
+        return None
+    return {
+        "eighth": Decimal("3.5"),
+        "quarter": Decimal("7"),
+        "half ounce": Decimal("14"),
+        "half oz": Decimal("14"),
+        "ounce": Decimal("28"),
+        "one ounce": Decimal("28"),
+        "two ounces": Decimal("56"),
+        "two ounce": Decimal("56"),
+        "four ounces": Decimal("112"),
+        "four ounce": Decimal("112"),
+        "zip": Decimal("28"),
+    }.get(normalized_search(match.group("value")))
+
+
+def normalize_weight(
+    value: Any,
+    label: Any = None,
+    *,
+    require_explicit_label: bool = False,
+) -> tuple[Decimal | None, str]:
+    direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
+    source_label = clean_text(label if label not in (None, "") else "")
+    parsed_label = _weight_from_label(source_label)
+    if direct is not None:
+        normalized_direct = _snap_commercial_weight(direct)
+        if require_explicit_label:
+            if parsed_label is None or _snap_commercial_weight(parsed_label) != normalized_direct:
+                return None, source_label
+            return normalized_direct, source_label
+        return normalized_direct, source_label or f"{direct.normalize()}g"
+    text = source_label or clean_text(value)
+    return _weight_from_label(text), text
 
 
 def canonical_url(value: Any, *, keep_variant: bool = False) -> str:
