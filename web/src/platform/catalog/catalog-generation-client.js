@@ -21,6 +21,7 @@ export class CatalogGenerationClient {
     if (!this.fetchImpl) throw new PlatformError('fetch_unavailable', 'Fetch is unavailable');
     this.cache = options.cache ?? createDefaultGenerationCache(options.cacheName);
     this.active = null;
+    this.lastNetworkVerification = null;
     this.pending = null;
     this.inflight = new Map();
     this.detailLru = new Map();
@@ -37,7 +38,12 @@ export class CatalogGenerationClient {
   }
 
   async initialize({ signal, force = false } = {}) {
-    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) return this.active;
+    const verifiedAt = this.active && this.lastNetworkVerification?.generationId === this.active.generationId
+      ? this.lastNetworkVerification.verifiedAt
+      : this.active?.activatedAt;
+    if (!force && this.active && Number.isFinite(verifiedAt) && Date.now() - verifiedAt <= this.options.staleMs) {
+      return this.active;
+    }
     try {
       return await this.refresh({ signal, allowCachedFallback: true });
     } catch (error) {
@@ -55,24 +61,40 @@ export class CatalogGenerationClient {
     const controller = new AbortController();
     const linkedAbort = () => controller.abort(signal?.reason);
     signal?.addEventListener('abort', linkedAbort, { once: true });
-    this.pending = this.loadCompleteGeneration(controller.signal)
-      .catch(async error => {
-        if (allowCachedFallback && error?.name !== 'AbortError') {
-          const cached = await this.cache.getLastComplete();
-          if (cached) return cached;
+
+    const run = async () => {
+      let generation;
+      let source = 'network';
+      try {
+        generation = await this.loadCompleteGeneration(controller.signal);
+      } catch (error) {
+        if (!allowCachedFallback || error?.name === 'AbortError') throw error;
+        const cached = await this.cache.getLastComplete();
+        if (!cached) throw error;
+        generation = cached;
+        source = 'cache-fallback';
+      }
+
+      if (source === 'network') {
+        if (generation.generationId !== this.active?.generationId) {
+          await this.cache.putComplete(generation);
+          this.activate(generation, 'network');
         }
-        throw error;
-      })
-      .finally(() => {
-        signal?.removeEventListener('abort', linkedAbort);
-        this.pending = null;
-      });
-    const generation = await this.pending;
-    if (generation.generationId !== this.active?.generationId) {
-      await this.cache.putComplete(generation);
-      this.activate(generation, 'network');
-    }
-    return generation;
+        this.lastNetworkVerification = Object.freeze({
+          generationId: generation.generationId,
+          verifiedAt: Date.now(),
+        });
+      } else if (generation.generationId !== this.active?.generationId) {
+        this.activate(generation, 'cache-fallback');
+      }
+      return generation;
+    };
+
+    this.pending = run().finally(() => {
+      signal?.removeEventListener('abort', linkedAbort);
+      this.pending = null;
+    });
+    return this.pending;
   }
 
   async loadCompleteGeneration(signal) {
