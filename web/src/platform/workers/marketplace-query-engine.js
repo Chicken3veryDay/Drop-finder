@@ -14,6 +14,16 @@ const DEFAULTS = Object.freeze({
   maxWorkerRestarts: 1,
 });
 
+export function normalizeSearch(value) {
+  return String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase()
+    .replace(/[\p{P}\p{S}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Worker-first deterministic filtering over a compact immutable index. */
 export class MarketplaceQueryEngine {
   constructor(options = {}) {
@@ -157,12 +167,13 @@ export class MarketplaceQueryEngine {
 }
 
 export function executeQuery(rows, request, version = 0, generationId = 'fixture') {
-  const search = request.search.toLocaleLowerCase();
+  const search = normalizeSearch(request.search);
   const vendors = new Set(request.vendors);
   const lineages = new Set(request.lineages);
   const selected = [];
   for (const product of rows) {
-    if (search && !`${product.vendor}\n${product.strain}`.toLocaleLowerCase().includes(search)) continue;
+    const productSearch = product.searchText ?? normalizeSearch(`${product.vendor}\n${product.strain}`);
+    if (search && !productSearch.includes(search)) continue;
     if (vendors.size && !vendors.has(product.vendorId)) continue;
     if (lineages.size && !lineages.has(product.lineage)) continue;
     if (!between(product.totalThc, request.minTotalThc, request.maxTotalThc)) continue;
@@ -190,7 +201,7 @@ export function executeQuery(rows, request, version = 0, generationId = 'fixture
 
 function queryIdentity(request) {
   return JSON.stringify({
-    search: request.search.toLocaleLowerCase(),
+    search: normalizeSearch(request.search),
     vendors: [...request.vendors].sort(),
     lineages: [...request.lineages].sort(),
     minTotalThc: request.minTotalThc, maxTotalThc: request.maxTotalThc,
@@ -262,11 +273,14 @@ function compactProduct(product) {
       ppg,
     });
   }).filter(v => v.weight != null && v.price != null && v.ppg != null);
+  const vendor = String(product.vendor ?? product.vendor_name ?? '');
+  const strain = String(product.strain ?? product.name ?? '');
   return Object.freeze({
     id,
     vendorId: String(product.vendor_id ?? product.source_id ?? product.vendor ?? ''),
-    vendor: String(product.vendor ?? product.vendor_name ?? ''),
-    strain: String(product.strain ?? product.name ?? ''),
+    vendor,
+    strain,
+    searchText: normalizeSearch(`${vendor}\n${strain}`),
     lineage: LINEAGES.includes(product.lineage) ? product.lineage : 'unknown',
     totalThc: finiteOrNull(product.total_thc ?? product.totalThc),
     image: product.image ?? null,
