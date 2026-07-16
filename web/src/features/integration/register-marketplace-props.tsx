@@ -12,6 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { CapabilityReader, CapabilityRegistrationTarget } from "../../app/capabilityRegistry";
+import { getInStockVariants } from "../marketplace/marketplace-core";
 import type {
   DocumentViewerRequest,
   MarketplaceAsyncQueryCapability,
@@ -138,6 +139,11 @@ const numberValue = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const withRenderableVariants = (product: MarketplaceProduct): MarketplaceProduct | null => {
+  const variants = getInStockVariants(product);
+  return variants.length > 0 ? { ...product, variants } : null;
+};
+
 const documentFormat = (url: string, mimeType: string): MarketplaceDocument["format"] => {
   const normalizedMime = mimeType.toLowerCase();
   if (normalizedMime === "application/pdf" || /\.pdf(?:$|[?#])/i.test(url)) return "pdf";
@@ -195,7 +201,8 @@ export const mapCatalogIndex = (index: unknown): MarketplaceProduct[] => {
       const currentPrice = numberValue(variant.current_price ?? variant.price);
       const pricePerGram = numberValue(variant.price_per_gram);
       const productUrl = stringValue(variant.product_url ?? variant.variant_url);
-      if (!variantId || !grams || !currentPrice || !pricePerGram || !productUrl) return [];
+      const inStock = variant.in_stock ?? variant.inStock;
+      if (!variantId || !grams || !currentPrice || !pricePerGram || !productUrl || inStock !== true) return [];
       const originalPrice = numberValue(variant.original_price);
       return [{
         id: variantId,
@@ -213,7 +220,7 @@ export const mapCatalogIndex = (index: unknown): MarketplaceProduct[] => {
     });
 
     const lineage = stringValue(product.lineage);
-    return [{
+    const mappedProduct: MarketplaceProduct = {
       id,
       vendorId,
       vendorName,
@@ -230,7 +237,9 @@ export const mapCatalogIndex = (index: unknown): MarketplaceProduct[] => {
       rating: numberValue(product.rating),
       reviewCount: numberValue(product.review_count),
       variants,
-    }];
+    };
+    const renderableProduct = withRenderableVariants(mappedProduct);
+    return renderableProduct ? [renderableProduct] : [];
   });
 };
 
@@ -285,20 +294,24 @@ const enrichProduct = (
 };
 
 const toPlatformProducts = (products: readonly MarketplaceProduct[]) =>
-  products.map((product) => ({
-    id: product.id,
-    vendor_id: product.vendorId,
-    vendor: product.vendorName,
-    strain: product.strainName,
-    lineage: LINEAGE_TO_PLATFORM[product.lineage] ?? "unknown",
-    total_thc: product.totalThcDisplay,
-    variants: product.variants.map((variant) => ({
-      id: variant.id,
-      grams: variant.grams,
-      price: variant.currentPrice,
-      price_per_gram: variant.pricePerGram,
-    })),
-  }));
+  products.flatMap((product) => {
+    const renderableProduct = withRenderableVariants(product);
+    if (!renderableProduct) return [];
+    return [{
+      id: renderableProduct.id,
+      vendor_id: renderableProduct.vendorId,
+      vendor: renderableProduct.vendorName,
+      strain: renderableProduct.strainName,
+      lineage: LINEAGE_TO_PLATFORM[renderableProduct.lineage] ?? "unknown",
+      total_thc: renderableProduct.totalThcDisplay,
+      variants: renderableProduct.variants.map((variant) => ({
+        id: variant.id,
+        grams: variant.grams,
+        price: variant.currentPrice,
+        price_per_gram: variant.pricePerGram,
+      })),
+    }];
+  });
 
 const bound = (value: number | null | undefined): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -325,7 +338,12 @@ export const createMarketplaceQueryAdapter = (
       expandedProductId: options.expandedProductId,
     });
     if (options.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
-    const productById = new Map(products.map((product) => [product.id, product]));
+    const productById = new Map(
+      products.flatMap((product) => {
+        const renderableProduct = withRenderableVariants(product);
+        return renderableProduct ? [[renderableProduct.id, renderableProduct] as const] : [];
+      }),
+    );
     const rows = result.rows.flatMap((row, index): MarketplaceRowProjection[] => {
       const product = productById.get(row.productId);
       const activeVariant = product?.variants.find((variant) => variant.id === row.variantId);
