@@ -111,25 +111,34 @@ test('service worker installs shell from metadata and activates a complete legac
   assert.equal((await cached.json()).product_count, 1);
 });
 
-test('service worker does not activate incomplete snapshots and switches only after an explicit update', async () => {
+test('service worker keeps the active generation until a replacement is complete, then switches atomically', async () => {
   const runtime = await createRuntime();
   const first = 'g1';
   runtime.setJson('data/catalog.json', { generated_at: first, product_count: 0, products: [] });
   runtime.setJson('data/status.json', { generated_at: first, product_count: 0 });
   await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog.json`) });
   await runtime.dispatch('fetch', { request: new Request(`${BASE}data/status.json`) });
+  assert.ok(runtime.messages.some(message => message.type === 'generation-active' && message.generationId === first));
 
   const second = 'g2';
   runtime.setJson('data/catalog.json', { generated_at: second, product_count: 1, products: [{ id: 'p2' }] });
   await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog.json`) });
-  assert.equal(runtime.messages.some(message => message.type === 'generation-ready' && message.generationId === second), false);
+  assert.equal(runtime.messages.some(message => message.type === 'generation-active' && message.generationId === second), false);
+
+  const statusMessages = [];
+  await runtime.dispatch('message', { data: { type: 'generation-status' }, source: { postMessage: message => statusMessages.push(message) } });
+  assert.equal(statusMessages.at(-1)?.id, first);
+
   runtime.setJson('data/status.json', { generated_at: second, product_count: 1 });
   await runtime.dispatch('fetch', { request: new Request(`${BASE}data/status.json`) });
-  assert.ok(runtime.messages.some(message => message.type === 'generation-ready' && message.generationId === second));
-
-  const sourceMessages = [];
-  await runtime.dispatch('message', { data: { type: 'activate-generation', generationId: second }, source: { postMessage: message => sourceMessages.push(message) } });
   assert.ok(runtime.messages.some(message => message.type === 'generation-active' && message.generationId === second));
+
+  await runtime.dispatch('message', { data: { type: 'generation-status' }, source: { postMessage: message => statusMessages.push(message) } });
+  assert.equal(statusMessages.at(-1)?.id, second);
+
+  runtime.setOffline(true);
+  const cached = await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog.json?offline=1`) });
+  assert.equal((await cached.json()).generated_at, second);
 });
 
 test('service worker rejects detail shards from another active generation', async () => {
