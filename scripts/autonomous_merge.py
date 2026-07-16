@@ -9,6 +9,7 @@ separate, source-level decision.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -24,15 +25,36 @@ _PUBLIC_ROUTE_FIELDS = (
     "content_type",
     "products",
     "candidates",
-    "verification_failures",
-    "verification_failure_reasons",
     "duration_seconds",
     "retry_attempt",
 )
 _ERROR_LIMIT = 300
+_VERIFICATION_REASON = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+_MAX_VERIFICATION_REASONS = 12
+_MAX_VERIFICATION_FAILURES = 100_000
 
 _original_merge = publication.merge
 _original_self_test = publication.self_test
+
+
+def _public_verification_reasons(value: Any) -> dict[str, int]:
+    """Normalize fixed diagnostic reason codes into a bounded public shape."""
+    if not isinstance(value, dict):
+        return {}
+    public: dict[str, int] = {}
+    for raw_key in sorted(value, key=lambda key: str(key)):
+        if len(public) >= _MAX_VERIFICATION_REASONS:
+            break
+        key = str(raw_key)
+        if not _VERIFICATION_REASON.fullmatch(key):
+            continue
+        try:
+            count = int(value[raw_key])
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            public[key] = min(count, _MAX_VERIFICATION_FAILURES)
+    return public
 
 
 def _public_route_result(route: dict[str, Any]) -> dict[str, Any]:
@@ -42,6 +64,17 @@ def _public_route_result(route: dict[str, Any]) -> dict[str, Any]:
         value = route.get(field)
         if value not in (None, ""):
             public[field] = value
+    reasons = _public_verification_reasons(route.get("verification_failure_reasons"))
+    if reasons:
+        public["verification_failure_reasons"] = reasons
+        public["verification_failures"] = min(sum(reasons.values()), _MAX_VERIFICATION_FAILURES)
+    else:
+        try:
+            failures = int(route.get("verification_failures") or 0)
+        except (TypeError, ValueError):
+            failures = 0
+        if failures > 0:
+            public["verification_failures"] = min(failures, _MAX_VERIFICATION_FAILURES)
     error = route.get("error")
     if error not in (None, ""):
         public["error"] = str(error)[:_ERROR_LIMIT]
@@ -60,7 +93,10 @@ def _source_status(row: dict[str, Any], accepted_count: int, rejected_count: int
     ]
     healthy_routes = sum(route.get("status") == "healthy" for route in route_results)
     non_healthy_routes = len(route_results) - healthy_routes
-    verification_failures = sum(int(route.get("verification_failures") or 0) for route in route_results)
+    verification_failures = min(
+        sum(int(route.get("verification_failures") or 0) for route in route_results),
+        _MAX_VERIFICATION_FAILURES,
+    )
     active_route = str(row.get("active_route") or "")
     fallback_active = any(
         route.get("status") == "healthy"
@@ -101,7 +137,10 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
     sources = status.get("sources") or []
     status["healthy_routes"] = sum(int(source.get("healthy_routes") or 0) for source in sources)
     status["non_healthy_routes"] = sum(int(source.get("non_healthy_routes") or 0) for source in sources)
-    status["verification_failures"] = sum(int(source.get("verification_failures") or 0) for source in sources)
+    status["verification_failures"] = min(
+        sum(int(source.get("verification_failures") or 0) for source in sources),
+        _MAX_VERIFICATION_FAILURES,
+    )
     status["fallback_active_sources"] = sum(bool(source.get("fallback_active")) for source in sources)
     status_path.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return runtime
@@ -142,10 +181,12 @@ def self_test(root: Path) -> int:
                 "http_status": 200,
                 "products": 1,
                 "candidates": 3,
-                "verification_failures": 2,
+                "verification_failures": 999,
                 "verification_failure_reasons": {
                     "product_detail_fetch_error": 1,
                     "product_detail_missing_evidence": 1,
+                    "../must_not_publish": 25,
+                    "negative_count": -4,
                 },
                 "retry_attempt": 2,
             },
@@ -190,6 +231,8 @@ def self_test(root: Path) -> int:
         }
         assert "response_body" not in source["route_results"][0]
         assert "headers" not in source["route_results"][0]
+        assert "../must_not_publish" not in source["route_results"][1]["verification_failure_reasons"]
+        assert "negative_count" not in source["route_results"][1]["verification_failure_reasons"]
         assert status["healthy_routes"] == 1
         assert status["non_healthy_routes"] == 1
         assert status["verification_failures"] == 2
