@@ -82,6 +82,7 @@ class ClassificationTests(unittest.TestCase):
         valid = classify_product(
             name="Blue Dream THCA Flower 3.5g",
             description="Single-strain jar with a sampler-sized humidity pack",
+            route_hint="bundle collection",
         )
         self.assertIsNotNone(valid)
         self.assertFalse(is_mixed_offer("sampler-sized humidity pack"))
