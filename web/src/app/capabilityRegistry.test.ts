@@ -96,6 +96,34 @@ describe("RuntimeCapabilityRegistry", () => {
     expect(registry.listCapabilities()).toEqual([]);
   });
 
+  it("observes rejected registrar thenables without publishing staged writes", async () => {
+    const registry = new RuntimeCapabilityRegistry();
+    let rejectionObserved = false;
+
+    registry.registerFrom("async-reject", (target) => {
+      target.registerCapability("platform.catalog", { contractVersion: 1, instance: { id: "partial" } });
+      return {
+        then: (_resolve: (value: unknown) => void, reject: (reason?: unknown) => void) => {
+          rejectionObserved = true;
+          reject(new Error("late registrar failure"));
+        },
+      };
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(rejectionObserved).toBe(true);
+    expect(registry.listCapabilities()).toEqual([]);
+    expect(registry.diagnostics).toEqual([
+      {
+        source: "async-reject",
+        code: "registrar-error",
+        message: "Capability registrars must complete synchronously during module discovery.",
+      },
+    ]);
+  });
+
   it("commits successful registrars atomically and exposes an immutable reader snapshot", () => {
     const registry = new RuntimeCapabilityRegistry();
     let retained: CapabilityRegistrationTarget | undefined;
