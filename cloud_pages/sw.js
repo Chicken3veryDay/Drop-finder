@@ -166,8 +166,7 @@ async function prepareGeneration(generationId, seedUrl, seedResponse, seedPayloa
 async function markPrepared(prepared) {
   const metadata = await caches.open(META_CACHE);
   await metadata.put('./prepared.json', jsonResponse(prepared));
-  if (!activeGeneration) await activatePreparedGeneration(prepared.id, null);
-  else await broadcast({ type: 'generation-ready', generationId: prepared.id });
+  await activatePreparedGeneration(prepared.id, null);
 }
 
 async function activatePreparedGeneration(generationId, source) {
