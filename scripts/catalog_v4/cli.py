@@ -6,20 +6,73 @@ from pathlib import Path
 from typing import Any
 
 from .builder import build_catalog, write_result
+from .normalization import normalize_weight
+from .vendor_profiles import merge_vendor_profiles, optional_json, write_public_age_index
 from .verify import verify_publication
+
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_VENDOR_PROFILES = ROOT / "data" / "vendor_profiles.json"
+DEFAULT_VENDOR_EXPANSION = ROOT / "data" / "vendor_expansion.json"
 
 
 def _optional_json(path: Path | None) -> Any:
-    if path is None or not path.is_file():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    """Compatibility wrapper retained for existing callers and tests."""
+    return optional_json(path)
+
+
+def declared_product_type(product: dict[str, Any]) -> str:
+    direct = product.get("primary_type")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip().lower()
+    evidence = product.get("classification_evidence")
+    if isinstance(evidence, dict):
+        inferred = evidence.get("primary_type")
+        if isinstance(inferred, str):
+            return inferred.strip().lower()
+    return ""
+
+
+def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Adapt the generalized raw catalog to the mature flower catalog-v4 contract.
+
+    Explicit non-flower records remain available to the type-aware raw-catalog UI
+    but are excluded from the flower-specific catalog-v4 builder. Legacy untyped
+    rows remain eligible. When generalized retrieval could not normalize a flower
+    weight, recover it conservatively from the variant or source title using the
+    catalog-v4 parser, which retains historical fraction and word-weight support.
+    """
+    admitted: list[dict[str, Any]] = []
+    excluded = 0
+    for product in products:
+        if not isinstance(product, dict):
+            continue
+        product_type = declared_product_type(product)
+        if product_type and product_type != "cannabis_flower":
+            excluded += 1
+            continue
+        prepared = dict(product)
+        if prepared.get("grams") in (None, "") and prepared.get("weight_grams") in (None, ""):
+            label = next(
+                (
+                    prepared.get(key)
+                    for key in ("source_weight_label", "weight_label", "variant", "weight", "size", "source_title", "name", "title")
+                    if prepared.get(key) not in (None, "")
+                ),
+                None,
+            )
+            grams, _ = normalize_weight(None, label)
+            if grams is not None:
+                prepared["grams"] = float(grams)
+        admitted.append(prepared)
+    return admitted, excluded
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build DropFinder catalog v4 from an admitted legacy/structured catalog")
     parser.add_argument("--input", type=Path, required=True, help="Input JSON containing a products array")
     parser.add_argument("--output", type=Path, required=True, help="cloud_pages/data output root")
-    parser.add_argument("--vendor-profiles", type=Path)
+    parser.add_argument("--vendor-profiles", type=Path, default=DEFAULT_VENDOR_PROFILES)
+    parser.add_argument("--vendor-expansion", type=Path, default=DEFAULT_VENDOR_EXPANSION)
     parser.add_argument("--documents", type=Path)
     parser.add_argument("--detail-shards", type=int, default=16)
     parser.add_argument("--minimum-products", type=int, default=1)
@@ -35,8 +88,18 @@ def main() -> int:
     products = payload.get("products") if isinstance(payload, dict) else None
     if not isinstance(products, list):
         raise SystemExit("input must be a JSON object with a products array")
-    vendor_profiles = _optional_json(args.vendor_profiles)
-    documents_payload = _optional_json(args.documents)
+    publication_products, excluded_non_flower_products = strict_flower_products(products)
+
+    source_profile_payloads = [
+        value
+        for value in (
+            optional_json(args.vendor_profiles),
+            optional_json(args.vendor_expansion),
+        )
+        if isinstance(value, dict)
+    ]
+    vendor_profiles = merge_vendor_profiles(source_profile_payloads)
+    documents_payload = optional_json(args.documents)
     document_records = None
     if isinstance(documents_payload, dict):
         candidate = documents_payload.get("documents")
@@ -45,7 +108,7 @@ def main() -> int:
         document_records = documents_payload
 
     result = build_catalog(
-        products,
+        publication_products,
         generated_at=payload.get("generated_at"),
         vendor_profiles=vendor_profiles,
         document_records=document_records,
@@ -56,11 +119,15 @@ def main() -> int:
     if result.variant_count < args.minimum_variants:
         raise SystemExit(f"catalog v4 variant floor failed: {result.variant_count} < {args.minimum_variants}")
     write_result(result, args.output)
+    age_index_path = write_public_age_index(args.output, source_profile_payloads)
     verified = verify_publication(args.output)
     summary = {
         **verified,
         "rejected_variants": result.rejected_count,
+        "excluded_non_flower_products": excluded_non_flower_products,
         "manifest": "catalog-v4/manifest.json",
+        "vendor_age_index": str(age_index_path.relative_to(args.output)),
+        "vendor_age_profiles": len(vendor_profiles["vendors"]),
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

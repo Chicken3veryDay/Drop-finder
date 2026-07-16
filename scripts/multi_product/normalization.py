@@ -12,7 +12,8 @@ from .classification import (
 )
 
 GRAM = re.compile(r"(?<!\d)(0\.25|0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b", re.I)
-OUNCE = re.compile(r"(?<!\d)(1/8|1/4|1/2|1|2|4)\s*(?:oz|ounces?)\b", re.I)
+OUNCE = re.compile(r"(?<!\d)(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:(?:oz|ounces?)\b)?", re.I)
+WORD_WEIGHT = re.compile(r"\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b", re.I)
 ML = re.compile(r"(?<!\d)(0\.25|0\.3|0\.5|0\.8|1|1\.5|2|3|5|10)\s*(?:ml|milliliters?)\b", re.I)
 PSILOCYBIN_PERCENT = re.compile(r"\bpsilocybin\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%", re.I)
 POTENCY_PERCENT = re.compile(r"\bpotency\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%", re.I)
@@ -63,6 +64,19 @@ def quantity_fields(text: str, primary_type: str) -> dict[str, float | str | Non
                 "1/2": Decimal("0.5"),
             }.get(ounce_match.group(1), decimal_value(ounce_match.group(1)))
             grams = ounces * Decimal("28.3495") if ounces else None
+        else:
+            word_match = WORD_WEIGHT.search(text)
+            if word_match:
+                label = re.sub(r"\s+", " ", word_match.group(1).lower().replace("-", " ")).strip()
+                grams = {
+                    "eighth": Decimal("3.5437"),
+                    "quarter": Decimal("7.0874"),
+                    "half ounce": Decimal("14.1748"),
+                    "half oz": Decimal("14.1748"),
+                    "ounce": Decimal("28.3495"),
+                    "one ounce": Decimal("28.3495"),
+                    "zip": Decimal("28.3495"),
+                }.get(label)
     volume_ml = _first_decimal(ML, text)
     if primary_type in (CANNABIS_FLOWER, PSILOCYBIN_MUSHROOM):
         volume_ml = None

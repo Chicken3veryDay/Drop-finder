@@ -71,6 +71,18 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(vape_quantity["volume_ml"], 1.0)
         self.assertEqual(comparison_price("25", vape_quantity)["price_per_ml"], 25.0)
 
+    def test_legacy_fraction_and_word_weights_remain_supported(self) -> None:
+        expected = {
+            "1/8": 3.5437,
+            "quarter": 7.0874,
+            "half ounce": 14.1748,
+            "zip": 28.3495,
+        }
+        for label, grams in expected.items():
+            with self.subTest(label=label):
+                quantity = quantity_fields(f"Blue Dream THCA Flower {label}", CANNABIS_FLOWER)
+                self.assertAlmostEqual(float(quantity["grams"] or 0), grams, places=4)
+
     def test_type_specific_fields_do_not_guess(self) -> None:
         fields = type_specific_fields(
             "Psilocybe cubensis disposable 1mL, psilocybin 2.5%, 800 puffs",
