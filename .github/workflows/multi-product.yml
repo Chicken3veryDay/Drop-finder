@@ -71,20 +71,27 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
           npm --prefix web run verify:publication
-          rm -rf /tmp/dropfinder-current-ui
+          rm -rf /tmp/dropfinder-current-ui /tmp/dropfinder-pages-repo
           mkdir -p /tmp/dropfinder-current-ui
           cp -a cloud_pages/. /tmp/dropfinder-current-ui/
           touch /tmp/dropfinder-current-ui/.nojekyll
           test -s /tmp/dropfinder-current-ui/data/catalog.json
           test -s /tmp/dropfinder-current-ui/data/status.json
           test -s /tmp/dropfinder-current-ui/assets/vite-manifest.json
+          node web/scripts/verify-publication.mjs /tmp/dropfinder-current-ui
           git config user.name "DropFinder UI Publisher"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages
+          git worktree add --detach /tmp/dropfinder-pages-repo origin/gh-pages
+          cd /tmp/dropfinder-pages-repo
           git switch --orphan pr-ui-pages-next
           git rm -rf . >/dev/null 2>&1 || true
           git clean -fdx >/dev/null 2>&1 || true
           cp -a /tmp/dropfinder-current-ui/. .
           git add -A
           git commit -m "Publish verified multi-product UI ${GITHUB_SHA}"
+          published_sha="$(git rev-parse HEAD)"
           git push --force origin HEAD:gh-pages
-          node "$GITHUB_WORKSPACE/web/scripts/verify-publication.mjs" "$GITHUB_WORKSPACE"
+          remote_sha="$(git ls-remote origin refs/heads/gh-pages | awk '{print $1}')"
+          test "$remote_sha" = "$published_sha"
+          node "$GITHUB_WORKSPACE/web/scripts/verify-publication.mjs" /tmp/dropfinder-pages-repo
