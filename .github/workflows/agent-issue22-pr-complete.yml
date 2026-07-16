@@ -1,0 +1,75 @@
+name: Agent issue 22 PR repair
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  complete:
+    if: github.head_ref == 'agent/ec249c6b/cycle-0003/issue-22-weight-evidence'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Apply remaining focused changes
+        run: python3 scripts/agent_issue22_complete.py
+
+      - name: Validate focused and broad behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q scripts tests
+          python3 scripts/cloud_scan.py --self-test
+          python3 -m unittest discover -s tests -p 'test_cloud_scan_weights.py' -v
+          python3 -m unittest discover -s tests/catalog_v4 -p 'test_normalization.py' -v
+          python3 -m unittest discover -s tests/catalog_v4 -p 'test_builder.py' -v
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Validate current catalog migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(mktemp -d)"
+          python3 -m scripts.catalog_v4 \
+            --input cloud_pages/data/catalog.json \
+            --output "$output" \
+            --minimum-products 1 \
+            --minimum-variants 1
+          python3 - "$output/catalog-v4/index.json" <<'PY'
+          import json
+          import sys
+
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          names = {product["strain_name"] for product in payload["products"]}
+          contaminated = {
+              "ADL | THCa Flower | Tier 1",
+              "Fidel Runtz | THCa Flower | Tier 1",
+          }
+          present = sorted(contaminated & names)
+          if present:
+              raise SystemExit(f"unsupported tier-derived weights remain published: {present}")
+          print(f"validated migrated catalog: {payload['product_count']} products, {payload['in_stock_variant_count']} variants")
+          PY
+
+      - name: Commit verified repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f \
+            .github/workflows/agent-issue22-complete.yml \
+            .github/workflows/agent-issue22-pr-complete.yml \
+            scripts/agent_issue22_complete.py
+          git config user.name "continuous-work-agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: require source-backed catalog weights"
+          git push origin HEAD:${{ github.head_ref }}
