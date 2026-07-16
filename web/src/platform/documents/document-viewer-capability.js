@@ -203,8 +203,9 @@ export class DocumentViewerCapability {
       .filter(node => !node.hidden && node.getAttribute('aria-hidden') !== 'true');
     if (!focusable.length) { event.preventDefault(); overlayRoot.focus?.(); return true; }
     const first = focusable[0]; const last = focusable.at(-1);
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); return true; }
-    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); return true; }
+    const activeIndex = focusable.indexOf(globalThis.document?.activeElement);
+    if (event.shiftKey && activeIndex <= 0) { event.preventDefault(); last.focus(); return true; }
+    if (!event.shiftKey && (activeIndex === -1 || activeIndex === focusable.length - 1)) { event.preventDefault(); first.focus(); return true; }
     return false;
   }
 
