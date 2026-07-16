@@ -45,13 +45,12 @@ export class PwaGenerationCoordinator {
       this.registrationPromise = this.navigator.serviceWorker.register(scriptUrl, options)
         .then(registration => {
           this.registration = registration;
-          if (registration.waiting) this.requestStatus(registration.waiting);
           this.requestStatus(this.navigator.serviceWorker.controller);
           registration.addEventListener('updatefound', () => {
             const worker = registration.installing;
             worker?.addEventListener('statechange', () => {
               if (worker.state === 'installed' && this.navigator.serviceWorker.controller) {
-                this.requestStatus(worker);
+                this.requestStatus(this.navigator.serviceWorker.controller);
               }
             });
           });
@@ -66,8 +65,8 @@ export class PwaGenerationCoordinator {
   }
 
   async activateReadyGeneration(generationId) {
-    const worker = this.registration?.waiting ?? this.navigator?.serviceWorker?.controller;
-    if (!worker) throw new PlatformError('service_worker_unavailable', 'No service worker can activate a generation');
+    const worker = this.navigator?.serviceWorker?.controller;
+    if (!worker) throw new PlatformError('service_worker_unavailable', 'No controlling service worker can activate a generation');
     worker.postMessage({ type: 'activate-generation', generationId });
   }
 
@@ -87,7 +86,7 @@ export class PwaGenerationCoordinator {
       }
     }
 
-    const worker = this.registration?.waiting ?? this.navigator?.serviceWorker?.controller;
+    const worker = this.navigator?.serviceWorker?.controller;
     if (!worker) return Object.freeze({ status: 'uncontrolled', generationId: target });
     if (this.activeGenerationId === target) {
       return Object.freeze({ status: 'active', generationId: target });
