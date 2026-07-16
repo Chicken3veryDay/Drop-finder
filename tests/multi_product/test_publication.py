@@ -60,6 +60,7 @@ def valid_flower_fixture() -> dict:
         primary_type=CANNABIS_FLOWER,
         evidence={"explicit_thca": True, "explicit_flower": True, "explicit_vape": False},
         variant="single-strain jar with freshness pack",
+        route_url="https://example.test/collections/bundles",
         grams=3.5,
         price_per_gram=10,
     )
