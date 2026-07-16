@@ -59,6 +59,11 @@ async function installDocumentCatalogFixture(page) {
       grow_environment: 'indoor',
     }],
   });
+  const detailDescriptor = {
+    path: 'data/catalog-v4/details/000.json',
+    product_count: 1,
+    sha256: sha256(detailText),
+  };
   const manifestText = JSON.stringify({
     schema_version: 'dropfinder-catalog-manifest-v4',
     generation_id: generationId,
@@ -66,11 +71,10 @@ async function installDocumentCatalogFixture(page) {
       path: 'data/catalog-v4/index.json',
       sha256: sha256(indexText),
     },
-    product_detail_shards: [{
-      path: 'data/catalog-v4/details/000.json',
-      product_count: 1,
-      sha256: sha256(detailText),
-    }],
+    product_detail_shards: [detailDescriptor],
+    details: {
+      [product.product_id]: detailDescriptor,
+    },
   });
 
   const json = (body) => ({ status: 200, contentType: 'application/json', body });
