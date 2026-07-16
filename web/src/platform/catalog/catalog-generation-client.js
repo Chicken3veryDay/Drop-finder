@@ -10,6 +10,8 @@ const DEFAULTS = Object.freeze({
   maxDetailBytes: 2 * 1024 * 1024,
 });
 
+const CACHE_RECORD_SCHEMA = 'dropfinder-generation-cache-v2';
+
 /**
  * Atomic static-generation loader. It never publishes a generation until the
  * manifest and compact index have both validated against the same generation.
@@ -19,7 +21,11 @@ export class CatalogGenerationClient {
     this.options = { ...DEFAULTS, ...options };
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
     if (!this.fetchImpl) throw new PlatformError('fetch_unavailable', 'Fetch is unavailable');
-    this.cache = options.cache ?? createDefaultGenerationCache(options.cacheName);
+    this.cache = options.cache ?? createDefaultGenerationCache({
+      cacheName: options.cacheName,
+      cacheStorage: options.cacheStorage,
+      deploymentUrl: options.deploymentUrl ?? this.options.manifestUrl,
+    });
     this.active = null;
     this.pending = null;
     this.inflight = new Map();
@@ -210,27 +216,52 @@ export class CatalogGenerationClient {
 
 export class BrowserGenerationCache {
   constructor(options = {}) {
-    this.cacheName = options.cacheName ?? 'dropfinder-client-generation-v1';
-    this.key = new URL('/__dropfinder__/last-complete.json', globalThis.location?.origin ?? 'https://dropfinder.invalid').href;
+    this.cacheStorage = options.cacheStorage ?? globalThis.caches;
+    this.cacheName = options.cacheName ?? 'dropfinder-client-generation-v2';
+    this.deploymentUrl = canonicalDeploymentUrl(options.deploymentUrl ?? locationHref());
+    this.deploymentKey = this.deploymentUrl;
+    this.key = new URL('./__dropfinder__/last-complete-v2.json', this.deploymentUrl).href;
   }
+
+  owns(value) {
+    if (!value?.generationId || !value?.manifest || !value?.index) return false;
+    if (!value.publicationBaseUrl) return false;
+    return canonicalDeploymentUrl(value.publicationBaseUrl) === this.deploymentKey;
+  }
+
   async getLastComplete() {
     try {
-      const cache = await globalThis.caches.open(this.cacheName);
+      if (!this.cacheStorage?.open) return null;
+      const cache = await this.cacheStorage.open(this.cacheName);
       const response = await cache.match(this.key);
       if (!response) return null;
-      const value = await response.json();
-      if (!value?.generationId || !value?.manifest || !value?.index) return null;
-      return Object.freeze(value);
+      const record = await response.json();
+      if (record?.schemaVersion !== CACHE_RECORD_SCHEMA) return null;
+      if (record.deploymentKey !== this.deploymentKey) return null;
+      if (!this.owns(record.generation)) return null;
+      return Object.freeze(record.generation);
     } catch { return null; }
   }
+
   async putComplete(value) {
-    const cache = await globalThis.caches.open(this.cacheName);
-    await cache.put(this.key, new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } }));
+    if (!this.cacheStorage?.open || !this.owns(value)) return;
+    const cache = await this.cacheStorage.open(this.cacheName);
+    const record = {
+      schemaVersion: CACHE_RECORD_SCHEMA,
+      deploymentKey: this.deploymentKey,
+      generation: value,
+    };
+    await cache.put(
+      this.key,
+      new Response(JSON.stringify(record), { headers: { 'content-type': 'application/json' } }),
+    );
   }
 }
 
-export function createDefaultGenerationCache(cacheName) {
-  return globalThis.caches?.open ? new BrowserGenerationCache({ cacheName }) : new MemoryGenerationCache();
+export function createDefaultGenerationCache(options = {}) {
+  return (options.cacheStorage ?? globalThis.caches)?.open
+    ? new BrowserGenerationCache(options)
+    : new MemoryGenerationCache();
 }
 
 export class MemoryGenerationCache {
@@ -276,13 +307,19 @@ function publicationBase(manifestUrl) {
   }
 }
 
+function canonicalDeploymentUrl(value) {
+  const parsed = new URL(publicationBase(value), locationHref());
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.href;
+}
+
 function resolvePublicationUrl(value, manifestUrl, publicationBaseUrl) {
   const path = String(value ?? '');
   if (/^https?:\/\//i.test(path)) return path;
   if (path.startsWith('./') || path.startsWith('../')) return new URL(path, manifestUrl).href;
   return new URL(path, publicationBaseUrl).href;
 }
-
 
 function locationHref() {
   return globalThis.location?.href ?? 'https://dropfinder.invalid/';
