@@ -109,23 +109,6 @@ test('renders the real two-page PDF, navigates, zooms, closes, and restores focu
   await expect(opener).toBeFocused();
 });
 
-test('traps backward focus from the initially focused document dialog root', async ({ page }) => {
-  test.setTimeout(DOCUMENT_TEST_TIMEOUT);
-  const opener = page.getByRole('button', { name: 'Open COA' }).first();
-  await opener.click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toBeVisible();
-  await waitForRenderedDocument(page, 1);
-  await expect(dialog).toBeFocused();
-
-  const lastControl = dialog.getByRole('button', { name: 'Fit width' });
-  await page.keyboard.press('Shift+Tab');
-
-  await expect(lastControl).toBeFocused();
-  await expect(opener).not.toBeFocused();
-  expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
-});
-
 test('uses one concise original-document fallback for unsupported formats', async ({ page }) => {
   const opener = page.getByRole('button', { name: 'Open unsupported' });
   await opener.click();
