@@ -137,7 +137,7 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
     sources = status.get("sources") or []
     status["healthy_routes"] = sum(int(source.get("healthy_routes") or 0) for source in sources)
     status["non_healthy_routes"] = sum(int(source.get("non_healthy_routes") or 0) for source in sources)
-    status["verification_failures"] = min(
+    status["active_verification_failures"] = min(
         sum(int(source.get("verification_failures") or 0) for source in sources),
         _MAX_VERIFICATION_FAILURES,
     )
@@ -235,7 +235,7 @@ def self_test(root: Path) -> int:
         assert "negative_count" not in source["route_results"][1]["verification_failure_reasons"]
         assert status["healthy_routes"] == 1
         assert status["non_healthy_routes"] == 1
-        assert status["verification_failures"] == 2
+        assert status["active_verification_failures"] == 2
         assert status["fallback_active_sources"] == 1
     return 0
 
