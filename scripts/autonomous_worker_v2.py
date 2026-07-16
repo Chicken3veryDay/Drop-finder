@@ -6,6 +6,7 @@ import re
 import sys
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -21,6 +22,7 @@ GENERIC_LABEL = re.compile(
 )
 RETRYABLE_HTTP = {202, 408, 425, 429, 500, 502, 503, 504}
 RETRY_DELAYS = (0.0, 2.0, 5.0)
+_VERIFICATION_FAILURE = "_product_detail_verification_failure"
 
 # Green Unicorn's public category page is a useful fallback when its Woo endpoint
 # replies with the transient 202 response observed on GitHub-hosted workers.
@@ -101,23 +103,33 @@ def scored_card_candidates(payload: str, route: tuple) -> list[dict]:
     return sorted(candidates.values(), key=lambda row: row.get("candidate_score", 0), reverse=True)[:120]
 
 
+def _verification_rejected(candidate: dict, reason: str) -> None:
+    candidate[_VERIFICATION_FAILURE] = reason
+    return None
+
+
 def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -> dict | None:
     """Verify every HTML card candidate against the product's own metadata."""
+    candidate.pop(_VERIFICATION_FAILURE, None)
     name = worker.core.text(candidate.get("name"))
     target = str(candidate.get("url") or "")
+    if not target:
+        return _verification_rejected(candidate, "missing_product_target")
     detail_route = ("html", target, "product_detail")
     try:
         payload, content_type, status = worker.core.fetch(target)
     except Exception:
-        return None
-    if status != 200 or content_type not in {"text/html", "application/xhtml+xml"}:
-        return None
+        return _verification_rejected(candidate, "product_detail_fetch_error")
+    if status != 200:
+        return _verification_rejected(candidate, "product_detail_http_status")
+    if content_type not in {"text/html", "application/xhtml+xml"}:
+        return _verification_rejected(candidate, "product_detail_content_type")
 
     # The card URL is discovery input, not confirming evidence. Exclude it so
     # a stale THCA-flower slug cannot validate unrelated response content.
     evidence = worker.product_detail_evidence(payload, "")
     if not worker.has_product_evidence(evidence):
-        return None
+        return _verification_rejected(candidate, "product_detail_missing_evidence")
     meta = worker.core.meta_values(payload)
     title = (
         meta.get("og:title")
@@ -133,7 +145,64 @@ def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -
     stock = meta.get("product:availability") or candidate.get("stock")
     image = meta.get("og:image") or meta.get("twitter:image") or ""
     row = worker.core.record(source_id, vendor, detail_route, title, target, evidence, price, stock, image)
-    return worker.decorate(row, evidence, "product_detail_metadata") if row else None
+    if not row:
+        return _verification_rejected(candidate, "product_detail_record_rejected")
+    return worker.decorate(row, evidence, "product_detail_metadata")
+
+
+def verified_fallback_scan(source: tuple) -> tuple[list[dict], list[dict]]:
+    """Retrieve HTML-card details and retain bounded verification failure diagnostics."""
+    source_id, vendor, _ = source
+    targets = worker.FALLBACK_HTML_ROUTES.get(source_id, [])
+    rows: list[dict] = []
+    attempts: list[dict] = []
+    for index, target in enumerate(targets, 1):
+        route = ("html", target, "thca_flower")
+        started = time.monotonic()
+        result = {
+            "route_id": f"{source_id}-fallback-{index}",
+            "url": target,
+            "source_type": "html_card_product_detail",
+        }
+        try:
+            payload, content_type, http_status = worker.core.fetch(target)
+            candidates = worker.card_candidates(payload, route)
+            extracted: list[dict] = []
+            if candidates:
+                with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as pool:
+                    futures = {
+                        pool.submit(worker.candidate_to_row, candidate, source_id, vendor): candidate
+                        for candidate in candidates
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            row = future.result()
+                        except Exception:
+                            row = None
+                            futures[future][_VERIFICATION_FAILURE] = "product_detail_worker_error"
+                        if row:
+                            extracted.append(row)
+            extracted = worker.core.dedupe(extracted)
+            failure_reasons: dict[str, int] = {}
+            for candidate in candidates:
+                reason = str(candidate.get(_VERIFICATION_FAILURE) or "")
+                if reason:
+                    failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+            result.update(
+                http_status=http_status,
+                content_type=content_type,
+                status="healthy" if extracted else "empty",
+                candidates=len(candidates),
+                products=len(extracted),
+                verification_failures=sum(failure_reasons.values()),
+                verification_failure_reasons=dict(sorted(failure_reasons.items())),
+            )
+            rows.extend(extracted)
+        except Exception as exc:
+            result.update(status="error", error=f"{type(exc).__name__}: {worker.core.text(exc)[:300]}")
+        result["duration_seconds"] = round(time.monotonic() - started, 3)
+        attempts.append(result)
+    return worker.core.dedupe(rows), attempts
 
 
 def _is_retryable(status: dict) -> bool:
@@ -177,6 +246,7 @@ def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
 # product-detail metadata; the downstream evidence and publication contracts stay unchanged.
 worker.card_candidates = scored_card_candidates
 worker.candidate_to_row = descriptive_candidate_to_row
+worker.fallback_scan = verified_fallback_scan
 worker.aggregate.scan_all_routes = resilient_scan_all_routes
 
 
@@ -254,10 +324,19 @@ def self_test() -> int:
     worker.core.fetch = fake_fetch
     worker.FALLBACK_HTML_ROUTES["verification_fixture"] = [category_url]
     try:
-        for rejected in ("gone-thca-flower", "timeout", "stale-thca-flower", "cbd-flower", "thca-gummies"):
+        expected_reasons = {
+            "gone-thca-flower": "product_detail_http_status",
+            "timeout": "product_detail_fetch_error",
+            "stale-thca-flower": "product_detail_missing_evidence",
+            "cbd-flower": "product_detail_missing_evidence",
+            "thca-gummies": "product_detail_missing_evidence",
+        }
+        for rejected, expected_reason in expected_reasons.items():
+            rejected_candidate = candidate(rejected)
             assert descriptive_candidate_to_row(
-                candidate(rejected), "verification_fixture", "Verification Fixture"
+                rejected_candidate, "verification_fixture", "Verification Fixture"
             ) is None
+            assert rejected_candidate[_VERIFICATION_FAILURE] == expected_reason
 
         verified = descriptive_candidate_to_row(
             candidate("verified"), "verification_fixture", "Verification Fixture"
@@ -275,6 +354,10 @@ def self_test() -> int:
         assert fallback_attempts[0]["status"] == "empty"
         assert fallback_attempts[0]["candidates"] == 1
         assert fallback_attempts[0]["products"] == 0
+        assert fallback_attempts[0]["verification_failures"] == 1
+        assert fallback_attempts[0]["verification_failure_reasons"] == {
+            "product_detail_http_status": 1
+        }
         assert fetch_calls.count("https://example.test/products/gone-thca-flower") == 2
     finally:
         worker.core.fetch = original_fetch
