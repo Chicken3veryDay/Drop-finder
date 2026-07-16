@@ -11,7 +11,7 @@ from collections.abc import Callable
 Resolver = Callable[..., list[tuple]]
 
 
-def _canonical_host(value: str) -> tuple[str, int]:
+def _parsed_host(value: str) -> tuple[urllib.parse.SplitResult, str, int]:
     try:
         parsed = urllib.parse.urlsplit(value)
         port = parsed.port
@@ -29,11 +29,20 @@ def _canonical_host(value: str) -> tuple[str, int]:
         host = host.encode("idna").decode("ascii")
     except UnicodeError as exc:
         raise ValueError("storefront URL contains an invalid hostname") from exc
-    return host, effective_port
+    return parsed, host, effective_port
 
 
 def _storefront_identity(host: str) -> str:
     return host[4:] if host.startswith("www.") else host
+
+
+def validate_storefront_target(target: str, route_url: str) -> tuple[str, int]:
+    """Require product targets to remain on the configured seller host."""
+    _, host, port = _parsed_host(target)
+    _, route_host, _ = _parsed_host(route_url)
+    if _storefront_identity(host) != _storefront_identity(route_host):
+        raise ValueError("product target changed storefront host")
+    return host, port
 
 
 def validate_fetch_target(
@@ -43,7 +52,7 @@ def validate_fetch_target(
     resolver: Resolver = socket.getaddrinfo,
 ) -> tuple[str, int]:
     """Reject cross-host, credentialed, non-standard-port, and non-public requests."""
-    host, port = _canonical_host(target)
+    _, host, port = _parsed_host(target)
     if allowed_host is not None and _storefront_identity(host) != _storefront_identity(allowed_host):
         raise ValueError("storefront redirect changed host")
 
@@ -78,9 +87,19 @@ class StorefrontRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def install_safe_fetch(core) -> None:  # noqa: ANN001
-    """Patch the production scanner's fetch seam once, preserving its response contract."""
+    """Patch production scanner URL admission and fetch seams once."""
     if getattr(core.fetch, "_dropfinder_safe_fetch", False):
         return
+
+    original_record = core.record
+
+    def safe_record(sid, vendor, route, name, target, desc="", price=None, stock="", image="", variant=""):  # noqa: ANN001
+        normalized_target = core.url(target, route[1])
+        try:
+            validate_storefront_target(normalized_target, route[1])
+        except ValueError:
+            return None
+        return original_record(sid, vendor, route, name, normalized_target, desc, price, stock, image, variant)
 
     def safe_fetch(target: str):
         allowed_host, _ = validate_fetch_target(target)
@@ -102,11 +121,14 @@ def install_safe_fetch(core) -> None:  # noqa: ANN001
             return raw.decode(charset, "replace"), content_type, int(getattr(response, "status", 200))
 
     safe_fetch._dropfinder_safe_fetch = True  # type: ignore[attr-defined]
+    safe_record._dropfinder_safe_record = True  # type: ignore[attr-defined]
     core.fetch = safe_fetch
+    core.record = safe_record
 
 
 def self_test() -> int:
     public_resolver = lambda host, port, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+    assert validate_storefront_target("https://www.example.test/products/flower", "https://example.test/catalog") == ("www.example.test", 443)
     assert validate_fetch_target("https://example.test/products/flower", resolver=public_resolver) == ("example.test", 443)
     assert validate_fetch_target("https://www.example.test/products/flower", "example.test", resolver=public_resolver) == ("www.example.test", 443)
 
@@ -122,7 +144,15 @@ def self_test() -> int:
         except ValueError:
             pass
         else:
-            raise AssertionError(f"unsafe target accepted: {target}")
+            raise AssertionError(f"unsafe fetch target accepted: {target}")
+
+    for target in ("http://127.0.0.1/internal", "https://attacker.test/products/flower"):
+        try:
+            validate_storefront_target(target, "https://example.test/catalog")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe product target accepted: {target}")
     return 0
 
 
