@@ -37,9 +37,10 @@ def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[st
 
     Explicit non-flower records remain available to the type-aware raw-catalog UI
     but are excluded from the flower-specific catalog-v4 builder. Legacy untyped
-    rows remain eligible. When generalized retrieval could not normalize a flower
-    weight, recover it conservatively from the variant or source title using the
-    catalog-v4 parser, which retains historical fraction and word-weight support.
+    rows remain eligible. When generalized retrieval could not normalize a flat
+    flower record's weight, recover it conservatively from its variant or source
+    title using the catalog-v4 parser. Structured records keep weight resolution
+    at child-variant scope so a parent title cannot override package labels.
     """
     admitted: list[dict[str, Any]] = []
     excluded = 0
@@ -51,7 +52,13 @@ def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[st
             excluded += 1
             continue
         prepared = dict(product)
-        if prepared.get("grams") in (None, "") and prepared.get("weight_grams") in (None, ""):
+        nested_variants = prepared.get("variants")
+        has_nested_variants = isinstance(nested_variants, list) and bool(nested_variants)
+        if (
+            not has_nested_variants
+            and prepared.get("grams") in (None, "")
+            and prepared.get("weight_grams") in (None, "")
+        ):
             label = next(
                 (
                     prepared.get(key)
