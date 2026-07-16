@@ -243,7 +243,8 @@ def install_multi_product_runtime(reliability: Any) -> dict[str, Any]:
     worker.has_product_evidence = has_product_evidence
     worker.evidence_payload = evidence_payload
     worker.gate = gate
-    worker.PRODUCT_PATHS = tuple(dict.fromkeys((*worker.PRODUCT_PATHS, "/collections/", "/collections/all")))
+    # Collection pages are retrieval roots, not product-detail candidates.
+    # Preserve the existing product-path allowlist instead of widening it.
     _augment_sources(core)
     for source_id, targets in FALLBACK_ROUTES.items():
         configured = worker.FALLBACK_HTML_ROUTES.setdefault(source_id, [])
