@@ -99,7 +99,7 @@ test("rejects HTTP failures", async () => {
   );
 });
 
-test("rejects responses larger than the configured bound", async () => {
+test("stream-bounds oversized responses without a content-length header", async () => {
   const bodies = validBodies();
   const oversizedUrl = `${baseUrl}data/catalog.json`;
 
@@ -107,10 +107,7 @@ test("rejects responses larger than the configured bound", async () => {
     verifyPagesEndpoint(baseUrl, {
       maxBytes: 32,
       fetchImpl: fetchFrom(bodies, {
-        [oversizedUrl]: new Response("x".repeat(64), {
-          status: 200,
-          headers: { "content-length": "64" },
-        }),
+        [oversizedUrl]: new Response("x".repeat(64), { status: 200 }),
       }),
     }),
     /verification limit/u,
