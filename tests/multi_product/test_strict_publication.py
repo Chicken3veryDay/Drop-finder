@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -92,6 +93,20 @@ class StrictPublicationTests(unittest.TestCase):
             for filename in strict_publication.OUTPUT_FILENAMES:
                 payload = loads((output_dir / filename).read_text(encoding="utf-8"))
                 self.assertEqual(payload["filename"], filename)
+
+    def test_publication_gate_rejects_non_standard_json(self) -> None:
+        gate_path = Path(__file__).resolve().parents[2] / "web" / "scripts" / "publication_gate.py"
+        spec = importlib.util.spec_from_file_location("dropfinder_publication_gate", gate_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalog.json"
+            path.write_text('{"price":NaN}\n', encoding="utf-8")
+            with self.assertRaises(StrictJsonError):
+                module.load_json(path)
 
 
 if __name__ == "__main__":
