@@ -22,8 +22,6 @@ GENERIC_LABEL = re.compile(
 RETRYABLE_HTTP = {202, 408, 425, 429, 500, 502, 503, 504}
 RETRY_DELAYS = (0.0, 2.0, 5.0)
 
-# Green Unicorn's public category page is a useful fallback when its Woo endpoint
-# replies with the transient 202 response observed on GitHub-hosted workers.
 worker.FALLBACK_HTML_ROUTES.setdefault(
     "green_unicorn_farms",
     ["https://greenunicornfarms.com/category/thca-flower/"],
@@ -142,6 +140,8 @@ def _is_retryable(status: dict) -> bool:
     if status.get("products"):
         return False
     for route in status.get("route_results") or []:
+        if route.get("retryable") is True:
+            return True
         try:
             http_status = int(route.get("http_status"))
         except (TypeError, ValueError):
@@ -175,8 +175,6 @@ def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
     return final_products, final_status
 
 
-# Patch the proven strict worker in place. Its admission, product-evidence, and
-# publication contracts remain unchanged.
 worker.card_candidates = scored_card_candidates
 worker.candidate_to_row = descriptive_candidate_to_row
 worker.aggregate.scan_all_routes = resilient_scan_all_routes
@@ -194,6 +192,8 @@ def self_test() -> int:
     assert rows[0]["name"] == "Blue Dream THCA Flower"
     assert rows[0]["price"] == 24.99
     assert _is_retryable({"products": 0, "route_results": [{"http_status": 202}]})
+    assert _is_retryable({"products": 0, "route_results": [{"retryable": True, "error_category": "timeout"}]})
+    assert not _is_retryable({"products": 0, "route_results": [{"retryable": False, "error_category": "processing_error"}]})
     assert not _is_retryable({"products": 0, "route_results": [{"http_status": 404}]})
     assert _slug_title("https://example.test/products/archive-runtz-indoor-thca-flower") == "Archive Runtz Indoor Thca Flower"
     return 0
