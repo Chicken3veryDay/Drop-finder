@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+ from .route_record_resolution import resolve_records
+except ImportError:
+ from route_record_resolution import resolve_records
+
 ROOT=Path(__file__).resolve().parents[1]; DEFAULT=ROOT/'cloud_pages'/'data'
 UA='DropFinderCloud/9.0 (+https://github.com/Chicken3veryDay/Drop-finder)'; LIMIT=8_000_000; TIMEOUT=18
 SOURCES=[
@@ -165,9 +170,7 @@ def html_with_details(payload,sid,vendor,route):
   if status==200 and ctype in {'text/html','application/xhtml+xml'}:out.extend(html_detail(detail,sid,vendor,route,target))
  return dedupe(out)
 def dedupe(rows):
- out={}
- for r in rows:out[(r['source_id'],r['url'],r.get('variant',''))]=r
- return sorted(out.values(),key=lambda r:(r['vendor'],r['name'],r.get('price') or 1e12))
+ return resolve_records(rows)
 def scan(source):
  sid,vendor,routes=source;started=time.monotonic();attempts=[]
  for idx,route in enumerate(routes,1):
