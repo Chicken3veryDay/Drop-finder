@@ -28,9 +28,21 @@ _PUBLIC_ROUTE_FIELDS = (
     "retry_attempt",
 )
 _ERROR_LIMIT = 300
+_UNVERIFIED_CARD_EVIDENCE = "product_card_title_or_url"
 
 _original_merge = publication.merge
 _original_self_test = publication.self_test
+_original_reject_reason = publication.reject_reason
+
+
+def reject_reason(product: dict[str, Any]) -> str | None:
+    evidence = product.get("classification_evidence")
+    if (
+        isinstance(evidence, dict)
+        and evidence.get("evidence_source") == _UNVERIFIED_CARD_EVIDENCE
+    ):
+        return "unverified_listing_card_evidence"
+    return _original_reject_reason(product)
 
 
 def _public_route_result(route: dict[str, Any]) -> dict[str, Any]:
@@ -105,6 +117,20 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
 def self_test(root: Path) -> int:
     _original_self_test(root)
 
+    legacy_card = publication._fixture(
+        product_id="legacy-card",
+        primary_type=publication.CANNABIS_FLOWER,
+        name="Legacy Card THCA Flower",
+        url="https://example.test/products/legacy-card",
+        evidence={
+            "explicit_thca": True,
+            "explicit_flower": True,
+            "explicit_vape": False,
+            "evidence_source": _UNVERIFIED_CARD_EVIDENCE,
+        },
+    )
+    assert reject_reason(legacy_card) == "unverified_listing_card_evidence"
+
     with TemporaryDirectory(prefix="dropfinder-route-health-") as temp_dir:
         temp = Path(temp_dir)
         input_dir = temp / "input"
@@ -115,7 +141,12 @@ def self_test(root: Path) -> int:
             primary_type=publication.CANNABIS_FLOWER,
             name="Blue Dream THCA Flower",
             url="https://example.test/products/flower",
-            evidence={"explicit_thca": True, "explicit_flower": True, "explicit_vape": False},
+            evidence={
+                "explicit_thca": True,
+                "explicit_flower": True,
+                "explicit_vape": False,
+                "evidence_source": "product_detail_metadata",
+            },
         )
         routes = [
             {
@@ -143,14 +174,14 @@ def self_test(root: Path) -> int:
             json.dumps(
                 {
                     "schema_version": publication.SHARD_SCHEMA,
-                    "products": [product],
+                    "products": [product, legacy_card],
                     "sources": [
                         {
                             "source_id": "a",
                             "name": "A",
                             "admitted": True,
                             "status": "healthy",
-                            "products": 1,
+                            "products": 2,
                             "active_route": "https://example.test/fallback",
                             "routes_attempted": len(routes),
                             "route_results": routes,
@@ -162,6 +193,7 @@ def self_test(root: Path) -> int:
         )
         merge(input_dir, output_dir, 1, 1)
         status = json.loads((output_dir / "status.json").read_text(encoding="utf-8"))
+        rejections = json.loads((output_dir / "rejections.json").read_text(encoding="utf-8"))
         source = status["sources"][0]
         assert source["status"] == "healthy"
         assert source["routes_attempted"] == 2
@@ -176,9 +208,11 @@ def self_test(root: Path) -> int:
         assert status["healthy_routes"] == 1
         assert status["non_healthy_routes"] == 1
         assert status["fallback_active_sources"] == 1
+        assert rejections["reason_counts"]["unverified_listing_card_evidence"] == 1
     return 0
 
 
+publication.reject_reason = reject_reason
 publication._source_status = _source_status
 publication.merge = merge
 publication.self_test = self_test
