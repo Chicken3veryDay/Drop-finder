@@ -128,6 +128,60 @@ class CatalogBuilderTests(unittest.TestCase):
         self.assertEqual(resolution["method"], "source_authority_then_variant_coverage_then_completeness_then_freshness")
         self.assertEqual(len(resolution["discarded_product_ids"]), 1)
 
+    def test_legacy_numeric_weight_requires_explicit_source_evidence(self) -> None:
+        base = {
+            "source_id": "vendor",
+            "vendor": "Vendor",
+            "availability": "in_stock",
+            "price": 30,
+        }
+        rows = [
+            {
+                **base,
+                "source_product_id": "tier",
+                "source_variant_id": "tier-v",
+                "name": "Example THCA Flower | Tier 1",
+                "url": "https://vendor.example/products/tier",
+                "grams": 28.3495,
+            },
+            {
+                **base,
+                "source_product_id": "potency",
+                "source_variant_id": "potency-v",
+                "name": "Example THCA Flower 24.1%",
+                "url": "https://vendor.example/products/potency",
+                "grams": 28.3495,
+            },
+            {
+                **base,
+                "source_product_id": "explicit",
+                "source_variant_id": "explicit-v",
+                "name": "Explicit THCA Flower | 1 oz",
+                "url": "https://vendor.example/products/explicit",
+                "grams": 28.3495,
+            },
+            {
+                **base,
+                "source_product_id": "trusted",
+                "source_variant_id": "trusted-v",
+                "name": "Trusted THCA Flower",
+                "url": "https://vendor.example/products/trusted",
+                "weight_grams": 28,
+            },
+        ]
+        result = build_catalog(
+            rows,
+            generated_at="2026-01-01T00:00:00Z",
+            detail_shards=1,
+        )
+        index = read_json_bytes(result.files["catalog-v4/index.json"])
+        self.assertEqual(result.product_count, 2)
+        self.assertEqual(
+            {product["strain_name"] for product in index["products"]},
+            {"Explicit", "Trusted"},
+        )
+        self.assertEqual(result.rejections["reason_counts"]["invalid_or_missing_weight"], 2)
+
     def test_write_and_verify_publication(self) -> None:
         rows, stamp = self.load_rows()
         result = build_catalog(rows, generated_at=stamp, detail_shards=4)
