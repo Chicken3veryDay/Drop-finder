@@ -42,10 +42,16 @@ class CliTests(unittest.TestCase):
             },
             {
                 "primary_type": "cannabis_flower",
-                "grams": 453.592,
-                "source_weight_label": "453.592g",
+                "grams": 28.0,
+                "source_weight_label": "28.3495g",
                 "source_title": "Bacio Gelato THCA Bulk Flower 1 Pound",
                 "variant": "1 Pound",
+            },
+            {
+                "primary_type": "cannabis_flower",
+                "grams": 7.0,
+                "source_title": "Apples and Bananas THCA Bulk Flower 1/4 Pound",
+                "variant": "1/4 Pound",
             },
         ])
         self.assertEqual(excluded, 0)
@@ -53,8 +59,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(admitted[0]["source_weight_label"], "28 Grams")
         self.assertEqual(admitted[1]["grams"], 448.0)
         self.assertEqual(admitted[1]["source_weight_label"], "1 Pound")
+        self.assertEqual(admitted[2]["grams"], 112.0)
+        self.assertEqual(admitted[2]["source_weight_label"], "1/4 Pound")
 
-    def test_legacy_title_does_not_authenticate_tier_or_potency_numbers(self) -> None:
+    def test_legacy_title_does_not_authenticate_tier_potency_or_arbitrary_conflicts(self) -> None:
         admitted, excluded = strict_flower_products([
             {
                 "primary_type": "cannabis_flower",
@@ -68,10 +76,17 @@ class CliTests(unittest.TestCase):
                 "source_title": "Blue Dream THCA 24.1%",
                 "variant": "",
             },
+            {
+                "primary_type": "cannabis_flower",
+                "grams": 28.0,
+                "source_title": "Blue Dream Quarter oz",
+                "variant": "Quarter oz",
+            },
         ])
         self.assertEqual(excluded, 0)
         self.assertNotIn("source_weight_label", admitted[0])
         self.assertNotIn("source_weight_label", admitted[1])
+        self.assertNotIn("source_weight_label", admitted[2])
 
 
 if __name__ == "__main__":
