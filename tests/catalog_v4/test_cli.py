@@ -12,22 +12,45 @@ from scripts.catalog_v4.cli import strict_flower_products
 FIXTURE = Path(__file__).parent / "fixtures" / "legacy_rows.json"
 
 
+def structured_row(**overrides):
+    value = {
+        "source_id": "structured",
+        "vendor": "Structured Vendor",
+        "source_product_id": "blue-dream",
+        "source_variant_id": "blue-dream-3-5",
+        "name": "Blue Dream THCA Flower",
+        "variant": "",
+        "grams": 3.5,
+        "url": "https://structured.example/products/blue-dream",
+        "availability": "in_stock",
+        "price": 35,
+    }
+    value.update(overrides)
+    return value
+
+
 class CliTests(unittest.TestCase):
     def test_structured_numeric_weight_without_text_label_reaches_builder(self) -> None:
-        prepared, excluded = strict_flower_products([{
-            "source_id": "structured",
-            "vendor": "Structured Vendor",
-            "source_product_id": "blue-dream",
-            "source_variant_id": "blue-dream-3-5",
-            "name": "Blue Dream THCA Flower",
-            "variant": "",
-            "grams": 3.5,
-            "url": "https://structured.example/products/blue-dream",
-            "availability": "in_stock",
-            "price": 35,
-        }])
+        result = build_catalog(
+            [structured_row()],
+            generated_at="2026-07-16T00:00:00Z",
+            detail_shards=1,
+        )
+        self.assertEqual(result.product_count, 1)
+        self.assertEqual(result.variant_count, 1)
+
+    def test_legacy_numeric_weight_without_text_evidence_is_removed_before_builder(self) -> None:
+        prepared, excluded = strict_flower_products([
+            structured_row(
+                name="ADL | THCa Flower | Tier 1",
+                grams=28.3495,
+                source_weight_label="28.3495",
+                source_title="ADL | THCa Flower | Tier 1",
+            )
+        ])
         self.assertEqual(excluded, 0)
-        self.assertEqual(prepared[0]["grams"], 3.5)
+        self.assertNotIn("grams", prepared[0])
+        self.assertNotIn("weight_grams", prepared[0])
         self.assertNotIn("source_weight_label", prepared[0])
 
         result = build_catalog(
@@ -35,8 +58,9 @@ class CliTests(unittest.TestCase):
             generated_at="2026-07-16T00:00:00Z",
             detail_shards=1,
         )
-        self.assertEqual(result.product_count, 1)
-        self.assertEqual(result.variant_count, 1)
+        self.assertEqual(result.product_count, 0)
+        self.assertEqual(result.variant_count, 0)
+        self.assertEqual(result.rejections["reason_counts"]["invalid_or_missing_weight"], 1)
 
     def test_cli_build_and_verify(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -110,9 +134,10 @@ class CliTests(unittest.TestCase):
             },
         ])
         self.assertEqual(excluded, 0)
-        self.assertNotIn("source_weight_label", admitted[0])
-        self.assertNotIn("source_weight_label", admitted[1])
-        self.assertNotIn("source_weight_label", admitted[2])
+        for row in admitted:
+            self.assertNotIn("grams", row)
+            self.assertNotIn("weight_grams", row)
+            self.assertNotIn("source_weight_label", row)
 
 
 if __name__ == "__main__":
