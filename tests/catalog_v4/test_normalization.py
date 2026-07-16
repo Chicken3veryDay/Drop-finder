@@ -28,6 +28,12 @@ class NormalizationTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(normalize_weight(None, label)[0], expected)
         self.assertEqual(normalize_weight("7", "7 grams")[0], Decimal("7"))
+        self.assertIsNone(normalize_weight("28.349", "Tier 1")[0])
+        self.assertIsNone(normalize_weight("28.349", "3.5g")[0])
+        self.assertIsNone(normalize_weight("28.349", None)[0])
+        self.assertIsNone(normalize_weight(None, "Quarter Pound")[0])
+        self.assertIsNone(normalize_weight(None, "quarter lb")[0])
+        self.assertIsNone(normalize_weight(None, "1/4 lb")[0])
         self.assertIsNone(normalize_weight(None, "family pack")[0])
         self.assertIsNone(normalize_weight(-1, "-1g")[0])
 
