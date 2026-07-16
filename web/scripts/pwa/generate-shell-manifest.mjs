@@ -6,8 +6,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repoRoot = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 const publicRoot = resolve(repoRoot, 'cloud_pages');
 const required = ['index.html', 'manifest.webmanifest', 'icon.svg'];
-const startupWorkerPatterns = [
-  /^marketplace-query-worker-[A-Za-z0-9_-]{8,}\.js$/,
+const startupWorkerDefinitions = [
+  {
+    label: 'marketplace query worker',
+    filename: /^marketplace-query-worker-[A-Za-z0-9_-]{8,}\.js$/,
+    reference: /marketplace-query-worker-[A-Za-z0-9_-]{8,}\.js/g,
+  },
 ];
 
 function generatedAssetPath(value, label) {
@@ -53,14 +57,20 @@ export function collectStaticViteAssets(manifest) {
   return [...assets].sort();
 }
 
-export function selectStartupWorkerAssets(assetNames) {
+export function selectStartupWorkerAssets(assetNames, staticJavaScript) {
+  const available = new Set(assetNames);
   const selected = [];
-  for (const pattern of startupWorkerPatterns) {
-    const matches = assetNames.filter(name => pattern.test(name));
-    if (matches.length !== 1) {
-      throw new Error(`Expected exactly one startup worker matching ${pattern}, found ${matches.length}`);
+  const source = staticJavaScript.join('\n');
+  for (const definition of startupWorkerDefinitions) {
+    const references = new Set(source.match(definition.reference) ?? []);
+    if (references.size !== 1) {
+      throw new Error(`Expected exactly one ${definition.label} reference in static entry assets, found ${references.size}`);
     }
-    selected.push(`assets/${matches[0]}`);
+    const [filename] = references;
+    if (!definition.filename.test(filename) || !available.has(filename)) {
+      throw new Error(`Referenced ${definition.label} output is missing: ${filename}`);
+    }
+    selected.push(`assets/${filename}`);
   }
   return selected;
 }
@@ -71,9 +81,13 @@ export async function buildShellManifest(root = publicRoot) {
   const assetNames = (await readdir(assetsDir, { withFileTypes: true }))
     .filter(entry => entry.isFile())
     .map(entry => entry.name);
+  const staticAssets = collectStaticViteAssets(viteManifest);
+  const staticJavaScript = await Promise.all(staticAssets
+    .filter(name => /\.(?:m?js)$/.test(name))
+    .map(name => readFile(resolve(root, name), 'utf8')));
   const generatedAssets = new Set([
-    ...collectStaticViteAssets(viteManifest),
-    ...selectStartupWorkerAssets(assetNames),
+    ...staticAssets,
+    ...selectStartupWorkerAssets(assetNames, staticJavaScript),
   ]);
   const paths = [
     ...required.map(name => resolve(root, name)),
