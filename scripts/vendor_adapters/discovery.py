@@ -130,10 +130,7 @@ def discover_json_documents(
                 target = canonicalize_url(value, base_url=source_url, allowed_hosts=allowed_hosts)
             except UnsafeUrl:
                 continue
-            if target in seen:
-                continue
-            seen.add(target)
-            results.append(DocumentCandidate(
+            candidate = DocumentCandidate(
                 vendor_id=vendor_id,
                 url=target,
                 document_kind=_kind(f"{key} {title} {target}"),  # type: ignore[arg-type]
@@ -143,5 +140,9 @@ def discover_json_documents(
                 batch_id=batch_id,
                 content_type_hint="application/pdf" if PDF_WORDS.search(target) else "",
                 provenance=Provenance(source_url, "structured_json", observed_at),
-            ))
+            )
+            if candidate.document_id in seen:
+                continue
+            seen.add(candidate.document_id)
+            results.append(candidate)
     return sorted(results, key=lambda row: (row.document_kind, row.url, row.document_id))
