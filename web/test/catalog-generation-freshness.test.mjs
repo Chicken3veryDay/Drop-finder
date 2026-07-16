@@ -50,45 +50,50 @@ test('same-generation verification refreshes freshness without reactivation', as
     cache: new MemoryGenerationCache(),
     maxRetries: 0,
     staleMs: 100,
-    now: () => now,
   });
   const events = [];
   client.subscribe(event => events.push(event));
+  const originalNow = Date.now;
+  Date.now = () => now;
 
-  await client.initialize();
-  const active = client.snapshot();
-  assert.equal(calls.length, 2);
-  assert.equal(events.length, 1);
-  assert.equal(active.activatedAt, 1_000);
+  try {
+    await client.initialize();
+    const active = client.snapshot();
+    assert.equal(calls.length, 2);
+    assert.equal(events.length, 1);
+    assert.equal(active.activatedAt, 1_000);
 
-  let aborts = 0;
-  client.detailLru.set('g1:sentinel', { retained: true });
-  client.inflight.set('sentinel', {
-    controller: { abort: () => { aborts += 1; } },
-    promise: Promise.resolve(),
-  });
+    let aborts = 0;
+    client.detailLru.set('g1:sentinel', { retained: true });
+    client.inflight.set('sentinel', {
+      controller: { abort: () => { aborts += 1; } },
+      promise: Promise.resolve(),
+    });
 
-  now = 1_201;
-  const [first, second] = await Promise.all([client.initialize(), client.initialize()]);
-  assert.equal(first.generationId, 'g1');
-  assert.equal(second.generationId, 'g1');
-  assert.equal(calls.length, 4);
-  assert.strictEqual(client.snapshot(), active);
-  assert.equal(client.snapshot().activatedAt, 1_000);
-  assert.equal(events.length, 1);
-  assert.equal(aborts, 0);
-  assert.equal(client.detailLru.has('g1:sentinel'), true);
-  assert.equal(client.inflight.has('sentinel'), true);
+    now = 1_201;
+    const [first, second] = await Promise.all([client.initialize(), client.initialize()]);
+    assert.equal(first.generationId, 'g1');
+    assert.equal(second.generationId, 'g1');
+    assert.equal(calls.length, 4);
+    assert.strictEqual(client.snapshot(), active);
+    assert.equal(client.snapshot().activatedAt, 1_000);
+    assert.equal(events.length, 1);
+    assert.equal(aborts, 0);
+    assert.equal(client.detailLru.has('g1:sentinel'), true);
+    assert.equal(client.inflight.has('sentinel'), true);
 
-  now = 1_250;
-  await client.initialize();
-  assert.equal(calls.length, 4);
+    now = 1_250;
+    await client.initialize();
+    assert.equal(calls.length, 4);
 
-  await client.initialize({ force: true });
-  assert.equal(calls.length, 6);
-  assert.strictEqual(client.snapshot(), active);
-  assert.equal(events.length, 1);
-  assert.equal(aborts, 0);
+    await client.initialize({ force: true });
+    assert.equal(calls.length, 6);
+    assert.strictEqual(client.snapshot(), active);
+    assert.equal(events.length, 1);
+    assert.equal(aborts, 0);
+  } finally {
+    Date.now = originalNow;
+  }
 });
 
 test('cached fallback does not advance successful-network freshness', async () => {
@@ -102,27 +107,32 @@ test('cached fallback does not advance successful-network freshness', async () =
     cache: new MemoryGenerationCache(),
     maxRetries: 0,
     staleMs: 100,
-    now: () => now,
   });
   const events = [];
   client.subscribe(event => events.push(event));
+  const originalNow = Date.now;
+  Date.now = () => now;
 
-  await client.initialize();
-  const active = client.snapshot();
-  assert.equal(calls.length, 2);
-  assert.equal(events.length, 1);
+  try {
+    await client.initialize();
+    const active = client.snapshot();
+    assert.equal(calls.length, 2);
+    assert.equal(events.length, 1);
 
-  failNetwork = true;
-  now = 10_200;
-  const fallback = await client.initialize();
-  assert.equal(fallback.generationId, 'g1');
-  assert.equal(calls.length, 3);
-  assert.strictEqual(client.snapshot(), active);
-  assert.equal(events.length, 1);
+    failNetwork = true;
+    now = 10_200;
+    const fallback = await client.initialize();
+    assert.equal(fallback.generationId, 'g1');
+    assert.equal(calls.length, 3);
+    assert.strictEqual(client.snapshot(), active);
+    assert.equal(events.length, 1);
 
-  now = 10_201;
-  await client.initialize();
-  assert.equal(calls.length, 4);
-  assert.strictEqual(client.snapshot(), active);
-  assert.equal(events.length, 1);
+    now = 10_201;
+    await client.initialize();
+    assert.equal(calls.length, 4);
+    assert.strictEqual(client.snapshot(), active);
+    assert.equal(events.length, 1);
+  } finally {
+    Date.now = originalNow;
+  }
 });
