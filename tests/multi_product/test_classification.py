@@ -83,6 +83,21 @@ class ClassificationTests(unittest.TestCase):
                 quantity = quantity_fields(f"Blue Dream THCA Flower {label}", CANNABIS_FLOWER)
                 self.assertAlmostEqual(float(quantity["grams"] or 0), grams, places=4)
 
+    def test_incidental_numbers_do_not_become_flower_weights(self) -> None:
+        for label in ("Tier 1", "Type 1", "Tier 2", "4 pack", "THCA 24.1%", "Quarter Pound", "1/4 lb"):
+            with self.subTest(label=label):
+                quantity = quantity_fields(f"Blue Dream THCA Flower {label}", CANNABIS_FLOWER)
+                self.assertIsNone(quantity["grams"])
+                self.assertIsNone(quantity["source_weight_label"])
+
+    def test_explicit_whole_ounce_labels_remain_supported(self) -> None:
+        expected = {"1 oz": 28.3495, "2 ounces": 56.699, "4 oz": 113.398}
+        for label, grams in expected.items():
+            with self.subTest(label=label):
+                quantity = quantity_fields(f"Blue Dream THCA Flower {label}", CANNABIS_FLOWER)
+                self.assertAlmostEqual(float(quantity["grams"] or 0), grams, places=4)
+                self.assertEqual(str(quantity["source_weight_label"]).lower(), label)
+
     def test_type_specific_fields_do_not_guess(self) -> None:
         fields = type_specific_fields(
             "Psilocybe cubensis disposable 1mL, psilocybin 2.5%, 800 puffs",
