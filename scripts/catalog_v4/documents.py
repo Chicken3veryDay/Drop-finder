@@ -13,14 +13,19 @@ def normalize_documents(
     value: Any,
     *,
     product_id: str,
+    vendor_id: str = "",
     variant_id: str = "",
     source_variant_id: str = "",
     grams: float | None = None,
 ) -> list[dict[str, Any]]:
     rows = value if isinstance(value, list) else []
+    target_vendor_id = clean_text(vendor_id)
     output: dict[str, dict[str, Any]] = {}
     for raw in rows:
         if not isinstance(raw, dict):
+            continue
+        source_vendor_id = clean_text(raw.get("vendor_id") or raw.get("source_id"))
+        if target_vendor_id and source_vendor_id and source_vendor_id != target_vendor_id:
             continue
         public_url = canonical_url(raw.get("url") or raw.get("public_url") or raw.get("source_url"), keep_variant=True)
         if not public_url:
@@ -50,6 +55,7 @@ def normalize_documents(
             "public_url": public_url,
             "mime_type": clean_text(raw.get("mime_type")),
             "scope": scope,
+            "vendor_id": source_vendor_id or target_vendor_id,
             "product_id": product_id,
             "variant_id": variant_id if scope in {"variant", "weight"} else "",
             "batch": clean_text(raw.get("batch")),
