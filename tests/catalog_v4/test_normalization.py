@@ -31,6 +31,22 @@ class NormalizationTests(unittest.TestCase):
         self.assertIsNone(normalize_weight(None, "family pack")[0])
         self.assertIsNone(normalize_weight(-1, "-1g")[0])
 
+    def test_pound_labels_do_not_fall_through_to_ounce_patterns(self) -> None:
+        supported = {
+            "Quarter Pound": Decimal("112"),
+            "quarter lb": Decimal("112"),
+            "1/4 lb": Decimal("112"),
+        }
+        for label, expected in supported.items():
+            with self.subTest(label=label):
+                self.assertEqual(normalize_weight(None, label)[0], expected)
+        for label in ("half pound", "1/2 lb", "one pound"):
+            with self.subTest(label=label):
+                self.assertIsNone(normalize_weight(None, label)[0])
+        self.assertEqual(normalize_weight(None, "Quarter oz")[0], Decimal("7"))
+        self.assertEqual(normalize_weight(None, "1/4 oz")[0], Decimal("7"))
+        self.assertEqual(normalize_weight(None, "Quarter")[0], Decimal("7"))
+
     def test_canonical_strain_name_is_conservative(self) -> None:
         self.assertEqual(
             canonical_strain_name("Blue Dream THCA Flower | 3.5g", "3.5g"),
