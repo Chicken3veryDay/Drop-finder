@@ -14,6 +14,7 @@ from scripts.multi_product import (
     type_specific_fields,
     validates_classification,
 )
+from scripts.multi_product.classification import is_mixed_offer
 
 
 class ClassificationTests(unittest.TestCase):
@@ -62,6 +63,28 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(result.primary_type, PSILOCYBIN_VAPE)
         self.assertIn(CANNABIS_VAPE, result.type_tags)
         self.assertIn(PSILOCYBIN_VAPE, result.type_tags)
+
+    def test_mixed_offers_are_rejected_without_blocking_package_components(self) -> None:
+        unsupported = (
+            "THCA Flower Sampler Bundle 1 oz",
+            "THCA Flower Bundle 4oz Mix & Match",
+            "Dad's Day Stash Kit THCA Disposable Vape 1mL",
+            "THCA Flower Variety Pack",
+            "THCA Flower Mystery Box",
+            "THCA Flower Mystery Bag",
+            "THCA Flower Mystery Pack",
+        )
+        for name in unsupported:
+            with self.subTest(name=name):
+                self.assertTrue(is_mixed_offer(name))
+                self.assertIsNone(classify_product(name=name))
+
+        valid = classify_product(
+            name="Blue Dream THCA Flower 3.5g",
+            description="Single-strain jar with a sampler-sized humidity pack",
+        )
+        self.assertIsNotNone(valid)
+        self.assertFalse(is_mixed_offer("sampler-sized humidity pack"))
 
     def test_quantity_and_comparison_metrics_are_type_aware(self) -> None:
         flower_quantity = quantity_fields("3.5g jar", CANNABIS_FLOWER)
