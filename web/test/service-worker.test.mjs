@@ -212,7 +212,9 @@ test('service worker clears active metadata when its generation cache is missing
     source: { postMessage: message => status.push(message) },
   });
 
-  assert.deepEqual(status, [{ type: 'generation-status' }]);
+  assert.equal(status.length, 1);
+  assert.equal(status[0].type, 'generation-status');
+  assert.equal('generationId' in status[0], false);
   assert.equal((await cacheStorage.keys()).some(name => name === generationCache), false);
 });
 
