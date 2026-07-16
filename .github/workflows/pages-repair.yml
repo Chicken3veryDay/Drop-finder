@@ -7,6 +7,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/pages-repair.yml"
+      - "web/scripts/verify-pages-endpoint.mjs"
   workflow_dispatch:
 
 permissions:
@@ -31,15 +32,17 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Validate canonical artifact
         run: |
           set -euo pipefail
-          test -s cloud_pages/index.html
-          test -s cloud_pages/data/catalog.json
-          test -s cloud_pages/data/status.json
-          grep -q "DropFinder Cloud" cloud_pages/index.html
-          python -m json.tool cloud_pages/data/catalog.json >/dev/null
-          python -m json.tool cloud_pages/data/status.json >/dev/null
+          node web/scripts/verify-publication.mjs cloud_pages
+          python web/scripts/publication_gate.py verify-published --root cloud_pages
       - name: Configure Pages
         id: configure
         continue-on-error: true
@@ -88,22 +91,22 @@ jobs:
           fi
           [ -n "$page_url" ] || page_url="$known_url"
 
-          http_code=""
-          marker=false
-          curl_error=""
+          verified=false
+          verification_error=""
           for attempt in $(seq 1 12); do
-            curl_error=""
-            http_code="$(curl -L -sS -o /tmp/dropfinder-public.html -w '%{http_code}' \
-              --connect-timeout 10 --max-time 30 "$page_url" 2>/tmp/curl-error.txt)" || curl_error="$(cat /tmp/curl-error.txt)"
-            if [ "$http_code" = "200" ] && grep -q "DropFinder Cloud" /tmp/dropfinder-public.html; then
-              marker=true
+            if node web/scripts/verify-pages-endpoint.mjs "$page_url" >/tmp/pages-verification.json 2>/tmp/pages-verification.err; then
+              cat /tmp/pages-verification.json
+              verified=true
+              verification_error=""
               break
             fi
+            verification_error="$(cat /tmp/pages-verification.err)"
+            echo "Endpoint not ready (attempt $attempt): $verification_error"
             sleep 10
           done
 
-          PAGE_URL="$page_url" HTTP_CODE="${http_code:-0}" MARKER="$marker" \
-          API_RC="$api_rc" API_BODY="$api_body" CURL_ERROR="$curl_error" \
+          PAGE_URL="$page_url" VERIFIED="$verified" \
+          API_RC="$api_rc" API_BODY="$api_body" VERIFICATION_ERROR="$verification_error" \
           CONFIGURE_OUTCOME="$CONFIGURE_OUTCOME" UPLOAD_OUTCOME="$UPLOAD_OUTCOME" \
           DEPLOY_OUTCOME="$DEPLOY_OUTCOME" python - <<'PY'
           import json, os
@@ -114,20 +117,20 @@ jobs:
               status=json.loads(Path('cloud_pages/data/status.json').read_text())
           except Exception:
               catalog={}; status={}
-          live=os.environ['HTTP_CODE']=='200' and os.environ['MARKER']=='true'
+          live=os.environ['VERIFIED']=='true'
           payload={
-              'schema_version':'dropfinder-pages-diagnostic-v1',
+              'schema_version':'dropfinder-pages-diagnostic-v2',
               'status':'live' if live else 'failed',
               'verified_at':datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               'page_url':os.environ['PAGE_URL'],
-              'http_status':int(os.environ['HTTP_CODE'] or 0),
-              'content_marker_verified':os.environ['MARKER']=='true',
+              'http_status':200 if live else 0,
+              'publication_verified':live,
               'configure_outcome':os.environ['CONFIGURE_OUTCOME'],
               'upload_outcome':os.environ['UPLOAD_OUTCOME'],
               'deploy_outcome':os.environ['DEPLOY_OUTCOME'],
               'pages_api_rc':int(os.environ['API_RC']),
               'pages_api_response':os.environ['API_BODY'][:4000],
-              'curl_error':os.environ['CURL_ERROR'][:2000],
+              'verification_error':os.environ['VERIFICATION_ERROR'][:2000],
               'workflow_sha':os.environ.get('GITHUB_SHA',''),
               'product_count':catalog.get('product_count'),
               'healthy_sources':status.get('healthy_sources'),
@@ -147,5 +150,4 @@ jobs:
           git diff --cached --quiet || git commit -m "chore: record DropFinder Pages verification [skip ci]"
           git push origin HEAD:main
 
-          test "$http_code" = "200"
-          test "$marker" = "true"
+          test "$verified" = "true"
