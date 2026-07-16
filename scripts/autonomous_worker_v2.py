@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import socket
 import sys
 import time
+import urllib.error
 import urllib.parse
 from pathlib import Path
 
@@ -142,6 +144,8 @@ def _is_retryable(status: dict) -> bool:
     if status.get("products"):
         return False
     for route in status.get("route_results") or []:
+        if route.get("retryable") is True:
+            return True
         try:
             http_status = int(route.get("http_status"))
         except (TypeError, ValueError):
@@ -151,15 +155,22 @@ def _is_retryable(status: dict) -> bool:
     return False
 
 
-def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
+def resilient_scan_all_routes(
+    source: tuple,
+    *,
+    scanner=None,
+    delays=RETRY_DELAYS,
+    sleeper=time.sleep,
+) -> tuple[list[dict], dict]:
     """Retry only transient transport failures; deterministic parse failures stay visible."""
+    scan = _original_scan_all_routes if scanner is None else scanner
     history: list[dict] = []
     final_products: list[dict] = []
     final_status: dict = {}
-    for attempt, delay in enumerate(RETRY_DELAYS, start=1):
+    for attempt, delay in enumerate(delays, start=1):
         if delay:
-            time.sleep(delay)
-        products, status = _original_scan_all_routes(source)
+            sleeper(delay)
+        products, status = scan(source)
         status = dict(status)
         for route in status.get("route_results") or []:
             route = dict(route)
@@ -196,6 +207,75 @@ def self_test() -> int:
     assert _is_retryable({"products": 0, "route_results": [{"http_status": 202}]})
     assert not _is_retryable({"products": 0, "route_results": [{"http_status": 404}]})
     assert _slug_title("https://example.test/products/archive-runtz-indoor-thca-flower") == "Archive Runtz Indoor Thca Flower"
+
+    classify = worker.aggregate.classify_route_failure
+    assert classify(TimeoutError("timed out")) == {
+        "error_category": "transport_timeout",
+        "retryable": True,
+    }
+    assert classify(ConnectionResetError("reset"))["retryable"] is True
+    assert classify(ValueError("invalid JSON")) == {
+        "error_category": "processing_error",
+        "retryable": False,
+    }
+    temporary_dns_code = getattr(socket, "EAI_AGAIN", None)
+    if temporary_dns_code is not None:
+        temporary_dns = urllib.error.URLError(
+            socket.gaierror(temporary_dns_code, "temporary failure")
+        )
+        assert classify(temporary_dns) == {
+            "error_category": "temporary_dns_failure",
+            "retryable": True,
+        }
+
+    source = ("test", "Test Vendor", [route])
+    original_fetch = worker.core.fetch
+
+    def fail_with_timeout(_target):
+        raise TimeoutError("timed out")
+
+    try:
+        worker.core.fetch = fail_with_timeout
+        products, timeout_status = _original_scan_all_routes(source)
+    finally:
+        worker.core.fetch = original_fetch
+    assert not products
+    timeout_result = timeout_status["route_results"][0]
+    assert timeout_result["error_category"] == "transport_timeout"
+    assert timeout_result["retryable"] is True
+    assert _is_retryable(timeout_status)
+
+    recovered_product = {"id": "recovered"}
+    responses = iter(
+        [
+            ([], timeout_status),
+            (
+                [recovered_product],
+                {
+                    "products": 1,
+                    "route_results": [
+                        {"status": "healthy", "http_status": 200, "products": 1}
+                    ],
+                },
+            ),
+        ]
+    )
+    calls = []
+
+    def recover_on_second_attempt(selected_source):
+        calls.append(selected_source)
+        return next(responses)
+
+    recovered, recovered_status = resilient_scan_all_routes(
+        source,
+        scanner=recover_on_second_attempt,
+        delays=(0.0, 0.0),
+        sleeper=lambda _delay: None,
+    )
+    assert recovered == [recovered_product]
+    assert calls == [source, source]
+    assert recovered_status["retry_attempts"] == 2
+    assert [row["retry_attempt"] for row in recovered_status["route_results"]] == [1, 2]
     return 0
 
 
