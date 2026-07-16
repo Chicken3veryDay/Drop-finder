@@ -72,6 +72,30 @@ class CatalogBuilderTests(unittest.TestCase):
         self.assertEqual(detail["total_thc"]["method"], "unavailable")
         self.assertIsNone(detail["total_thc"]["display_percent"])
 
+    def test_legacy_numeric_weight_requires_explicit_source_evidence(self) -> None:
+        base = {
+            "source_id": "legacy", "vendor": "Legacy", "source_product_id": "p", "source_variant_id": "v",
+            "name": "Example THCA Flower | Tier 1", "url": "https://legacy.example/products/example",
+            "availability": "in_stock", "price": 34.99, "grams": 28.349,
+        }
+        contaminated = build_catalog(
+            [{**base, "variant": "Tier 1"}],
+            generated_at="2026-01-01T00:00:00Z",
+            detail_shards=1,
+        )
+        self.assertEqual(contaminated.product_count, 0)
+        self.assertEqual(contaminated.rejections["reason_counts"]["invalid_or_missing_weight"], 1)
+
+        trusted = build_catalog(
+            [{**base, "source_weight_label": "1 oz"}],
+            generated_at="2026-01-01T00:00:00Z",
+            detail_shards=1,
+        )
+        self.assertEqual(trusted.product_count, 1)
+        index = read_json_bytes(trusted.files["catalog-v4/index.json"])
+        self.assertEqual(index["products"][0]["variants"][0]["grams"], 28.0)
+        self.assertEqual(index["products"][0]["variants"][0]["source_weight_label"], "1 oz")
+
     def test_documents_vendor_profiles_and_variant_mapping(self) -> None:
         row = {
             "source_id": "vendor", "vendor": "Vendor", "source_product_id": "p", "source_variant_id": "v-7",
