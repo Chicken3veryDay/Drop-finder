@@ -31,6 +31,27 @@ if "/cbd-hemp-flower/" not in worker.PRODUCT_PATHS:
 # finished wiring its candidate scoring and retry wrappers.
 multi_product.install(reliability)
 
+# Older worker fixtures predate the top-level product_type field and retain the
+# same classification inside classification_evidence. Normalize that legacy
+# shape before the stricter typed gate runs. Live records already carry both.
+_type_aware_gate = worker.gate
+
+
+def compatible_gate(products: list[dict]) -> tuple[bool, list[str], dict]:
+    normalized: list[dict] = []
+    for product in products:
+        row = dict(product)
+        evidence = row.get("classification_evidence")
+        if not row.get("product_type") and isinstance(evidence, dict):
+            evidence_type = evidence.get("product_type")
+            if isinstance(evidence_type, str) and evidence_type:
+                row["product_type"] = evidence_type
+        normalized.append(row)
+    return _type_aware_gate(normalized)
+
+
+worker.gate = compatible_gate
+
 
 def self_test() -> int:
     reliability.self_test()
