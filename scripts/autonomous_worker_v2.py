@@ -40,6 +40,11 @@ def _slug_title(target: str) -> str:
     return re.sub(r"\s+", " ", slug.replace("-", " ").replace("_", " ")).strip().title()
 
 
+def _detail_metadata_evidence(payload: str) -> str:
+    """Extract page-owned evidence without letting the candidate URL self-validate."""
+    return worker.product_detail_evidence(payload, "")
+
+
 def _candidate_score(label: str, target: str, price: object) -> float:
     form_text = f"{label} {worker.path_text(target)}"
     score = 0.0
@@ -113,7 +118,7 @@ def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -
     if status != 200 or content_type not in {"text/html", "application/xhtml+xml"}:
         return None
 
-    evidence = worker.product_detail_evidence(payload, target)
+    evidence = _detail_metadata_evidence(payload)
     if not worker.has_product_evidence(evidence):
         return None
     meta = worker.core.meta_values(payload)
