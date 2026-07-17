@@ -50,10 +50,18 @@ async function createRuntime() {
   const listeners = new Map();
   const messages = [];
   const network = new Map();
+  const failures = new Map();
+  const fetchCounts = new Map();
   let offline = false;
   const fetcher = async input => {
     if (offline) throw new TypeError('offline');
     const url = new URL(input?.url ?? String(input), BASE).href;
+    fetchCounts.set(url, (fetchCounts.get(url) || 0) + 1);
+    const remainingFailures = failures.get(url) || 0;
+    if (remainingFailures > 0) {
+      failures.set(url, remainingFailures - 1);
+      throw new TypeError('transient network failure');
+    }
     if (url === `${BASE}app-shell.json`) return json({ schema_version: 'dropfinder-app-shell-v1', assets: ['./', './index.html', './manifest.webmanifest', './icon.svg'] });
     if ([BASE, `${BASE}index.html`, `${BASE}manifest.webmanifest`, `${BASE}icon.svg`].includes(url)) return new Response(`asset:${url}`);
     const response = network.get(url);
@@ -86,6 +94,8 @@ async function createRuntime() {
     network, caches, messages, dispatch,
     setOffline(value) { offline = value; },
     setJson(path, value, headers = {}) { network.set(new URL(path, BASE).href, json(value, headers)); },
+    failNext(path, count = 1) { failures.set(new URL(path, BASE).href, count); },
+    fetchCount(path) { return fetchCounts.get(new URL(path, BASE).href) || 0; },
   };
 }
 
@@ -130,6 +140,28 @@ test('service worker does not activate incomplete snapshots and switches only af
   const sourceMessages = [];
   await runtime.dispatch('message', { data: { type: 'activate-generation', generationId: second }, source: { postMessage: message => sourceMessages.push(message) } });
   assert.ok(runtime.messages.some(message => message.type === 'generation-active' && message.generationId === second));
+});
+
+test('service worker retries v4 generation preparation after a transient required-resource failure', async () => {
+  const runtime = await createRuntime();
+  const generation = 'g2';
+  runtime.setJson('data/catalog-manifest-v4.json', {
+    schema_version: 4,
+    generation_id: generation,
+    compact_index: { url: './catalog-index.json' },
+  });
+  runtime.setJson('data/catalog-index.json', { generation_id: generation, products: [] }, { 'x-dropfinder-generation': generation });
+  runtime.failNext('data/catalog-index.json');
+
+  const first = await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog-manifest-v4.json`) });
+  assert.equal(first.status, 503);
+  assert.equal(runtime.fetchCount('data/catalog-index.json'), 1);
+  assert.equal((await runtime.caches.keys()).some(name => name === 'dropfinder-data-g2'), false);
+
+  const second = await runtime.dispatch('fetch', { request: new Request(`${BASE}data/catalog-manifest-v4.json`) });
+  assert.equal(second.status, 200);
+  assert.equal(runtime.fetchCount('data/catalog-index.json'), 2);
+  assert.ok(runtime.messages.some(message => message.type === 'generation-active' && message.generationId === generation));
 });
 
 test('service worker rejects detail shards from another active generation', async () => {
