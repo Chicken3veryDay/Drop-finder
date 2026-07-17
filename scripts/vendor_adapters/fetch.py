@@ -51,21 +51,22 @@ def fetch_public_document(
     max_redirects: int = 4,
     user_agent: str = "DropFinderVendorEvidence/1.0 (+https://github.com/Chicken3veryDay/Drop-finder)",
 ) -> FetchResult:
-    safe = canonicalize_url(url, allowed_hosts=allowed_hosts)
+    safe = ""
     chain: list[str] = []
-    handler = _SafeRedirectHandler(allowed_hosts, chain, max_redirects)
-    opener = urllib.request.build_opener(handler)
-    request = urllib.request.Request(
-        safe,
-        headers={
-            "User-Agent": user_agent,
-            "Accept": "application/json,text/html,application/pdf,text/plain;q=.9,*/*;q=.1",
-            "Accept-Encoding": "identity",
-            "Cache-Control": "no-cache",
-        },
-        method="GET",
-    )
     try:
+        safe = canonicalize_url(url, allowed_hosts=allowed_hosts)
+        handler = _SafeRedirectHandler(allowed_hosts, chain, max_redirects)
+        opener = urllib.request.build_opener(handler)
+        request = urllib.request.Request(
+            safe,
+            headers={
+                "User-Agent": user_agent,
+                "Accept": "application/json,text/html,application/pdf,text/plain;q=.9,*/*;q=.1",
+                "Accept-Encoding": "identity",
+                "Cache-Control": "no-cache",
+            },
+            method="GET",
+        )
         with opener.open(request, timeout=timeout) as response:
             final_url = canonicalize_url(response.geturl(), allowed_hosts=allowed_hosts)
             status = int(getattr(response, "status", 200))
@@ -77,4 +78,5 @@ def fetch_public_document(
                 return FetchResult(safe, final_url, status, content_type, b"", "response_too_large", tuple(chain))
             return FetchResult(safe, final_url, status, content_type, body, "", tuple(chain))
     except (UnsafeUrl, urllib.error.URLError, urllib.error.HTTPError, TimeoutError, socket.timeout, OSError) as exc:
-        return FetchResult(safe, chain[-1] if chain else safe, int(getattr(exc, "code", 0) or 0), "", b"", f"{type(exc).__name__}: {exc}", tuple(chain))
+        final_url = chain[-1] if chain else safe
+        return FetchResult(safe, final_url, int(getattr(exc, "code", 0) or 0), "", b"", f"{type(exc).__name__}: {exc}", tuple(chain))
