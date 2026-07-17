@@ -12,6 +12,7 @@ if str(HERE) not in sys.path:
 # Keep the proven reliability and retry layer. Multi-product support patches its
 # classification, normalization, route registry, and admission seams only.
 import autonomous_worker_v2 as reliability  # type: ignore
+import fallback_transport  # type: ignore
 from multi_product.runtime import install_multi_product_runtime, runtime_self_test
 from vendor_expansion import apply_registry, load_registry
 
@@ -20,6 +21,10 @@ worker = reliability.worker
 # Some storefront WAFs intermittently answer public category/API requests with
 # 403 before succeeding on a later request. Retry remains bounded.
 reliability.RETRYABLE_HTTP.add(403)
+
+# Apply the same bounded status/content-type transport contract to fallback
+# category roots before any product-card parsing can occur.
+fallback_transport.install(reliability)
 
 # Green Unicorn product URLs use this WooCommerce path rather than /product/.
 if "/cbd-hemp-flower/" not in worker.PRODUCT_PATHS:
@@ -32,9 +37,10 @@ INSTALLED_VENDOR_IDS = apply_registry(worker, VENDOR_EXPANSION)
 
 
 def self_test() -> int:
-    # Validate the pre-existing reliability layer, the generalized runtime, and
-    # the independently validated vendor registry as one production composition.
+    # Validate the pre-existing reliability layer, fallback transport boundary,
+    # generalized runtime, and independently validated vendor registry together.
     reliability.self_test()
+    fallback_transport.self_test(reliability)
     state = install_multi_product_runtime(reliability)
     runtime_self_test(reliability)
     vendors = VENDOR_EXPANSION["vendors"]
