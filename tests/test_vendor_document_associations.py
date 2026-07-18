@@ -62,11 +62,58 @@ class SharedDocumentAssociationTests(unittest.TestCase):
         self.assertEqual({decision.product_id for decision in decisions}, {"p1", "p2"})
         self.assertTrue(all(not decision.ambiguous for decision in decisions))
 
+    def test_shared_url_preserves_variant_label_only_edges(self):
+        payload = [
+            {
+                "product_id": "p1",
+                "variant_label": "7g",
+                "title": "Blue Dream COA",
+                "coa_url": "https://cdn.example.com/blue-dream.pdf",
+            },
+            {
+                "product_id": "p1",
+                "variant_label": "14g",
+                "title": "Blue Dream COA",
+                "coa_url": "https://cdn.example.com/blue-dream.pdf",
+            },
+        ]
+
+        rows = self.discover(payload)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({row.variant_label for row in rows}, {"7g", "14g"})
+        self.assertEqual({row.weight_grams for row in rows}, {7.0, 14.0})
+        self.assertEqual(len({row.document_id for row in rows}), 1)
+
+    def test_shared_url_preserves_weight_only_edges(self):
+        payload = [
+            {
+                "product_id": "p1",
+                "weight_grams": 7,
+                "title": "Blue Dream COA",
+                "coa_url": "https://cdn.example.com/blue-dream.pdf",
+            },
+            {
+                "product_id": "p1",
+                "weight_grams": 14,
+                "title": "Blue Dream COA",
+                "coa_url": "https://cdn.example.com/blue-dream.pdf",
+            },
+        ]
+
+        rows = self.discover(payload)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({row.weight_grams for row in rows}, {7.0, 14.0})
+        self.assertEqual(len({row.document_id for row in rows}), 1)
+
     def test_true_duplicate_association_remains_deduplicated_after_canonicalization(self):
         payload = [
             {
                 "product_id": "p1",
                 "variant_id": "v-7g",
+                "variant_label": "7g",
+                "weight_grams": 7,
                 "batch_id": "B1",
                 "title": "Blue Dream COA",
                 "coa_url": "https://cdn.example.com/blue-dream.pdf?utm_source=first",
@@ -74,6 +121,8 @@ class SharedDocumentAssociationTests(unittest.TestCase):
             {
                 "product_id": "p1",
                 "variant_id": "v-7g",
+                "variant_label": "7g",
+                "weight_grams": 7,
                 "batch_id": "B1",
                 "title": "Blue Dream COA",
                 "coa_url": "https://cdn.example.com/blue-dream.pdf?utm_source=second",
