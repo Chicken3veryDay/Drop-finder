@@ -1,0 +1,37 @@
+name: Temporary Weight Diagnostic
+
+on:
+  push:
+    branches:
+      - integration/20260718/weight-evidence
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run focused tests and capture output
+        id: tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m unittest \
+            tests.catalog_v4.test_normalization \
+            tests.catalog_v4.test_cli \
+            tests.catalog_v4.test_weight_evidence \
+            -v > weight-diagnostic.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weight-diagnostic-${{ github.sha }}
+          path: weight-diagnostic.log
+          if-no-files-found: error
+          retention-days: 1
+      - name: Preserve failure status
+        if: steps.tests.outcome != 'success'
+        run: exit 1
