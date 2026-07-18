@@ -72,21 +72,57 @@ export class DocumentViewerCapability {
     if (Number.isFinite(length) && length > this.options.maxBytes) throw new PlatformError('document_oversized', 'Document is too large');
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength > this.options.maxBytes) throw new PlatformError('document_oversized', 'Document is too large');
-    const pdfjs = await this.loadPdfJs();
-    if (signal.aborted || sessionId !== this.session?.id) return;
+    const session = this.session;
+    let loadingTask = null;
+    let destroyPromise = null;
+    let startupExpired = false;
+    const destroyLoadingTask = () => {
+      if (!loadingTask) return Promise.resolve();
+      if (session?.loadingTask === loadingTask) session.loadingTask = null;
+      if (!destroyPromise) {
+        destroyPromise = Promise.resolve()
+          .then(() => loadingTask.destroy?.())
+          .catch(() => undefined);
+      }
+      return destroyPromise;
+    };
 
-    const task = pdfjs.getDocument({
-      data: bytes,
-      isEvalSupported: false,
-      useWorkerFetch: false,
-    });
-    this.session.loadingTask = task;
-    const pdf = await settleWithin(
-      task.promise,
-      this.options.workerStartupTimeoutMs,
-      signal,
-      'document_worker_timeout',
-    );
+    const startup = (async () => {
+      const pdfjs = await this.loadPdfJs();
+      if (startupExpired || signal.aborted || sessionId !== this.session?.id) throw abortError();
+
+      loadingTask = pdfjs.getDocument({
+        data: bytes,
+        isEvalSupported: false,
+        useWorkerFetch: false,
+      });
+      if (startupExpired || signal.aborted || sessionId !== this.session?.id) {
+        await destroyLoadingTask();
+        throw abortError();
+      }
+      session.loadingTask = loadingTask;
+      return loadingTask.promise;
+    })();
+
+    let pdf;
+    try {
+      pdf = await settleWithin(
+        startup,
+        this.options.workerStartupTimeoutMs,
+        signal,
+        'document_worker_timeout',
+        () => {
+          startupExpired = true;
+          void destroyLoadingTask();
+        },
+      );
+    } catch (error) {
+      if (error?.code === 'document_worker_timeout') {
+        startupExpired = true;
+        await destroyLoadingTask();
+      }
+      throw error;
+    }
 
     if (signal.aborted || sessionId !== this.session?.id) {
       await pdf.destroy?.();
@@ -266,10 +302,13 @@ function conciseDocumentError(error) {
   return { code, message: messages[code] ?? 'This document could not be opened.', action: 'open-original' };
 }
 
-function settleWithin(promise, timeoutMs, signal, code) {
+function settleWithin(promise, timeoutMs, signal, code, onTimeout = null) {
   if (signal?.aborted) return Promise.reject(abortError());
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new PlatformError(code, 'Document initialization timed out')), timeoutMs);
+    const timer = setTimeout(() => {
+      try { onTimeout?.(); } catch {}
+      reject(new PlatformError(code, 'Document initialization timed out'));
+    }, timeoutMs);
     const onAbort = () => reject(abortError());
     signal?.addEventListener('abort', onAbort, { once: true });
     Promise.resolve(promise).then(resolve, reject).finally(() => {
