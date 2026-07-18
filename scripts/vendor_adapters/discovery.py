@@ -52,6 +52,26 @@ def _kind(text: str) -> str:
     return "unknown"
 
 
+def _weight_grams(value: Any, context: str) -> float | None:
+    try:
+        if value not in (None, ""):
+            return round(float(value), 4)
+    except (TypeError, ValueError):
+        pass
+    match = WEIGHT.search(context)
+    return float(match.group(1)) if match else None
+
+
+def _association_key(candidate: DocumentCandidate) -> tuple[str, str, str]:
+    """Keep mapping-relevant edges distinct without redefining physical document identity."""
+    weight = "" if candidate.weight_grams is None else f"{candidate.weight_grams:.4f}"
+    return (
+        candidate.document_id,
+        candidate.variant_label.strip().lower(),
+        weight,
+    )
+
+
 def discover_html_documents(
     payload: str,
     *,
@@ -113,7 +133,7 @@ def discover_json_documents(
 ) -> list[DocumentCandidate]:
     data = json.loads(payload) if isinstance(payload, (str, bytes, bytearray)) else payload
     results: list[DocumentCandidate] = []
-    seen_document_ids: set[str] = set()
+    seen_associations: set[tuple[str, str, str]] = set()
     url_keys = {"url", "href", "document_url", "coa_url", "lab_url", "pdf", "download"}
     for obj in _walk(data):
         context = json.dumps(obj, sort_keys=True, default=str)[:12000]
@@ -121,8 +141,10 @@ def discover_json_documents(
             continue
         product_id = str(obj.get("product_id") or obj.get("productId") or obj.get("handle") or "")
         variant_id = str(obj.get("variant_id") or obj.get("variantId") or "")
+        variant_label = str(obj.get("variant_label") or obj.get("variantLabel") or obj.get("variant") or "")
         batch_id = str(obj.get("batch_id") or obj.get("batch") or obj.get("lot") or "")
         title = str(obj.get("title") or obj.get("name") or obj.get("label") or "")
+        weight_grams = _weight_grams(obj.get("weight_grams") or obj.get("grams"), f"{variant_label} {title}")
         for key, value in obj.items():
             if str(key).lower() not in url_keys or not isinstance(value, str):
                 continue
@@ -137,12 +159,24 @@ def discover_json_documents(
                 title=title,
                 product_id=product_id,
                 variant_id=variant_id,
+                variant_label=variant_label,
+                weight_grams=weight_grams,
                 batch_id=batch_id,
                 content_type_hint="application/pdf" if PDF_WORDS.search(target) else "",
                 provenance=Provenance(source_url, "structured_json", observed_at),
             )
-            if candidate.document_id in seen_document_ids:
+            association_key = _association_key(candidate)
+            if association_key in seen_associations:
                 continue
-            seen_document_ids.add(candidate.document_id)
+            seen_associations.add(association_key)
             results.append(candidate)
-    return sorted(results, key=lambda row: (row.document_kind, row.url, row.document_id))
+    return sorted(
+        results,
+        key=lambda row: (
+            row.document_kind,
+            row.url,
+            row.document_id,
+            row.variant_label.strip().lower(),
+            row.weight_grams if row.weight_grams is not None else -1.0,
+        ),
+    )
