@@ -30,6 +30,10 @@ WORD_WEIGHT_PATTERN = re.compile(
 )
 PERCENT_PATTERN = re.compile(r"(?<!\d)(?P<value>\d{1,3}(?:\.\d+)?)\s*%")
 ND_PATTERN = re.compile(r"\b(?:nd|n/?d|non[- ]?detect(?:ed|able)?|below\s+(?:loq|lod))\b", re.I)
+NEGATIVE_STOCK_PATTERN = re.compile(
+    r"\b(?:out\s+of\s+stock|outofstock|sold\s+out|unavailable|not(?:\s+\w+){0,2}\s+(?:available|in\s+stock))\b"
+)
+POSITIVE_STOCK_PATTERN = re.compile(r"\b(?:in\s+stock|instock|available(?:\s+for\s+order)?)\b")
 
 TRAILING_NAME_PATTERNS = [
     re.compile(
@@ -341,12 +345,10 @@ def explicit_stock(value: Any) -> tuple[bool | None, str]:
     text = normalized_search(value)
     if not text:
         return None, "missing"
-    in_tokens = {"in stock", "instock", "in_stock", "available", "available for order", "true"}
-    out_tokens = {"out of stock", "outofstock", "out_of_stock", "sold out", "unavailable", "false"}
-    if text in in_tokens or any(token in text for token in ("in stock", "available for order")):
-        return True, "explicit_source_state"
-    if text in out_tokens or any(token in text for token in ("out of stock", "sold out")):
+    if text == "false" or NEGATIVE_STOCK_PATTERN.search(text):
         return False, "explicit_source_state"
+    if text == "true" or POSITIVE_STOCK_PATTERN.search(text):
+        return True, "explicit_source_state"
     return None, "unknown"
 
 
