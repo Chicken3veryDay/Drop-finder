@@ -261,6 +261,108 @@ test('document viewer reports oversized and malformed PDFs honestly', async () =
   assert.equal(malformed.snapshot().error.action, 'open-original');
 });
 
+test('document viewer settles superseded same-turn opens without orphaning requests', async () => {
+  let firstSignal = null;
+  let firstAbortEvents = 0;
+  let releaseFirst = () => {};
+  const fetchImpl = async (input, init) => {
+    if (String(input).endsWith('/first.png')) {
+      firstSignal = init.signal;
+      return new Promise((resolve, reject) => {
+        releaseFirst = () => resolve(new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/png' } }));
+        init.signal.addEventListener('abort', () => {
+          firstAbortEvents += 1;
+          reject(new DOMException('aborted', 'AbortError'));
+        }, { once: true });
+      });
+    }
+    return new Response(new Uint8Array([2]), { headers: { 'content-type': 'image/png' } });
+  };
+  const viewer = new DocumentViewerCapability({ fetchImpl });
+  const firstOpen = viewer.open({ url: 'https://x/first.png', mimeType: 'image/png' });
+  const secondOpen = viewer.open({ url: 'https://x/second.png', mimeType: 'image/png' });
+
+  await secondOpen;
+  assert.equal(viewer.snapshot().documentRef.url, 'https://x/second.png');
+  await viewer.close();
+
+  const firstOutcome = await Promise.race([
+    firstOpen.then(() => 'settled'),
+    new Promise(resolve => setImmediate(() => resolve('pending'))),
+  ]);
+  if (firstOutcome === 'pending') {
+    releaseFirst();
+    await firstOpen;
+  }
+
+  assert.equal(firstOutcome, 'settled');
+  if (firstSignal) {
+    assert.equal(firstSignal.aborted, true);
+    assert.equal(firstAbortEvents, 1);
+  }
+  assert.equal(viewer.snapshot().status, 'closed');
+});
+
+test('document viewer keeps the newest open when older cleanup finishes later', async () => {
+  let releaseDestroy;
+  const destroyGate = new Promise(resolve => { releaseDestroy = resolve; });
+  const loadingTask = {
+    promise: Promise.resolve({ numPages: 1, cleanup: async () => {} }),
+    destroy: () => destroyGate,
+  };
+  const viewer = new DocumentViewerCapability({
+    fetchImpl: async input => String(input).endsWith('.pdf')
+      ? new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'application/pdf' } })
+      : new Response(new Uint8Array([4]), { headers: { 'content-type': 'image/png' } }),
+    loadPdfJs: async () => ({ getDocument: () => loadingTask }),
+  });
+  await viewer.open({ url: 'https://x/original.pdf', mimeType: 'application/pdf' });
+
+  const olderReplacement = viewer.open({ url: 'https://x/older.png', mimeType: 'image/png' });
+  const newestReplacement = viewer.open({ url: 'https://x/newest.png', mimeType: 'image/png' });
+  await new Promise(resolve => setImmediate(resolve));
+  releaseDestroy();
+  await Promise.all([olderReplacement, newestReplacement]);
+  assert.equal(viewer.snapshot().status, 'ready');
+  assert.equal(viewer.snapshot().documentRef.url, 'https://x/newest.png');
+  await viewer.close();
+});
+
+test('document viewer close waits for cleanup already claimed by a superseded open', async () => {
+  let releaseDestroy;
+  let markDestroyStarted;
+  const destroyGate = new Promise(resolve => { releaseDestroy = resolve; });
+  const destroyStarted = new Promise(resolve => { markDestroyStarted = resolve; });
+  const loadingTask = {
+    promise: Promise.resolve({ numPages: 1, cleanup: async () => {} }),
+    destroy: () => {
+      markDestroyStarted();
+      return destroyGate;
+    },
+  };
+  const viewer = new DocumentViewerCapability({
+    fetchImpl: async input => String(input).endsWith('.pdf')
+      ? new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'application/pdf' } })
+      : new Response(new Uint8Array([4]), { headers: { 'content-type': 'image/png' } }),
+    loadPdfJs: async () => ({ getDocument: () => loadingTask }),
+  });
+  await viewer.open({ url: 'https://x/original.pdf', mimeType: 'application/pdf' });
+
+  const olderReplacement = viewer.open({ url: 'https://x/older.png', mimeType: 'image/png' });
+  await destroyStarted;
+  const newestReplacement = viewer.open({ url: 'https://x/newest.png', mimeType: 'image/png' });
+  const closing = viewer.close();
+  const closeOutcome = await Promise.race([
+    closing.then(() => 'settled'),
+    new Promise(resolve => setImmediate(() => resolve('pending'))),
+  ]);
+
+  releaseDestroy();
+  await Promise.all([olderReplacement, newestReplacement, closing]);
+  assert.equal(closeOutcome, 'pending');
+  assert.equal(viewer.snapshot().status, 'closed');
+});
+
 test('real PDF.js runtime parses the pinned multi-page local fixture', async () => {
   const bytes = new Uint8Array(await readFile(new URL('../tests/e2e/fixtures/sample.pdf', import.meta.url)));
   const pdfjs = await loadPdfJsRuntime();

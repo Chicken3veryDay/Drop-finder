@@ -18,6 +18,7 @@ on:
       - "cloud_pages/icon.svg"
       - "cloud_pages/sw.js"
       - "web/**"
+      - "tests/test_dropfinder_cloud_workflow_permissions.py"
       - "docs/UI_REWRITE_CONTRACT.md"
       - ".github/workflows/dropfinder-cloud.yml"
   pull_request:
@@ -27,12 +28,12 @@ on:
       - "cloud_pages/icon.svg"
       - "cloud_pages/sw.js"
       - "web/**"
+      - "tests/test_dropfinder_cloud_workflow_permissions.py"
       - "docs/UI_REWRITE_CONTRACT.md"
       - ".github/workflows/dropfinder-cloud.yml"
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 concurrency:
   group: dropfinder-autonomous-cloud-${{ github.ref }}
@@ -60,6 +61,7 @@ jobs:
           python scripts/autonomous_worker_v4.py --self-test
           rm -rf /tmp/dropfinder-autonomous-merge-test
           python scripts/autonomous_merge.py --self-test
+          python -m unittest -v tests.test_dropfinder_cloud_workflow_permissions
 
   frontend:
     name: Frontend foundation validation
@@ -150,6 +152,11 @@ jobs:
     name: Admit healthy sources and publish atomically
     needs: [frontend, python-validation, scan]
     if: needs.frontend.result == 'success' && needs.python-validation.result == 'success' && needs.scan.result == 'success'
+    permissions:
+      contents: write
+    concurrency:
+      group: dropfinder-pages-publication
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -201,6 +208,15 @@ jobs:
       - name: Publish immutable phone app to gh-pages
         run: |
           set -euo pipefail
+          git fetch origin main
+          for relative in data/runtime.json data/status.json data/catalog.json data/catalog-v4/manifest.json; do
+            safe_name="${relative//\//-}"
+            git show "origin/main:cloud_pages/${relative}" > "/tmp/dropfinder-main-${safe_name}"
+            if ! cmp -s "cloud_pages/${relative}" "/tmp/dropfinder-main-${safe_name}"; then
+              echo "::error::The production snapshot was superseded on main; refusing to publish stale ${relative}."
+              exit 1
+            fi
+          done
           rm -rf /tmp/dropfinder-site
           mkdir -p /tmp/dropfinder-site
           cp -a cloud_pages/. /tmp/dropfinder-site/
@@ -218,6 +234,16 @@ jobs:
           git add -A
           git commit -m "Publish autonomous DropFinder catalog ${GITHUB_SHA}"
           git push --force origin HEAD:gh-pages
+          git fetch origin main gh-pages
+          for relative in data/runtime.json data/status.json data/catalog.json data/catalog-v4/manifest.json; do
+            safe_name="${relative//\//-}"
+            git show "origin/main:cloud_pages/${relative}" > "/tmp/dropfinder-post-main-${safe_name}"
+            git show "origin/gh-pages:${relative}" > "/tmp/dropfinder-post-pages-${safe_name}"
+            if ! cmp -s "/tmp/dropfinder-post-main-${safe_name}" "/tmp/dropfinder-post-pages-${safe_name}"; then
+              echo "::error::Published ${relative} does not match the canonical main snapshot."
+              exit 1
+            fi
+          done
       - name: Verify published branch tree
         run: |
           set -euo pipefail

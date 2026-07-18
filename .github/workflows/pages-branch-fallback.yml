@@ -15,7 +15,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: pages-branch-fallback
+  group: dropfinder-pages-publication
   cancel-in-progress: false
 
 jobs:
@@ -42,6 +42,11 @@ jobs:
       - name: Publish immutable site tree to gh-pages
         run: |
           set -euo pipefail
+          git fetch origin main
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+            echo "::error::The fallback Pages snapshot was superseded on main; refusing to publish it."
+            exit 1
+          fi
           rm -rf /tmp/dropfinder-gh-pages
           mkdir -p /tmp/dropfinder-gh-pages
           cp -a cloud_pages/. /tmp/dropfinder-gh-pages/

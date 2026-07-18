@@ -9,6 +9,7 @@ on:
     paths:
       - "scripts/catalog_v4/**"
       - "tests/catalog_v4/**"
+      - "tests/test_catalog_v4_workflow_permissions.py"
       - "docs/catalog/**"
       - ".github/workflows/catalog-v4.yml"
   push:
@@ -16,12 +17,12 @@ on:
     paths:
       - "scripts/catalog_v4/**"
       - "tests/catalog_v4/**"
+      - "tests/test_catalog_v4_workflow_permissions.py"
       - "docs/catalog/**"
       - ".github/workflows/catalog-v4.yml"
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 concurrency:
   group: dropfinder-catalog-v4-${{ github.event_name }}-${{ github.ref || github.event.workflow_run.head_branch }}
@@ -45,6 +46,7 @@ jobs:
           python -m compileall -q scripts/catalog_v4 tests/catalog_v4
           python -m scripts.catalog_v4.selftest
           python -m unittest discover -s tests/catalog_v4 -v
+          python -m unittest -v tests.test_catalog_v4_workflow_permissions
       - name: Re-run affected retrieval and merge self-tests
         run: |
           set -euo pipefail
@@ -79,6 +81,11 @@ jobs:
       github.event_name == 'workflow_run' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: write
+    concurrency:
+      group: dropfinder-pages-publication
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -114,12 +121,18 @@ jobs:
           git add cloud_pages/data/catalog-v4
           if ! git diff --cached --quiet; then
             git commit -m "Publish DropFinder catalog v4 [skip ci]"
+            git pull --rebase origin main
             git push origin HEAD:main
           fi
       - name: Publish identical generation to gh-pages
         run: |
           set -euo pipefail
-          git fetch origin gh-pages
+          git fetch origin main gh-pages
+          git show origin/main:cloud_pages/data/catalog-v4/manifest.json > /tmp/dropfinder-current-main-manifest.json
+          if ! cmp -s cloud_pages/data/catalog-v4/manifest.json /tmp/dropfinder-current-main-manifest.json; then
+            echo "::error::Catalog v4 generation was superseded on main; refusing to update gh-pages."
+            exit 1
+          fi
           rm -rf /tmp/dropfinder-v4-pages
           git worktree add -B catalog-v4-pages /tmp/dropfinder-v4-pages origin/gh-pages
           rm -rf /tmp/dropfinder-v4-pages/data/catalog-v4
@@ -135,4 +148,11 @@ jobs:
           if ! git -C /tmp/dropfinder-v4-pages diff --cached --quiet; then
             git -C /tmp/dropfinder-v4-pages commit -m "Publish DropFinder catalog v4 ${GITHUB_SHA}"
             git -C /tmp/dropfinder-v4-pages push origin HEAD:gh-pages
+          fi
+          git fetch origin main gh-pages
+          git show origin/main:cloud_pages/data/catalog-v4/manifest.json > /tmp/dropfinder-post-main-manifest.json
+          git show origin/gh-pages:data/catalog-v4/manifest.json > /tmp/dropfinder-post-pages-manifest.json
+          if ! cmp -s /tmp/dropfinder-post-main-manifest.json /tmp/dropfinder-post-pages-manifest.json; then
+            echo "::error::Catalog v4 publication completed without main/gh-pages manifest parity."
+            exit 1
           fi

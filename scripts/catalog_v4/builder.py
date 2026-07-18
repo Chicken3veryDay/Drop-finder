@@ -231,7 +231,6 @@ def _merge_product_field(records: list[dict[str, Any]], key: str) -> Any:
 
 
 
-
 def _product_preference(product: dict[str, Any]) -> tuple[int, int, int, str, str]:
     identity = product.get("provenance", {}).get("identity", {}) if isinstance(product.get("provenance"), dict) else {}
     authority = {
@@ -299,12 +298,27 @@ class CatalogBuilder:
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         normalized_variants: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
-        external_documents: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        external_documents: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         for document in document_records or []:
-            if isinstance(document, dict):
-                source_key = clean_text(document.get("source_product_id") or document.get("product_id") or document.get("product_url"))
-                if source_key:
-                    external_documents[source_key].append(document)
+            if not isinstance(document, dict):
+                continue
+            vendor_id = clean_text(document.get("vendor_id") or document.get("source_id"))
+            source_key = clean_text(document.get("source_product_id") or document.get("product_id") or document.get("product_url"))
+            document_url = clean_text(document.get("url") or document.get("public_url") or document.get("source_url"))
+            rejection_base = {
+                "record_type": "external_document",
+                "source_record_id": stable_digest(vendor_id, source_key, document_url, length=20),
+                "source_id": vendor_id,
+                "source_title": clean_text(document.get("label") or document.get("title")),
+                "url": document_url,
+            }
+            if not vendor_id:
+                rejections.append({**rejection_base, "reason": "external_document_missing_vendor_identity"})
+                continue
+            if not source_key:
+                rejections.append({**rejection_base, "reason": "external_document_missing_product_identity"})
+                continue
+            external_documents[(vendor_id, source_key)].append(document)
 
         for ordinal, raw in enumerate(flattened):
             source_id = clean_text(raw.get("source_id"))
@@ -371,12 +385,13 @@ class CatalogBuilder:
                 clean_text(raw.get("product_id")),
                 product_url,
             ):
-                if key and key in external_documents:
-                    combined_documents.extend(external_documents[key])
+                if key and (source_id, key) in external_documents:
+                    combined_documents.extend(external_documents[(source_id, key)])
             source_variant_id = clean_text(raw.get("source_variant_id") or raw.get("variant_id"))
             documents = normalize_documents(
                 combined_documents,
                 product_id=product_id,
+                vendor_id=source_id,
                 variant_id=variant_id,
                 source_variant_id=source_variant_id,
                 grams=float(grams),
