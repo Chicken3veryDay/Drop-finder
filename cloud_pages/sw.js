@@ -135,33 +135,46 @@ async function prepareLegacyGeneration(generationId, request, response) {
 }
 
 async function prepareGeneration(generationId, seedUrl, seedResponse, seedPayload = null) {
-  if (activeGeneration?.id === generationId || preparing?.id === generationId) return;
+  if (activeGeneration?.id === generationId) return;
+  if (preparing?.id === generationId) return preparing.promise;
+
   const cacheName = generationCacheName(generationId);
-  preparing = { id: generationId, cacheName };
-  const cache = await caches.open(cacheName);
-  await safeCachePut(cache, seedUrl, seedResponse);
-  const realCatalogV4 = seedUrl.includes('/data/catalog-v4/');
-  const manifestResponse = seedUrl.includes('catalog-manifest-v4.json') || seedUrl.endsWith('/catalog-v4/manifest.json')
-    ? await cache.match(seedUrl, { ignoreSearch: true })
-    : await fetch(new URL(realCatalogV4 ? './manifest.json' : './catalog-manifest-v4.json', seedUrl), { cache: 'no-store' });
-  if (!manifestResponse?.ok) { preparing = null; return; }
-  const manifest = seedPayload?.index || seedPayload?.compact_index ? seedPayload : await manifestResponse.clone().json();
-  const descriptor = manifest.compact_index ?? manifest.index;
-  const supportedSchema = manifest.schema_version === 4 || manifest.schema_version === 'dropfinder-catalog-manifest-v4';
-  if (manifest.generation_id !== generationId || !supportedSchema || !(descriptor?.url || descriptor?.path)) { preparing = null; return; }
-  const publicationBase = catalogPublicationBase(seedUrl);
-  const required = [new URL(descriptor.path ?? descriptor.url, publicationBase).href];
-  const vendorDescriptor = manifest.vendor_profiles;
-  if (vendorDescriptor?.url || vendorDescriptor?.path) required.push(new URL(vendorDescriptor.path ?? vendorDescriptor.url, publicationBase).href);
-  for (const vendor of Object.values(manifest.vendors || {})) if (vendor?.url || vendor?.path) required.push(new URL(vendor.path ?? vendor.url, publicationBase).href);
-  const responses = await Promise.all(required.map(url => fetch(url, { cache: 'no-store' })));
-  const identities = await Promise.all(responses.map(response => response.ok ? readGenerationIdentity(response.clone()) : { generationId: null }));
-  if (responses.some(response => !response.ok) || identities.some(identity => identity.generationId !== generationId)) {
-    await caches.delete(cacheName); preparing = null; return;
-  }
-  await Promise.all(responses.map((response, index) => safeCachePut(cache, required[index], response)));
-  preparing = null;
-  await markPrepared({ id: generationId, cacheName, kind: 'v4', preparedAt: Date.now() });
+  const attempt = { id: generationId, cacheName, promise: null };
+  attempt.promise = (async () => {
+    try {
+      const cache = await caches.open(cacheName);
+      await safeCachePut(cache, seedUrl, seedResponse);
+      const realCatalogV4 = seedUrl.includes('/data/catalog-v4/');
+      const manifestResponse = seedUrl.includes('catalog-manifest-v4.json') || seedUrl.endsWith('/catalog-v4/manifest.json')
+        ? await cache.match(seedUrl, { ignoreSearch: true })
+        : await fetch(new URL(realCatalogV4 ? './manifest.json' : './catalog-manifest-v4.json', seedUrl), { cache: 'no-store' });
+      if (!manifestResponse?.ok) return;
+      const manifest = seedPayload?.index || seedPayload?.compact_index ? seedPayload : await manifestResponse.clone().json();
+      const descriptor = manifest.compact_index ?? manifest.index;
+      const supportedSchema = manifest.schema_version === 4 || manifest.schema_version === 'dropfinder-catalog-manifest-v4';
+      if (manifest.generation_id !== generationId || !supportedSchema || !(descriptor?.url || descriptor?.path)) return;
+      const publicationBase = catalogPublicationBase(seedUrl);
+      const required = [new URL(descriptor.path ?? descriptor.url, publicationBase).href];
+      const vendorDescriptor = manifest.vendor_profiles;
+      if (vendorDescriptor?.url || vendorDescriptor?.path) required.push(new URL(vendorDescriptor.path ?? vendorDescriptor.url, publicationBase).href);
+      for (const vendor of Object.values(manifest.vendors || {})) if (vendor?.url || vendor?.path) required.push(new URL(vendor.path ?? vendor.url, publicationBase).href);
+      const responses = await Promise.all(required.map(url => fetch(url, { cache: 'no-store' })));
+      const identities = await Promise.all(responses.map(response => response.ok ? readGenerationIdentity(response.clone()) : { generationId: null }));
+      if (responses.some(response => !response.ok) || identities.some(identity => identity.generationId !== generationId)) {
+        await caches.delete(cacheName);
+        return;
+      }
+      await Promise.all(responses.map((response, index) => safeCachePut(cache, required[index], response)));
+      await markPrepared({ id: generationId, cacheName, kind: 'v4', preparedAt: Date.now() });
+    } catch (error) {
+      await caches.delete(cacheName).catch(() => {});
+      throw error;
+    } finally {
+      if (preparing === attempt) preparing = null;
+    }
+  })();
+  preparing = attempt;
+  return attempt.promise;
 }
 
 async function markPrepared(prepared) {
