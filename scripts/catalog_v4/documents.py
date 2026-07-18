@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .document_urls import canonical_document_url
 from .identity import stable_digest
 from .normalization import canonical_url, clean_text, normalized_search
 
@@ -22,7 +23,7 @@ def normalize_documents(
     for raw in rows:
         if not isinstance(raw, dict):
             continue
-        public_url = canonical_url(raw.get("url") or raw.get("public_url") or raw.get("source_url"), keep_variant=True)
+        public_url = canonical_document_url(raw.get("url") or raw.get("public_url") or raw.get("source_url"))
         if not public_url:
             continue
         kind = normalized_search(raw.get("kind") or raw.get("document_type") or "unknown").replace(" ", "_")

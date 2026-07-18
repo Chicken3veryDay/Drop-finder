@@ -23,13 +23,30 @@ class NormalizationTests(unittest.TestCase):
             "half ounce": Decimal("14"),
             "one ounce": Decimal("28"),
             "two ounces": Decimal("56"),
+            "1 Pound": Decimal("448"),
+            "Quarter Pound": Decimal("112"),
         }
         for label, expected in cases.items():
             with self.subTest(label=label):
                 self.assertEqual(normalize_weight(None, label)[0], expected)
-        self.assertEqual(normalize_weight("7", "7 grams")[0], Decimal("7"))
+        self.assertEqual(normalize_weight("7", "7 grams"), (Decimal("7"), "7 grams"))
+        self.assertEqual(normalize_weight("28.3495", "Bulk flower 1 oz"), (Decimal("28"), "1 oz"))
+        self.assertEqual(normalize_weight("448", "Bulk flower 1 Pound"), (Decimal("448"), "1 Pound"))
+        self.assertIsNone(normalize_weight("7")[0])
         self.assertIsNone(normalize_weight(None, "family pack")[0])
         self.assertIsNone(normalize_weight(-1, "-1g")[0])
+
+    def test_numeric_weight_requires_matching_text_evidence(self) -> None:
+        for value, label in (
+            ("28.3495", None),
+            ("28.3495", "28.3495"),
+            ("28.3495", "Tier 1"),
+            ("28.3495", "THCA 24.1%"),
+            ("56.699", "4 pack"),
+            ("28.3495", "Quarter oz"),
+        ):
+            with self.subTest(value=value, label=label):
+                self.assertIsNone(normalize_weight(value, label)[0])
 
     def test_canonical_strain_name_is_conservative(self) -> None:
         self.assertEqual(
@@ -48,9 +65,9 @@ class NormalizationTests(unittest.TestCase):
             "Sativa": "sativa",
             "Unknown": "unknown",
         }
-        for source, normalized in expected.items():
+        for source, expected_value in expected.items():
             with self.subTest(source=source):
-                self.assertEqual(lineage(source)[0], normalized)
+                self.assertEqual(lineage(source)[0], expected_value)
         self.assertEqual(lineage(None, "A sativa dominant cultivar")[0], "sativa_leaning_hybrid")
         self.assertEqual(lineage(None, "Relaxing evening flower")[0], "unknown")
 

@@ -44,6 +44,9 @@ LD=re.compile(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</sc
 ANCHOR=re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',re.I|re.S)
 META=re.compile(r'<meta\b([^>]+)>',re.I); ATTR=re.compile(r'([:\w-]+)\s*=\s*["\']([^"\']*)["\']',re.I)
 TITLE=re.compile(r'<title\b[^>]*>(.*?)</title>',re.I|re.S)
+STOCK_SEPARATOR=re.compile(r'[_\-/]+')
+NEGATIVE_STOCK=re.compile(r'\b(?:out\s+of\s+stock|outofstock|sold\s+out|unavailable|not(?:\s+\w+){0,2}\s+(?:available|in\s+stock))\b',re.I)
+POSITIVE_STOCK=re.compile(r'\b(?:in\s+stock|instock|available(?:\s+for\s+order)?)\b',re.I)
 
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 def text(v): return WS.sub(' ',TAG.sub(' ',html.unescape(str(v or '')))).strip()
@@ -77,17 +80,20 @@ def fetch(target):
   if len(raw)>LIMIT:raise ValueError('response too large')
   return raw.decode(r.headers.get_content_charset() or 'utf-8','replace'),str(r.headers.get('Content-Type') or '').split(';')[0].lower(),int(getattr(r,'status',200))
 def availability(v):
- s=str(v or '').lower()
- if any(x in s for x in ('instock','in_stock','in stock','available','true')):return 'in_stock'
- if any(x in s for x in ('outofstock','out_of_stock','out of stock','sold out','false')):return 'out_of_stock'
+ if isinstance(v,bool):return 'in_stock' if v else 'out_of_stock'
+ s=WS.sub(' ',STOCK_SEPARATOR.sub(' ',str(v or '').casefold())).strip()
+ if not s:return 'unknown'
+ if s=='false' or NEGATIVE_STOCK.search(s):return 'out_of_stock'
+ if s=='true' or POSITIVE_STOCK.search(s):return 'in_stock'
  return 'unknown'
 def record(sid,vendor,route,name,target,desc='',price=None,stock='',image='',variant=''):
  name=text(name);desc=text(desc);target=url(target,route[1]);combined=f'{name} {desc}'
  if not name or not target or HARD_EXCLUDE.search(combined) or not FLOWER.search(combined) or not (THCA.search(combined) or 'thca' in route[1].lower()):return None
  ambiguous=AMBIGUOUS_FORM.search(combined)
  if ambiguous and FORM_CONTEXT.search(combined) and not EXPLICIT_FLOWER.search(name):return None
- p=num(price);g,weight_label=weight(combined);pots=[num(x) for x in POTENCY.findall(combined)];pot=max([x for x in pots if x and x<=100],default=None)
- return {'id':hashlib.sha256(f'{sid}|{target}|{variant}'.encode()).hexdigest()[:24],'source_id':sid,'vendor':vendor,'name':name,'url':target,'image':url(image,route[1]) if image else '', 'price':p,'grams':g,'source_weight_label':weight_label,'weight_provenance':'explicit_text' if weight_label else 'unavailable','price_per_gram':round(p/g,4) if p and g else None,'thca':pot,'availability':availability(stock),'variant':text(variant),'source_type':route[0],'route_url':route[1],'collected_at':now()}
+ p=num(price);g,weight_label=weight(combined);pots=[num(x) for x in POTENCY.findall(combined)];pot=max([x for x in pots if x and x<=100],default=None);stock_state=availability(stock)
+ stock_method='explicit_boolean' if isinstance(stock,bool) else 'explicit_source_state' if stock_state!='unknown' else 'unknown'
+ return {'id':hashlib.sha256(f'{sid}|{target}|{variant}'.encode()).hexdigest()[:24],'source_id':sid,'vendor':vendor,'name':name,'url':target,'image':url(image,route[1]) if image else '', 'price':p,'grams':g,'source_weight_label':weight_label,'weight_provenance':'explicit_text' if weight_label else 'unavailable','price_per_gram':round(p/g,4) if p and g else None,'thca':pot,'availability':stock_state,'availability_raw':stock,'availability_normalization':stock_method,'variant':text(variant),'source_type':route[0],'route_url':route[1],'collected_at':now()}
 def shopify(payload,sid,vendor,route):
  data=json.loads(payload);rows=[];base=route[1].split('/collections/',1)[0].split('/products.json',1)[0]
  for item in data.get('products',[]) if isinstance(data,dict) else []:
@@ -213,6 +219,9 @@ def merge(inp,out,previous=None):
 def selftest():
  assert grams('1/8th ounce')==3.544;assert grams('quarter oz')==7.0874;assert grams('Quarter Pound')==112.0
  assert all(grams(value) is None for value in ('Tier 1','Type 1','4 pack','THCA 24.1%','THCA 18.2%','THCA 22.4%'))
+ assert all(availability(value)=='out_of_stock' for value in ('unavailable','currently unavailable','not available','not yet available','not in stock','sold out'))
+ assert all(availability(value)=='in_stock' for value in (True,'available','currently available','available for order','in_stock'))
+ assert availability('availability pending')=='unknown'
  route=('shopify','https://example.com/collections/thca-flower/products.json','thca_flower');payload=json.dumps({'products':[{'title':'Blue Dream THCA Flower','handle':'blue','body_html':'3.5g THCA 24.1%','variants':[{'id':1,'title':'3.5g','price':'35','available':True}]},{'title':'THCA Pre-Rolls','handle':'rolls','variants':[{'id':2,'price':'20'}]}]});rows=shopify(payload,'fixture','Fixture',route);assert len(rows)==1 and rows[0]['price_per_gram']==10;print('cloud scanner self-test passed');return 0
 def main():
  p=argparse.ArgumentParser();p.add_argument('--output',type=Path,default=DEFAULT);p.add_argument('--shard',type=int);p.add_argument('--shards',type=int,default=6);p.add_argument('--merge',type=Path);p.add_argument('--previous-catalog',type=Path);p.add_argument('--self-test',action='store_true');a=p.parse_args()
