@@ -267,7 +267,7 @@ function catalogPublicationBase(url) {
   return parsed.href;
 }
 function generationCacheName(id) { return `dropfinder-data-${String(id).replace(/[^a-z0-9._-]/gi, '_')}`; }
-function isHashedAsset(path) { return /\.[a-f0-9]{8,}\.(?:js|css|woff2?|png|svg|webp)$/i.test(path); }
+function isHashedAsset(path) { return /\/assets\/(?:[^/]+\/)*[^/]+-[a-z0-9_-]{8}\.[a-z0-9]+$/i.test(path); }
 function isManifestOrIndex(path) { return /(?:catalog-manifest-v4|catalog-index|vendor-profiles|catalog|status)\.json$/i.test(path) || /\/catalog-v4\/(?:manifest|index)\.json$/i.test(path); }
 function isLegacyCatalogMember(path) { return /\/(?:catalog|status)\.json$/i.test(path) && !path.includes('catalog-manifest-v4'); }
 function isDetailShard(path) { return /(?:details?|shards?)\/.*\.json$/i.test(path); }
