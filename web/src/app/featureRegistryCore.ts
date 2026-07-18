@@ -243,7 +243,7 @@ export const resolveFeatureModules = (records: Record<string, unknown>): Resolve
   return {
     modules: sorted,
     slots,
-    capabilities: capabilityRegistry,
+    capabilities: capabilityRegistry.toReader(),
     diagnostics,
     primaryMarketplace: sorted.find((module) => module.kind === "marketplace") ?? null,
   };

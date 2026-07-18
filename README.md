@@ -1,6 +1,6 @@
 # DropFinder OS v9.0 Autonomous Cloud
 
-DropFinder is a THCA flower-only product intelligence system with real storefront retrieval workers, product-level evidence verification, strict form rejection, source admission, normalized catalog data, source-health reporting, and atomic phone-app publication.
+DropFinder is a multi-product storefront intelligence system with real retrieval workers, product-level evidence verification, type-specific admission rules, normalized catalog data, source-health reporting, and atomic phone-app publication.
 
 ## Live phone app
 
@@ -10,54 +10,56 @@ This GitHub Pages address is the canonical live URL. Open it in Safari or Chrome
 
 The deployed artifact is an isolated `gh-pages` publication branch containing the product catalog, filters, sorting, favorites, source-health drawer, web-app manifest, service worker, and offline cache. It requires no user computer, VM, payment method, cloud account, API credential, SSH key, domain, personal access token, or manually supplied secret.
 
+## Product contract
+
+The current catalog supports separate, type-aware records for:
+
+- cannabis flower;
+- cannabis vape products;
+- psilocybin mushroom metadata for informational use only, with purchase links removed.
+
+Each product type has its own evidence, normalization, comparison, and publication rules. Records that cannot satisfy the applicable contract are rejected or quarantined rather than being coerced into another type. The application does not infer unsafe conversions between incompatible units such as grams and milliliters.
+
 ## Autonomous runtime
 
-The production workflow runs six retrieval shards every three hours and on relevant code changes. Each shard performs real public-storefront requests, bounded retries for transient responses, route aggregation, product-detail verification, price retrieval, and strict classification. The publisher runs only after every shard completes.
+The production workflows perform real public-storefront requests, bounded retries for transient responses, route aggregation, product-detail verification, price and stock retrieval, and type-specific classification. The publisher runs only after the configured retrieval shards complete.
 
 The admission controller then:
 
-1. Admits only sources whose current workers returned qualifying products with valid product URLs and real prices.
-2. Requires product-level evidence for both THCA and flower. Category context alone cannot satisfy the product contract.
-3. Rejects pre-rolls, joints, blunts, concentrates, vapes, edibles, seeds, subscriptions, samplers, bundles, alternate-cannabinoid-only products, generic fragments, and other non-flower forms.
-4. Quarantines failed candidates instead of publishing them as degraded active services.
-5. Writes catalog, status, runtime, quarantine, and product-rejection records.
-6. Publishes the validated tree atomically to `gh-pages`, then re-reads that branch and verifies the zero-degraded and evidence invariants.
+1. Admits only sources whose current workers returned products that satisfy the relevant type contract, with valid public URLs and current prices where purchasing is permitted.
+2. Requires product-level evidence rather than relying on category context alone.
+3. Rejects unsupported forms and records that fail current price, stock, identity, or type-specific evidence gates.
+4. Removes purchase links from informational-only product types.
+5. Quarantines failed candidates instead of publishing them as degraded active services.
+6. Writes catalog, status, runtime, quarantine, and product-rejection records.
+7. Publishes the validated tree atomically to `gh-pages`, then verifies the published branch and zero-degraded invariant.
 
-## Current verified production state
+## Authoritative production state
 
-Generated **2026-07-14 11:28:58 UTC**:
+The repository publishes a new runtime snapshot autonomously, so product, source, route, quarantine, and rejection counts change more frequently than this README. The generated artifacts are the authoritative current state:
 
-- **273** accepted THCA-flower products
-- **12** active sources
-- **12** healthy sources
-- **0** degraded active sources
-- **14** healthy retrieval routes
-- **5** quarantined candidates
-- **1** rejected non-flower product
-- **6** retrieval shards
-- Retrieval workers, admission controller, product sanitizer, catalog merge, and publisher all report `healthy`
+- [`cloud_pages/data/runtime.json`](cloud_pages/data/runtime.json) contains the generation timestamp, product counts by type, active-source count, shard count, and zero-degraded result.
+- [`cloud_pages/data/status.json`](cloud_pages/data/status.json) contains source and route health, fallback use, current limitations, product counts by type, and aggregate rejection reasons.
+- [`cloud_pages/data/catalog-v4/manifest.json`](cloud_pages/data/catalog-v4/manifest.json) identifies the immutable catalog generation and its verified assets.
+- [`cloud_pages/data/quarantine.json`](cloud_pages/data/quarantine.json) contains source candidates excluded from the active catalog.
+- [`cloud_pages/data/rejections.json`](cloud_pages/data/rejections.json) contains product-level rejection evidence.
 
-The currently active sources are Black Tie CBD, Crysp, Green Unicorn Farms, Hello Mary, Holy City Farms, Loud House Hemp, Lucky Elk, Pure Roots Botanicals, Quantum Exotics, Sherlocks Glass & Dispensary, Smoky Mountain CBD, and Stoney Branch Farms.
-
-The five quarantined candidates are not counted as active services: Arete currently blocks GitHub-hosted requests with HTTP 403 after bounded retries; Five Leaf currently exposes no qualifying flower products; Preston's rendered listing does not expose product-level THCA evidence and canonical product links to the worker; Secret Nature's configured collection is empty and its old flower routes return 404; WNC's category shell does not expose product records that pass product-detail verification.
+Do not copy generated counts or vendor lists into hand-maintained documentation. Read the artifacts above or the live application's source-health surface when an exact current value is required.
 
 ## Accuracy and privacy boundary
 
-Every published product carries classification evidence recording explicit THCA and flower signals plus an evidence hash. The final sanitizer independently rechecks every row before persistence. Failed candidates and rejected products are recorded separately rather than silently discarded or mislabeled.
+Every published product carries type-specific evidence and normalized public fields. Final publication independently rechecks each row before persistence. Failed candidates and rejected products are recorded separately rather than silently discarded or mislabeled.
 
-Only normalized public catalog fields, evidence summaries, and aggregate health are published. Raw response bodies, cookies, request headers, authorization data, local databases, queue internals, runtime keys, retained evidence bodies, and operator logs are not published.
+Only normalized public catalog fields, bounded evidence summaries, and aggregate health are published. Raw response bodies, cookies, request headers, authorization data, local databases, queue internals, runtime keys, retained evidence bodies, and operator logs are not published.
 
 ## Hosting boundary
 
-This credential-free design uses scheduled, resumable GitHub Actions workers and an immutable static/PWA publication branch. It is not a continuously resident FastAPI process. A permanent API daemon, browser pool, encrypted evidence service, or writable SQLite server would require a real host account or machine credentials. The current design provides autonomous retrieval, validation, persistence through Git, and an always-accessible phone interface without asking the user for any credentials.
+This credential-free design uses scheduled, resumable GitHub Actions workers and an immutable static/PWA publication branch. It is not a continuously resident FastAPI process. A permanent API daemon, browser pool, encrypted evidence service, or writable SQLite server would require a real host account or machine credentials. The current design provides autonomous retrieval, validation, persistence through Git, and an always-accessible phone interface without asking the user for credentials.
 
-## Deployment records
+## Deployment and maintenance records
 
 - `deployment/autonomous-runtime.json` contains the latest worker runtime receipt.
 - `deployment/cdn.json` identifies the public publication and verified blob hashes.
-- `cloud_pages/data/status.json` contains active service and source health.
-- `cloud_pages/data/quarantine.json` contains failed source candidates.
-- `cloud_pages/data/rejections.json` contains product-level rejection evidence.
 - `docs/REPOSITORY_MAINTENANCE.md` is the canonical future-update and rollback guide.
 
 ## Repository
