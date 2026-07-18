@@ -3,7 +3,12 @@ import { promisify } from "node:util";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
-import { compareSnapshots, publicationRootFrom, snapshotPublicationFiles } from "./publication-utils.mjs";
+import {
+  compareSnapshots,
+  publicationRootFrom,
+  removeGeneratedPublicationFiles,
+  snapshotPublicationFiles,
+} from "./publication-utils.mjs";
 import { verifyPublication } from "./verify-publication.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -12,6 +17,7 @@ const publicationRoot = publicationRootFrom(projectRoot);
 const protectedPaths = ["data", "manifest.webmanifest", "icon.svg", "sw.js"];
 
 const before = await snapshotPublicationFiles(publicationRoot, protectedPaths);
+await removeGeneratedPublicationFiles(publicationRoot);
 await build({ configFile: resolve(projectRoot, "vite.config.ts") });
 await execFileAsync(
   process.execPath,

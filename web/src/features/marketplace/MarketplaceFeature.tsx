@@ -441,8 +441,10 @@ export function MarketplaceFeature({
   } | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const syncQuery = useMemo(
-    () => queryEngine?.query(products, filters, sort) ?? queryMarketplace(products, filters, sort),
-    [products, filters, sort, queryEngine],
+    () => asyncQueryEngine
+      ? { rows: [], total: 0 }
+      : queryEngine?.query(products, filters, sort) ?? queryMarketplace(products, filters, sort),
+    [asyncQueryEngine, products, filters, sort, queryEngine],
   );
   const [asyncQuery, setAsyncQuery] = useState({
     rows: [] as readonly MarketplaceRowProjection[],

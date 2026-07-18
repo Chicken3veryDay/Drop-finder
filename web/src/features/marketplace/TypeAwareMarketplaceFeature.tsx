@@ -354,9 +354,9 @@ function TypedCatalogSection({
         .includes(query);
     });
     const compareNullable = (left: number | null, right: number | null, direction = 1): number => {
-      const leftValue = left ?? Number.POSITIVE_INFINITY;
-      const rightValue = right ?? Number.POSITIVE_INFINITY;
-      return direction * (leftValue - rightValue);
+      if (left === null) return right === null ? 0 : 1;
+      if (right === null) return -1;
+      return direction * (left - right);
     };
     return rows.sort((left, right) => {
       if (sort === "price_asc") return compareNullable(numberValue(left.price), numberValue(right.price));
