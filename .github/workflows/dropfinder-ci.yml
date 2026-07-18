@@ -46,7 +46,7 @@ jobs:
           python scripts/autonomous_merge.py --self-test
           python -m scripts.catalog_v4.selftest
           python -m unittest discover -s tests/catalog_v4 -v
-          python -m unittest discover -s tests -p 'test_vendor_adapters.py' -v
+          python -m unittest discover -s tests -p 'test_vendor_adapters*.py' -v
       - name: Validate published JSON contracts
         run: |
           python - <<'PY'

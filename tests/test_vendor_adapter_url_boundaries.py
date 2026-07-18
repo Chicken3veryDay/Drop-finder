@@ -56,13 +56,13 @@ class MalformedPortBoundaryTests(unittest.TestCase):
         )
         self.assertEqual([row.url for row in rows], ["https://cdn.example.com/good.pdf"])
 
-    def test_fetch_returns_bounded_error_without_building_opener(self):
-        with patch("scripts.vendor_adapters.fetch.urllib.request.build_opener") as build_opener:
+    def test_fetch_returns_bounded_error_without_resolving(self):
+        with patch("scripts.vendor_adapters.fetch.socket.getaddrinfo") as resolver:
             result = fetch_public_document(
                 "https://cdn.example.com:notaport/report.pdf",
                 allowed_hosts={"cdn.example.com"},
             )
-        build_opener.assert_not_called()
+        resolver.assert_not_called()
         self.assertEqual(result.requested_url, "")
         self.assertEqual(result.final_url, "")
         self.assertEqual(result.status, 0)
