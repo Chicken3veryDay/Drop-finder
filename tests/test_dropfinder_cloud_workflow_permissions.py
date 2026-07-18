@@ -40,6 +40,22 @@ class DropfinderCloudWorkflowPermissionTests(unittest.TestCase):
         for job in ("python-validation", "frontend", "scan"):
             self.assertNotIn("    permissions:", _block(self.lines, job, 2))
 
+    def test_publish_job_uses_shared_pages_lock_and_snapshot_guard(self) -> None:
+        publish = _block(self.lines, "publish", 2)
+        self.assertEqual(
+            _mapping(publish, "concurrency", 4),
+            {"group": "dropfinder-pages-publication", "cancel-in-progress": "false"},
+        )
+        joined = "\n".join(publish)
+        self.assertIn(
+            "The production snapshot was superseded on main; refusing to publish stale",
+            joined,
+        )
+        self.assertIn(
+            "does not match the canonical main snapshot.",
+            joined,
+        )
+
     def test_only_publish_job_receives_repository_write_access(self) -> None:
         publish = _block(self.lines, "publish", 2)
         self.assertEqual(_mapping(publish, "permissions", 4), {"contents": "write"})
