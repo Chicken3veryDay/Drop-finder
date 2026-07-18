@@ -163,6 +163,16 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
             for variant in product.get("variants") or []:
                 if variant.get("in_stock") is not True:
                     raise VerificationError(f"detail contains non-stock variant: {product_id}")
+                documents = variant.get("documents")
+                if not isinstance(documents, list):
+                    raise VerificationError(f"variant documents must be a list: {product_id}")
+                for document in documents:
+                    if not isinstance(document, dict):
+                        raise VerificationError(f"document must be an object: {product_id}")
+                    if str(document.get("vendor_id") or "") != vendor_id:
+                        raise VerificationError(f"document vendor mismatch: {product_id}")
+                    if str(document.get("product_id") or "") != product_id:
+                        raise VerificationError(f"document product mismatch: {product_id}")
 
     if product_ids != detail_product_ids:
         raise VerificationError("index/detail product identity mismatch")
