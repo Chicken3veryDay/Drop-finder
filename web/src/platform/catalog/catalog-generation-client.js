@@ -28,6 +28,7 @@ export class CatalogGenerationClient {
       deploymentUrl: options.deploymentUrl ?? this.options.manifestUrl,
     });
     this.active = null;
+    this.lastNetworkVerification = null;
     this.pending = null;
     this.inflight = new Map();
     this.detailLru = new Map();
@@ -43,39 +44,49 @@ export class CatalogGenerationClient {
     return this.active;
   }
 
+  freshnessTimestamp() {
+    if (this.active && this.lastNetworkVerification?.generationId === this.active.generationId) {
+      return this.lastNetworkVerification.verifiedAt;
+    }
+    return this.active?.activatedAt;
+  }
+
   async initialize({ signal, force = false } = {}) {
     const generation = await this.prepare({
       signal,
       force,
       allowCachedFallback: true,
     });
-    await coordinateCatalogGeneration(generation.generationId, { signal });
-    return this.activatePrepared(generation, generation.source ?? 'network');
+    return this.finalizePrepared(generation, signal);
   }
 
   async prepare({ signal, force = false, allowCachedFallback = false } = {}) {
-    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) {
+    const verifiedAt = this.freshnessTimestamp();
+    if (!force && this.active && Number.isFinite(verifiedAt)
+      && Date.now() - verifiedAt <= this.options.staleMs) {
       return this.active;
     }
     if (this.pending) return this.pending;
     const controller = new AbortController();
     const linkedAbort = () => controller.abort(signal?.reason);
     signal?.addEventListener('abort', linkedAbort, { once: true });
-    this.pending = this.loadCompleteGeneration(controller.signal)
-      .catch(async error => {
-        if (allowCachedFallback && error?.name !== 'AbortError') {
-          const cached = await this.cache.getLastComplete();
-          if (cached) return cached;
-        }
-        throw error;
-      })
-      .finally(() => {
-        signal?.removeEventListener('abort', linkedAbort);
-        this.pending = null;
-      });
-    const generation = await this.pending;
-    await this.cache.putComplete(generation);
-    return generation;
+    const run = async () => {
+      try {
+        const generation = await this.loadCompleteGeneration(controller.signal);
+        await this.cache.putComplete(generation);
+        return generation;
+      } catch (error) {
+        if (!allowCachedFallback || error?.name === 'AbortError') throw error;
+        const cached = await this.cache.getLastComplete();
+        if (!cached) throw error;
+        return Object.freeze({ ...cached, source: 'cache-fallback' });
+      }
+    };
+    this.pending = run().finally(() => {
+      signal?.removeEventListener('abort', linkedAbort);
+      this.pending = null;
+    });
+    return this.pending;
   }
 
   async refresh({ signal, allowCachedFallback = false } = {}) {
@@ -84,8 +95,19 @@ export class CatalogGenerationClient {
       force: true,
       allowCachedFallback,
     });
+    return this.finalizePrepared(generation, signal);
+  }
+
+  async finalizePrepared(generation, signal) {
     await coordinateCatalogGeneration(generation.generationId, { signal });
-    return this.activatePrepared(generation, generation.source ?? 'network');
+    const active = this.activatePrepared(generation, generation.source ?? 'network');
+    if (generation.source !== 'cache-fallback') {
+      this.lastNetworkVerification = Object.freeze({
+        generationId: generation.generationId,
+        verifiedAt: Date.now(),
+      });
+    }
+    return active;
   }
 
   activatePrepared(generation, source = generation?.source ?? 'network') {
@@ -189,6 +211,7 @@ export class CatalogGenerationClient {
     const previous = this.active;
     this.cancelObsolete('Catalog generation changed');
     this.detailLru.clear();
+    this.lastNetworkVerification = null;
     this.active = Object.freeze({ ...generation, source });
     for (const listener of this.listeners) listener({ type: 'generation-activated', previous, current: this.active });
   }
