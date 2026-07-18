@@ -7,7 +7,8 @@ const ORIGIN = 'https://app.test';
 const BASE = `${ORIGIN}/cloud_pages/`;
 
 class FakeCache {
-  constructor(fetcher) { this.fetcher = fetcher; this.entries = new Map(); }
+  constructor(fetcher) { this.fetcher = fetcher; this.entries = new Map(); this.putError = null; }
+  failNextPut(error) { this.putError = error; }
   key(input) { return new URL(input?.url ?? String(input), BASE).href.split('#')[0]; }
   async match(input, options = {}) {
     const key = this.key(input);
@@ -19,7 +20,10 @@ class FakeCache {
     }
     return undefined;
   }
-  async put(input, response) { this.entries.set(this.key(input), response.clone()); }
+  async put(input, response) {
+    if (this.putError) { const error = this.putError; this.putError = null; throw error; }
+    this.entries.set(this.key(input), response.clone());
+  }
   async addAll(inputs) {
     for (const input of inputs) {
       const response = await this.fetcher(input);
@@ -85,6 +89,7 @@ async function createRuntime() {
   return {
     network, caches, messages, dispatch,
     setOffline(value) { offline = value; },
+    setResponse(path, response) { network.set(new URL(path, BASE).href, response); },
     setJson(path, value, headers = {}) { network.set(new URL(path, BASE).href, json(value, headers)); },
   };
 }
@@ -142,6 +147,66 @@ test('service worker rejects detail shards from another active generation', asyn
   const response = await runtime.dispatch('fetch', { request: new Request(`${BASE}data/details/00.json?generation=g2`) });
   assert.equal(response.status, 409);
 });
+
+test('navigation uses cached shell for transient HTTP and transport failures', async () => {
+  const runtime = await createRuntime();
+  await runtime.dispatch('install');
+
+  runtime.setResponse('transient', new Response('cdn unavailable', { status: 503 }));
+  const transient = await runtime.dispatch('fetch', { request: navigationRequest('transient') });
+  assert.equal(transient.status, 200);
+  assert.match(await transient.text(), /index\.html/);
+
+  runtime.setOffline(true);
+  const offline = await runtime.dispatch('fetch', { request: navigationRequest('offline') });
+  assert.equal(offline.status, 200);
+  assert.match(await offline.text(), /index\.html/);
+});
+
+test('navigation keeps fresh response when cache persistence fails', async () => {
+  const runtime = await createRuntime();
+  await runtime.dispatch('install');
+  const [appCacheName] = (await runtime.caches.keys()).filter(name => name.startsWith('dropfinder-app-'));
+  const appCache = await runtime.caches.open(appCacheName);
+  const quota = new Error('quota');
+  quota.name = 'QuotaExceededError';
+  appCache.failNextPut(quota);
+
+  runtime.setResponse('fresh', new Response('fresh-shell', { status: 200 }));
+  const response = await runtime.dispatch('fetch', { request: navigationRequest('fresh') });
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'fresh-shell');
+  assert.ok(runtime.messages.some(message => message.type === 'cache-quota' && message.resource === 'navigation'));
+
+  appCache.failNextPut(new Error('storage unavailable'));
+  runtime.setResponse('fresh-again', new Response('fresh-shell-again', { status: 200 }));
+  const second = await runtime.dispatch('fetch', { request: navigationRequest('fresh-again') });
+  assert.equal(await second.text(), 'fresh-shell-again');
+  assert.ok(runtime.messages.some(message => message.type === 'cache-error' && message.resource === 'navigation'));
+});
+
+test('navigation preserves deliberate non-fallback HTTP statuses', async () => {
+  const runtime = await createRuntime();
+  await runtime.dispatch('install');
+  runtime.setResponse('missing', new Response('not found', { status: 404 }));
+
+  const response = await runtime.dispatch('fetch', { request: navigationRequest('missing') });
+  assert.equal(response.status, 404);
+  assert.equal(await response.text(), 'not found');
+});
+
+test('navigation returns concise offline response when network and cache are unavailable', async () => {
+  const runtime = await createRuntime();
+  runtime.setOffline(true);
+
+  const response = await runtime.dispatch('fetch', { request: navigationRequest('offline') });
+  assert.equal(response.status, 503);
+  assert.equal(await response.text(), 'Offline');
+});
+
+function navigationRequest(path) {
+  return { method: 'GET', mode: 'navigate', url: new URL(path, BASE).href };
+}
 
 function json(value, headers = {}) {
   return new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json', ...headers } });

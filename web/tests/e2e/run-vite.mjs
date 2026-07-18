@@ -1,14 +1,12 @@
 import { spawn } from 'node:child_process';
 
+import { createViteArguments } from './vite-server-config.mjs';
+
 const executable = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-const child = spawn(
-  executable,
-  ['vite', '--host', '0.0.0.0', '--port', '4173', '--strictPort', '--force'],
-  {
-    stdio: 'inherit',
-    env: { ...process.env, DROPFINDER_E2E: '1' },
-  },
-);
+const child = spawn(executable, createViteArguments(), {
+  stdio: 'inherit',
+  env: { ...process.env, DROPFINDER_E2E: '1' },
+});
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, () => {

@@ -254,6 +254,37 @@ def fallback_scan(source: tuple) -> tuple[list[dict], list[dict]]:
     return core.dedupe(rows), attempts
 
 
+def product_quality(row: dict) -> tuple[int, int, int, int, int]:
+    """Rank overlapping route records without making traversal order authoritative."""
+    availability = str(row.get("availability") or "").strip().lower()
+    evidence = row.get("classification_evidence")
+    return (
+        1 if availability in {"in_stock", "out_of_stock"} else 0,
+        1 if core.num(row.get("grams")) is not None else 0,
+        1 if core.num(row.get("price")) is not None else 0,
+        1 if bool(str(row.get("image") or "").strip()) else 0,
+        1 if isinstance(evidence, dict) and evidence.get("explicit_thca") and evidence.get("explicit_flower") else 0,
+    )
+
+
+def resolve_route_overlaps(rows: list[dict]) -> list[dict]:
+    """Deduplicate products deterministically, retaining the most complete verified row."""
+    winners: dict[tuple[str, str, str], dict] = {}
+    for row in rows:
+        key = (str(row.get("source_id") or ""), str(row.get("url") or ""), str(row.get("variant") or ""))
+        current = winners.get(key)
+        if current is None or product_quality(row) > product_quality(current):
+            winners[key] = row
+    return sorted(
+        winners.values(),
+        key=lambda row: (
+            str(row.get("vendor") or ""),
+            str(row.get("name") or ""),
+            core.num(row.get("price")) or 1e12,
+        ),
+    )
+
+
 def scan_source(source: tuple) -> tuple[list[dict], dict]:
     started = time.monotonic()
     source_id, vendor, _ = source
@@ -262,7 +293,7 @@ def scan_source(source: tuple) -> tuple[list[dict], dict]:
     fallback_results: list[dict] = []
     if source_id in FALLBACK_HTML_ROUTES:
         fallback, fallback_results = fallback_scan(source)
-        products = core.dedupe([*products, *fallback])
+        products = resolve_route_overlaps([*products, *fallback])
     admitted, reasons, quality = gate(products)
     status = dict(status)
     route_results = list(status.get("route_results") or []) + fallback_results

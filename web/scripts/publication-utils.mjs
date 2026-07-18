@@ -1,8 +1,16 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 
 export const publicationRootFrom = (projectRoot) => resolve(projectRoot, "../cloud_pages");
+
+export const generatedPublicationPaths = Object.freeze(["assets", "index.html"]);
+
+export const removeGeneratedPublicationFiles = async (publicationRoot) => {
+  for (const relativePath of generatedPublicationPaths) {
+    await rm(resolve(publicationRoot, relativePath), { force: true, recursive: true });
+  }
+};
 
 const walkFiles = async (root, current = root) => {
   const entries = await readdir(current, { withFileTypes: true });
