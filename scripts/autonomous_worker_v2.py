@@ -6,6 +6,7 @@ import re
 import sys
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -21,6 +22,7 @@ GENERIC_LABEL = re.compile(
 )
 RETRYABLE_HTTP = {202, 408, 425, 429, 500, 502, 503, 504}
 RETRY_DELAYS = (0.0, 2.0, 5.0)
+_VERIFICATION_FAILURE = "_product_detail_verification_failure"
 
 # Green Unicorn's public category page is a useful fallback when its Woo endpoint
 # replies with the transient 202 response observed on GitHub-hosted workers.
@@ -30,7 +32,7 @@ worker.FALLBACK_HTML_ROUTES.setdefault(
 )
 
 _original_scan_all_routes = worker.aggregate.scan_all_routes
-_original_candidate_to_row = worker.candidate_to_row
+_original_verify_products = worker.verify_products
 
 
 def _slug_title(target: str) -> str:
@@ -102,24 +104,33 @@ def scored_card_candidates(payload: str, route: tuple) -> list[dict]:
     return sorted(candidates.values(), key=lambda row: row.get("candidate_score", 0), reverse=True)[:120]
 
 
-def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -> dict | None:
-    """Resolve taxonomy-fragment anchors from the product's own metadata."""
-    name = worker.core.text(candidate.get("name"))
-    if not GENERIC_LABEL.fullmatch(name):
-        return _original_candidate_to_row(candidate, source_id, vendor)
+def _verification_rejected(candidate: dict, reason: str) -> None:
+    candidate[_VERIFICATION_FAILURE] = reason
+    return None
 
+
+def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -> dict | None:
+    """Verify every HTML card candidate against the product's own metadata."""
+    candidate.pop(_VERIFICATION_FAILURE, None)
+    name = worker.core.text(candidate.get("name"))
     target = str(candidate.get("url") or "")
+    if not target:
+        return _verification_rejected(candidate, "missing_product_target")
     detail_route = ("html", target, "product_detail")
     try:
         payload, content_type, status = worker.core.fetch(target)
     except Exception:
-        return None
-    if status != 200 or content_type not in {"text/html", "application/xhtml+xml"}:
-        return None
+        return _verification_rejected(candidate, "product_detail_fetch_error")
+    if status != 200:
+        return _verification_rejected(candidate, "product_detail_http_status")
+    if content_type not in {"text/html", "application/xhtml+xml"}:
+        return _verification_rejected(candidate, "product_detail_content_type")
 
-    evidence = worker.product_detail_evidence(payload, target)
+    # The card URL is discovery input, not confirming evidence. Exclude it so
+    # a stale THCA-flower slug cannot validate unrelated response content.
+    evidence = worker.product_detail_evidence(payload, "")
     if not worker.has_product_evidence(evidence):
-        return None
+        return _verification_rejected(candidate, "product_detail_missing_evidence")
     meta = worker.core.meta_values(payload)
     title = (
         meta.get("og:title")
@@ -135,7 +146,88 @@ def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -
     stock = meta.get("product:availability") or candidate.get("stock")
     image = meta.get("og:image") or meta.get("twitter:image") or ""
     row = worker.core.record(source_id, vendor, detail_route, title, target, evidence, price, stock, image)
-    return worker.decorate(row, evidence, "product_detail_metadata") if row else None
+    if not row:
+        return _verification_rejected(candidate, "product_detail_record_rejected")
+    return worker.decorate(row, evidence, "product_detail_metadata")
+
+
+def verified_fallback_scan(source: tuple) -> tuple[list[dict], list[dict]]:
+    """Retrieve HTML-card details and retain bounded verification failure diagnostics."""
+    source_id, vendor, _ = source
+    targets = worker.FALLBACK_HTML_ROUTES.get(source_id, [])
+    rows: list[dict] = []
+    attempts: list[dict] = []
+    for index, target in enumerate(targets, 1):
+        route = ("html", target, "thca_flower")
+        started = time.monotonic()
+        result = {
+            "route_id": f"{source_id}-fallback-{index}",
+            "url": target,
+            "source_type": "html_card_product_detail",
+        }
+        try:
+            payload, content_type, http_status = worker.core.fetch(target)
+            candidates = worker.card_candidates(payload, route)
+            extracted: list[dict] = []
+            if candidates:
+                with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as pool:
+                    futures = {
+                        pool.submit(worker.candidate_to_row, candidate, source_id, vendor): candidate
+                        for candidate in candidates
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            row = future.result()
+                        except Exception:
+                            row = None
+                            futures[future][_VERIFICATION_FAILURE] = "product_detail_worker_error"
+                        if row:
+                            extracted.append(row)
+            extracted = worker.core.dedupe(extracted)
+            failure_reasons: dict[str, int] = {}
+            for candidate in candidates:
+                reason = str(candidate.get(_VERIFICATION_FAILURE) or "")
+                if reason:
+                    failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+            result.update(
+                http_status=http_status,
+                content_type=content_type,
+                status="healthy" if extracted else "empty",
+                candidates=len(candidates),
+                products=len(extracted),
+                verification_failures=sum(failure_reasons.values()),
+                verification_failure_reasons=dict(sorted(failure_reasons.items())),
+            )
+            rows.extend(extracted)
+        except Exception as exc:
+            result.update(status="error", error=f"{type(exc).__name__}: {worker.core.text(exc)[:300]}")
+        result["duration_seconds"] = round(time.monotonic() - started, 3)
+        attempts.append(result)
+    return worker.core.dedupe(rows), attempts
+
+
+def _authoritative_structured_product(product: dict) -> bool:
+    """Recognize rows created by the installed Shopify/Woo product parsers."""
+    if str(product.get("source_type") or "") not in {"shopify", "woo"}:
+        return False
+    evidence = product.get("classification_evidence")
+    if not isinstance(evidence, dict) or evidence.get("evidence_source") != "storefront_record":
+        return False
+    primary = str(product.get("primary_type") or "")
+    tags = {str(value) for value in product.get("type_tags") or evidence.get("type_tags") or []}
+    return bool(primary and evidence.get("primary_type") == primary and primary in tags)
+
+
+def provenance_aware_verify_products(products: list[dict], source_id: str, vendor: str) -> list[dict]:
+    """Preserve authoritative structured records; verify every other row independently."""
+    authoritative: list[dict] = []
+    unresolved: list[dict] = []
+    for product in worker.core.dedupe(products):
+        if _authoritative_structured_product(product):
+            authoritative.append(product)
+        else:
+            unresolved.append(product)
+    return worker.core.dedupe([*authoritative, *_original_verify_products(unresolved, source_id, vendor)])
 
 
 def _route_is_retryable(route: dict) -> bool:
@@ -218,10 +310,12 @@ def resilient_scan_all_routes(source: tuple) -> tuple[list[dict], dict]:
     return merged_products, final_status
 
 
-# Patch the proven strict worker in place. Its admission, product-evidence, and
-# publication contracts remain unchanged.
+# Patch the proven strict worker in place. HTML card admission now requires
+# product-detail metadata; structured product parsers retain distinct provenance.
 worker.card_candidates = scored_card_candidates
 worker.candidate_to_row = descriptive_candidate_to_row
+worker.fallback_scan = verified_fallback_scan
+worker.verify_products = provenance_aware_verify_products
 worker.aggregate.scan_all_routes = resilient_scan_all_routes
 
 
@@ -335,6 +429,113 @@ def self_test() -> int:
     assert not _is_retryable({"products": 1, "route_results": [{"http_status": 404}]})
     _self_test_route_retries()
     assert _slug_title("https://example.test/products/archive-runtz-indoor-thca-flower") == "Archive Runtz Indoor Thca Flower"
+
+    category_url = "https://example.test/collections/verification"
+    responses = {
+        "https://example.test/products/gone-thca-flower": ("", "text/html", 404),
+        "https://example.test/products/stale-thca-flower": (
+            '<meta property="og:title" content="Ceramic Coffee Mug">',
+            "text/html",
+            200,
+        ),
+        "https://example.test/products/cbd-flower": (
+            '<meta property="og:title" content="CBD Flower">',
+            "text/html",
+            200,
+        ),
+        "https://example.test/products/thca-gummies": (
+            '<meta property="og:title" content="THCA Gummies">',
+            "text/html",
+            200,
+        ),
+        "https://example.test/products/verified": (
+            """
+            <meta property="og:title" content="Verified THCA Flower">
+            <meta name="description" content="Loose indoor THCA flower buds">
+            <meta property="product:price:amount" content="31.00">
+            <meta property="product:availability" content="in stock">
+            """,
+            "text/html",
+            200,
+        ),
+        category_url: (
+            """
+            <a href="/products/gone-thca-flower">Removed Listing THCA Flower</a>
+            <span>$24.99</span>
+            """,
+            "text/html",
+            200,
+        ),
+    }
+    fetch_calls: list[str] = []
+    original_fetch = worker.core.fetch
+    original_routes = worker.FALLBACK_HTML_ROUTES.get("verification_fixture")
+
+    def fake_fetch(target: str) -> tuple[str, str, int]:
+        fetch_calls.append(target)
+        if target == "https://example.test/products/timeout":
+            raise TimeoutError("synthetic timeout")
+        return responses[target]
+
+    def candidate(slug: str, name: str = "Listing Claims THCA Flower") -> dict:
+        return {
+            "name": name,
+            "url": f"https://example.test/products/{slug}",
+            "price": 24.99,
+            "stock": "in_stock",
+            "card_evidence": f"{name} /products/{slug}",
+        }
+
+    worker.core.fetch = fake_fetch
+    worker.FALLBACK_HTML_ROUTES["verification_fixture"] = [category_url]
+    try:
+        expected_reasons = {
+            "gone-thca-flower": "product_detail_http_status",
+            "timeout": "product_detail_fetch_error",
+            "stale-thca-flower": "product_detail_missing_evidence",
+            "cbd-flower": "product_detail_missing_evidence",
+            "thca-gummies": "product_detail_missing_evidence",
+        }
+        for rejected, expected_reason in expected_reasons.items():
+            rejected_candidate = candidate(rejected)
+            assert descriptive_candidate_to_row(
+                rejected_candidate, "verification_fixture", "Verification Fixture"
+            ) is None
+            assert rejected_candidate[_VERIFICATION_FAILURE] == expected_reason
+
+        verified = descriptive_candidate_to_row(
+            candidate("verified"), "verification_fixture", "Verification Fixture"
+        )
+        assert verified is not None
+        assert verified["name"] == "Verified THCA Flower"
+        assert verified["price"] == 31.0
+        assert verified["classification_evidence"]["evidence_source"] == "product_detail_metadata"
+        assert worker.gate([verified])[0]
+
+        generic_verified = descriptive_candidate_to_row(
+            candidate("verified", "Hybrid"), "verification_fixture", "Verification Fixture"
+        )
+        assert generic_verified is not None
+        assert generic_verified["classification_evidence"]["evidence_source"] == "product_detail_metadata"
+
+        fallback_rows, fallback_attempts = worker.fallback_scan(
+            ("verification_fixture", "Verification Fixture", [])
+        )
+        assert fallback_rows == []
+        assert fallback_attempts[0]["status"] == "empty"
+        assert fallback_attempts[0]["candidates"] == 1
+        assert fallback_attempts[0]["products"] == 0
+        assert fallback_attempts[0]["verification_failures"] == 1
+        assert fallback_attempts[0]["verification_failure_reasons"] == {
+            "product_detail_http_status": 1
+        }
+        assert fetch_calls.count("https://example.test/products/gone-thca-flower") == 2
+    finally:
+        worker.core.fetch = original_fetch
+        if original_routes is None:
+            worker.FALLBACK_HTML_ROUTES.pop("verification_fixture", None)
+        else:
+            worker.FALLBACK_HTML_ROUTES["verification_fixture"] = original_routes
     return 0
 
 
