@@ -1,4 +1,4 @@
-import { CatalogGenerationClient } from '../../platform/catalog/catalog-generation-client.js';
+import { CanonicalCatalogGenerationClient } from './canonical-catalog-generation-client.js';
 import { MarketplaceQueryEngine } from '../../platform/workers/marketplace-query-engine.js';
 import { VirtualMarketplaceAdapter } from '../../platform/virtualization/virtual-marketplace-adapter.js';
 import { DocumentViewerCapability } from '../../platform/documents/document-viewer-capability.js';
@@ -14,7 +14,7 @@ export function registerPlatformCapabilities(registry, options = {}) {
     throw new TypeError('A capability registry with registerCapability() is required');
   }
   const capabilities = {
-    catalog: new CatalogGenerationClient(options.catalog),
+    catalog: new CanonicalCatalogGenerationClient(options.catalog),
     query: new MarketplaceQueryEngine(options.query),
     virtualization: new VirtualMarketplaceAdapter(options.virtualization),
     documents: new DocumentViewerCapability(options.documents),
