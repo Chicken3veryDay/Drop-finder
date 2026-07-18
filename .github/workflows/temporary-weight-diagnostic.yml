@@ -1,9 +1,11 @@
 name: Temporary Weight Diagnostic
 
 on:
-  push:
-    branches:
-      - integration/20260718/weight-evidence
+  pull_request:
+    paths:
+      - "scripts/catalog_v4/**"
+      - "tests/catalog_v4/**"
+      - ".github/workflows/temporary-weight-diagnostic.yml"
 
 permissions:
   contents: read
