@@ -1,5 +1,4 @@
 from .classification import (
-    CANNABIS_EDIBLE,
     CANNABIS_FLOWER,
     CANNABIS_VAPE,
     CONTROLLED_PRODUCT_TYPES,
@@ -15,7 +14,6 @@ from .classification import (
 from .normalization import comparison_price, completeness_score, quantity_fields, type_specific_fields
 
 __all__ = [
-    "CANNABIS_EDIBLE",
     "CANNABIS_FLOWER",
     "CANNABIS_VAPE",
     "CONTROLLED_PRODUCT_TYPES",
