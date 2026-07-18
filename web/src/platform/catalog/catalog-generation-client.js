@@ -1,4 +1,5 @@
 import { PlatformError, assertGenerationEnvelope, abortError } from '../contracts.js';
+import { coordinateCatalogGeneration } from '../pwa/pwa-generation-coordinator.js';
 
 const DEFAULTS = Object.freeze({
   manifestUrl: './data/catalog-v4/manifest.json',
@@ -37,20 +38,19 @@ export class CatalogGenerationClient {
   }
 
   async initialize({ signal, force = false } = {}) {
-    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) return this.active;
-    try {
-      return await this.refresh({ signal, allowCachedFallback: true });
-    } catch (error) {
-      const cached = await this.cache.getLastComplete();
-      if (cached) {
-        this.activate(cached, 'cache-fallback');
-        return cached;
-      }
-      throw error;
-    }
+    const generation = await this.prepare({
+      signal,
+      force,
+      allowCachedFallback: true,
+    });
+    await coordinateCatalogGeneration(generation.generationId, { signal });
+    return this.activatePrepared(generation, generation.source ?? 'network');
   }
 
-  async refresh({ signal, allowCachedFallback = false } = {}) {
+  async prepare({ signal, force = false, allowCachedFallback = false } = {}) {
+    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) {
+      return this.active;
+    }
     if (this.pending) return this.pending;
     const controller = new AbortController();
     const linkedAbort = () => controller.abort(signal?.reason);
@@ -68,11 +68,28 @@ export class CatalogGenerationClient {
         this.pending = null;
       });
     const generation = await this.pending;
-    if (generation.generationId !== this.active?.generationId) {
-      await this.cache.putComplete(generation);
-      this.activate(generation, 'network');
-    }
+    await this.cache.putComplete(generation);
     return generation;
+  }
+
+  async refresh({ signal, allowCachedFallback = false } = {}) {
+    const generation = await this.prepare({
+      signal,
+      force: true,
+      allowCachedFallback,
+    });
+    await coordinateCatalogGeneration(generation.generationId, { signal });
+    return this.activatePrepared(generation, generation.source ?? 'network');
+  }
+
+  activatePrepared(generation, source = generation?.source ?? 'network') {
+    if (!generation?.generationId || !generation?.manifest || !generation?.index) {
+      throw new PlatformError('invalid_generation', 'A complete catalog generation is required for activation');
+    }
+    if (generation.generationId !== this.active?.generationId) {
+      this.activate(generation, source);
+    }
+    return this.active;
   }
 
   async loadCompleteGeneration(signal) {
@@ -360,7 +377,6 @@ function resolvePublicationUrl(value, manifestUrl, publicationBaseUrl) {
   if (path.startsWith('./') || path.startsWith('../')) return new URL(path, manifestUrl).href;
   return new URL(path, publicationBaseUrl).href;
 }
-
 
 function locationHref() {
   return globalThis.location?.href ?? 'https://dropfinder.invalid/';
