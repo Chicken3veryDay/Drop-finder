@@ -1,5 +1,4 @@
 import { PlatformError, assertGenerationEnvelope, abortError } from '../contracts.js';
-import { coordinateCatalogGeneration } from '../pwa/pwa-generation-coordinator.js';
 
 const DEFAULTS = Object.freeze({
   manifestUrl: './data/catalog-v4/manifest.json',
@@ -38,58 +37,49 @@ export class CatalogGenerationClient {
   }
 
   async initialize({ signal, force = false } = {}) {
-    const generation = await this.prepare({
-      signal,
-      force,
-      allowCachedFallback: true,
-    });
-    await coordinateCatalogGeneration(generation.generationId, { signal });
-    return this.activatePrepared(generation, generation.source ?? 'network');
-  }
-
-  async prepare({ signal, force = false, allowCachedFallback = false } = {}) {
-    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) {
-      return this.active;
+    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) return this.active;
+    try {
+      return await this.refresh({ signal, allowCachedFallback: true });
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      const cached = await this.cache.getLastComplete();
+      if (cached) {
+        this.activate(cached, 'cache-fallback');
+        return cached;
+      }
+      throw error;
     }
-    if (this.pending) return this.pending;
-    const controller = new AbortController();
-    const linkedAbort = () => controller.abort(signal?.reason);
-    signal?.addEventListener('abort', linkedAbort, { once: true });
-    this.pending = this.loadCompleteGeneration(controller.signal)
-      .catch(async error => {
-        if (allowCachedFallback && error?.name !== 'AbortError') {
-          const cached = await this.cache.getLastComplete();
-          if (cached) return cached;
-        }
-        throw error;
-      })
-      .finally(() => {
-        signal?.removeEventListener('abort', linkedAbort);
-        this.pending = null;
-      });
-    const generation = await this.pending;
-    await this.cache.putComplete(generation);
-    return generation;
   }
 
   async refresh({ signal, allowCachedFallback = false } = {}) {
-    const generation = await this.prepare({
-      signal,
-      force: true,
-      allowCachedFallback,
-    });
-    await coordinateCatalogGeneration(generation.generationId, { signal });
-    return this.activatePrepared(generation, generation.source ?? 'network');
-  }
-
-  activatePrepared(generation, source = generation?.source ?? 'network') {
-    if (!generation?.generationId || !generation?.manifest || !generation?.index) {
-      throw new PlatformError('invalid_generation', 'A complete catalog generation is required for activation');
+    if (signal?.aborted) throw abortError();
+    if (this.pending?.controller.signal.aborted) this.pending = null;
+    if (!this.pending) {
+      let entry;
+      entry = createSharedOperation(async sharedSignal => {
+        let generation;
+        try {
+          generation = await this.loadCompleteGeneration(sharedSignal);
+        } catch (error) {
+          if (allowCachedFallback && error?.name !== 'AbortError') {
+            const cached = await this.cache.getLastComplete();
+            if (cached) generation = cached;
+          }
+          if (!generation) throw error;
+        }
+        if (sharedSignal.aborted) throw abortError();
+        if (generation.generationId !== this.active?.generationId) {
+          await this.cache.putComplete(generation);
+          if (sharedSignal.aborted) throw abortError();
+          this.activate(generation, 'network');
+        }
+        return generation;
+      }, settledEntry => {
+        if (this.pending === settledEntry) this.pending = null;
+      });
+      this.pending = entry;
     }
-    if (generation.generationId !== this.active?.generationId) {
-      this.activate(generation, source);
-    }
-    return this.active;
+    return consumeSharedOperation(this.pending, signal);
   }
 
   async loadCompleteGeneration(signal) {
@@ -188,18 +178,22 @@ export class CatalogGenerationClient {
   }
 
   async fetchDeduped(key, input, init) {
-    const existing = this.inflight.get(key);
-    if (existing) return existing.promise.then(response => response.clone());
-    const controller = new AbortController();
-    const abort = () => controller.abort(init.signal?.reason);
-    init.signal?.addEventListener('abort', abort, { once: true });
-    const promise = this.fetchBounded(input, { ...init, signal: controller.signal })
-      .finally(() => {
-        init.signal?.removeEventListener('abort', abort);
-        this.inflight.delete(key);
-      });
-    this.inflight.set(key, { controller, promise });
-    return promise.then(response => response.clone());
+    if (init.signal?.aborted) throw abortError();
+    let entry = this.inflight.get(key);
+    if (entry?.controller.signal.aborted) {
+      this.inflight.delete(key);
+      entry = null;
+    }
+    if (!entry) {
+      entry = createSharedOperation(
+        sharedSignal => this.fetchBounded(input, { ...init, signal: sharedSignal }),
+        settledEntry => {
+          if (this.inflight.get(key) === settledEntry) this.inflight.delete(key);
+        },
+      );
+      this.inflight.set(key, entry);
+    }
+    return consumeSharedOperation(entry, init.signal, response => response.clone());
   }
 
   async fetchBounded(input, { signal, maxBytes, ...init }) {
@@ -262,6 +256,67 @@ export class MemoryGenerationCache {
   constructor() { this.complete = null; }
   async getLastComplete() { return this.complete; }
   async putComplete(value) { this.complete = value; }
+}
+
+function createSharedOperation(start, onSettled) {
+  const controller = new AbortController();
+  const entry = {
+    controller,
+    consumers: new Set(),
+    settled: false,
+    promise: null,
+  };
+  entry.promise = Promise.resolve()
+    .then(() => start(controller.signal))
+    .finally(() => {
+      entry.settled = true;
+      onSettled(entry);
+    });
+  return entry;
+}
+
+function consumeSharedOperation(entry, signal, transform = value => value) {
+  if (signal?.aborted) return Promise.reject(abortError());
+  const consumer = {};
+  entry.consumers.add(consumer);
+
+  return new Promise((resolve, reject) => {
+    let completed = false;
+    let onAbort;
+    const release = reason => {
+      signal?.removeEventListener('abort', onAbort);
+      entry.consumers.delete(consumer);
+      if (!entry.settled && entry.consumers.size === 0 && !entry.controller.signal.aborted) {
+        entry.controller.abort(reason ?? 'Shared request has no active consumers');
+      }
+    };
+    const settle = (handler, value, reason) => {
+      if (completed) return;
+      completed = true;
+      release(reason);
+      handler(value);
+    };
+    onAbort = () => settle(reject, abortError(), signal?.reason);
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    entry.promise.then(
+      value => {
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        let transformed;
+        try { transformed = transform(value); }
+        catch (error) {
+          settle(reject, error);
+          return;
+        }
+        settle(resolve, transformed);
+      },
+      error => settle(reject, error),
+    );
+    if (signal?.aborted) onAbort();
+  });
 }
 
 async function boundedResponse(response, maxBytes, signal) {
@@ -377,6 +432,7 @@ function resolvePublicationUrl(value, manifestUrl, publicationBaseUrl) {
   if (path.startsWith('./') || path.startsWith('../')) return new URL(path, manifestUrl).href;
   return new URL(path, publicationBaseUrl).href;
 }
+
 
 function locationHref() {
   return globalThis.location?.href ?? 'https://dropfinder.invalid/';
