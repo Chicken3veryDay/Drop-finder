@@ -35,6 +35,8 @@ export class MarketplaceQueryEngine {
     this.requestVersion = 0;
     this.pending = new Map();
     this.initializationWaiters = new Set();
+    this.inFlightVersion = null;
+    this.queuedWorkerRequest = null;
     this.crashCount = 0;
     this.workerRestarts = 0;
     this.mode = 'uninitialized';
@@ -91,6 +93,7 @@ export class MarketplaceQueryEngine {
       if (oldVersion < version) {
         deferred.reject(new DOMException('Superseded by a newer query', 'AbortError'));
         this.pending.delete(oldVersion);
+        if (this.queuedWorkerRequest?.version === oldVersion) this.queuedWorkerRequest = null;
       }
     }
     if (this.mode === 'sync') {
@@ -100,7 +103,6 @@ export class MarketplaceQueryEngine {
       });
     }
 
-    const worker = this.worker;
     return new Promise((resolve, reject) => {
       const deferred = { resolve, reject };
       this.pending.set(version, deferred);
@@ -109,14 +111,47 @@ export class MarketplaceQueryEngine {
         if (oldest === version) break;
         this.pending.get(oldest)?.reject(new DOMException('Query queue was compacted', 'AbortError'));
         this.pending.delete(oldest);
+        if (this.queuedWorkerRequest?.version === oldest) this.queuedWorkerRequest = null;
       }
-      try {
-        worker.postMessage({ type: 'query', generationId: this.generationId, version, request });
-      } catch (error) {
-        if (this.pending.get(version) === deferred) this.pending.delete(version);
-        reject(new PlatformError('worker_dispatch_failed', 'Marketplace search worker could not accept the query', error));
-      }
+      const work = { version, request, deferred };
+      if (this.inFlightVersion == null) this.dispatchWorkerQuery(work);
+      else this.queuedWorkerRequest = work;
     });
+  }
+
+  dispatchWorkerQuery(work) {
+    const worker = this.worker;
+    if (this.mode !== 'worker' || !worker) {
+      if (this.pending.get(work.version) === work.deferred) this.pending.delete(work.version);
+      work.deferred.reject(new PlatformError('worker_unavailable', 'Marketplace search worker is unavailable'));
+      return;
+    }
+    this.inFlightVersion = work.version;
+    try {
+      worker.postMessage({
+        type: 'query',
+        generationId: this.generationId,
+        version: work.version,
+        request: work.request,
+      });
+    } catch (error) {
+      if (this.inFlightVersion === work.version) this.inFlightVersion = null;
+      if (this.pending.get(work.version) === work.deferred) this.pending.delete(work.version);
+      work.deferred.reject(new PlatformError(
+        'worker_dispatch_failed',
+        'Marketplace search worker could not accept the query',
+        error,
+      ));
+      this.dispatchQueuedWorkerQuery();
+    }
+  }
+
+  dispatchQueuedWorkerQuery() {
+    if (this.inFlightVersion != null) return;
+    const work = this.queuedWorkerRequest;
+    this.queuedWorkerRequest = null;
+    if (!work || this.pending.get(work.version) !== work.deferred) return;
+    this.dispatchWorkerQuery(work);
   }
 
   waitForInitialization() {
@@ -141,14 +176,18 @@ export class MarketplaceQueryEngine {
 
   handleWorkerMessage(message, worker = this.worker) {
     if (!worker || worker !== this.worker || message?.type !== 'result') return;
+    const completedInFlight = message.version === this.inFlightVersion;
+    if (completedInFlight) this.inFlightVersion = null;
     const deferred = this.pending.get(message.version);
-    if (!deferred) return;
-    this.pending.delete(message.version);
-    if (message.generationId !== this.generationId || message.version !== this.requestVersion) {
-      deferred.reject(new DOMException('Stale worker response', 'AbortError'));
-      return;
+    if (deferred) {
+      this.pending.delete(message.version);
+      if (message.generationId !== this.generationId || message.version !== this.requestVersion) {
+        deferred.reject(new DOMException('Stale worker response', 'AbortError'));
+      } else {
+        deferred.resolve(message.result);
+      }
     }
-    deferred.resolve(message.result);
+    if (completedInFlight) this.dispatchQueuedWorkerQuery();
   }
 
   handleWorkerCrash(worker = this.worker) {
@@ -173,6 +212,8 @@ export class MarketplaceQueryEngine {
 
   attachWorker(worker) {
     this.worker = worker;
+    this.inFlightVersion = null;
+    this.queuedWorkerRequest = null;
     this.mode = 'worker';
     worker.onmessage = event => this.handleWorkerMessage(event.data, worker);
     worker.onerror = () => this.handleWorkerCrash(worker);
@@ -182,6 +223,8 @@ export class MarketplaceQueryEngine {
   disposeWorker() {
     const worker = this.worker;
     this.worker = null;
+    this.inFlightVersion = null;
+    this.queuedWorkerRequest = null;
     if (!worker) return;
     worker.onmessage = null;
     worker.onerror = null;
