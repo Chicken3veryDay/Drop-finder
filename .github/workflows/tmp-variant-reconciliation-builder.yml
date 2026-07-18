@@ -1,0 +1,254 @@
+name: Temporary Variant Reconciliation Builder
+
+on:
+  push:
+    branches:
+      - fix/issue-50-reconcile-duplicate-variants
+
+permissions:
+  contents: write
+
+jobs:
+  reconstruct:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-50-reconcile-duplicate-variants
+      - name: Apply focused variant reconciliation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          path = Path('scripts/catalog_v4/builder.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '''def _resolve_duplicate_product_urls(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+          '''
+          helpers = '''def _variant_for_reconciled_product(
+              variant: dict[str, Any],
+              *,
+              selected_product_id: str,
+              source_product_id: str,
+          ) -> dict[str, Any]:
+              copied = dict(variant)
+              identity = dict(copied.get("identity_provenance") or {})
+              identity["reconciled_from_product_id"] = source_product_id
+              copied["identity_provenance"] = identity
+              documents: list[dict[str, Any]] = []
+              for raw_document in copied.get("documents") or []:
+                  if not isinstance(raw_document, dict):
+                      continue
+                  document = dict(raw_document)
+                  document["product_id"] = selected_product_id
+                  if document.get("scope") in {"variant", "weight"}:
+                      document["variant_id"] = copied.get("variant_id", "")
+                  documents.append(document)
+              copied["documents"] = documents
+              return copied
+
+
+          def _reconcile_product_url_variants(
+              candidates: list[dict[str, Any]],
+              *,
+              selected_product_id: str,
+          ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+              variant_by_id: dict[str, dict[str, Any]] = {}
+              resolutions: list[dict[str, Any]] = []
+              for product in sorted(candidates, key=lambda item: str(item.get("product_id") or "")):
+                  source_product_id = str(product.get("product_id") or "")
+                  for original in product.get("variants") or []:
+                      if not isinstance(original, dict):
+                          continue
+                      candidate = _variant_for_reconciled_product(
+                          original,
+                          selected_product_id=selected_product_id,
+                          source_product_id=source_product_id,
+                      )
+                      variant_id = str(candidate.get("variant_id") or "")
+                      current = variant_by_id.get(variant_id)
+                      if current is None:
+                          variant_by_id[variant_id] = candidate
+                          continue
+                      selected = max((current, candidate), key=_variant_completeness)
+                      discarded = candidate if selected is current else current
+                      variant_by_id[variant_id] = selected
+                      resolutions.append({
+                          "variant_id": variant_id,
+                          "selected_collected_at": selected.get("collected_at", ""),
+                          "discarded_collected_at": discarded.get("collected_at", ""),
+                          "method": "product_url_duplicate_variant_id_completeness_then_freshness",
+                      })
+
+              variant_by_weight: dict[str, dict[str, Any]] = {}
+              for candidate in variant_by_id.values():
+                  weight_key = f"{float(candidate['grams']):.4f}"
+                  current = variant_by_weight.get(weight_key)
+                  if current is None:
+                      variant_by_weight[weight_key] = candidate
+                      continue
+                  selected = max((current, candidate), key=_variant_completeness)
+                  discarded = candidate if selected is current else current
+                  variant_by_weight[weight_key] = selected
+                  resolutions.append({
+                      "normalized_grams": float(candidate["grams"]),
+                      "selected_variant_id": selected["variant_id"],
+                      "discarded_variant_id": discarded["variant_id"],
+                      "method": "product_url_duplicate_weight_completeness_then_freshness",
+                  })
+
+              variants = sorted(
+                  variant_by_weight.values(),
+                  key=lambda row: (float(row["grams"]), float(row["current_price"]), row["variant_id"]),
+              )
+              return variants, resolutions
+
+
+          def _resolve_duplicate_product_urls(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+          '''
+          text = replace_once(text, marker, helpers, 'variant helpers')
+          old = '''        selected_original = max(candidates, key=_product_preference)
+                  selected = dict(selected_original)
+                  selected["provenance"] = dict(selected.get("provenance") or {})
+                  selected["provenance"]["product_url_conflict_resolution"] = {
+                      "method": "source_authority_then_variant_coverage_then_completeness_then_freshness",
+                      "selected_product_id": selected["product_id"],
+                      "discarded_product_ids": sorted(
+                          str(item.get("product_id") or "") for item in candidates if item is not selected_original
+                      ),
+                      "canonical_product_url": key[1],
+                  }
+                  resolved.append(selected)
+          '''
+          new = '''        selected_original = max(candidates, key=_product_preference)
+                  selected = dict(selected_original)
+                  selected["provenance"] = dict(selected.get("provenance") or {})
+                  merged_variants, variant_resolutions = _reconcile_product_url_variants(
+                      candidates,
+                      selected_product_id=str(selected["product_id"]),
+                  )
+                  selected["variants"] = merged_variants
+                  prior_resolutions: list[dict[str, Any]] = []
+                  candidate_duplicate_resolutions: dict[str, list[dict[str, Any]]] = {}
+                  for candidate in sorted(candidates, key=lambda item: str(item.get("product_id") or "")):
+                      candidate_id = str(candidate.get("product_id") or "")
+                      candidate_resolutions = candidate.get("provenance", {}).get("duplicate_resolutions", [])
+                      if not isinstance(candidate_resolutions, list):
+                          continue
+                      copied_resolutions = [dict(item) for item in candidate_resolutions if isinstance(item, dict)]
+                      if copied_resolutions:
+                          candidate_duplicate_resolutions[candidate_id] = copied_resolutions
+                      for item in copied_resolutions:
+                          prior_resolutions.append({**item, "source_product_id": candidate_id})
+                  selected["provenance"]["duplicate_resolutions"] = prior_resolutions + variant_resolutions
+                  candidate_variant_count = sum(len(item.get("variants") or []) for item in candidates)
+                  selected["provenance"]["product_url_conflict_resolution"] = {
+                      "method": "source_authority_then_variant_coverage_then_completeness_then_freshness",
+                      "variant_reconciliation_method": "variant_id_then_normalized_weight_completeness_then_freshness",
+                      "selected_product_id": selected["product_id"],
+                      "discarded_product_ids": sorted(
+                          str(item.get("product_id") or "") for item in candidates if item is not selected_original
+                      ),
+                      "canonical_product_url": key[1],
+                      "candidate_variant_count": candidate_variant_count,
+                      "retained_variant_count": len(merged_variants),
+                      "discarded_variant_count": candidate_variant_count - len(merged_variants),
+                      "candidate_variant_counts": {
+                          str(item.get("product_id") or ""): len(item.get("variants") or [])
+                          for item in sorted(candidates, key=lambda product: str(product.get("product_id") or ""))
+                      },
+                      "candidate_duplicate_resolutions": candidate_duplicate_resolutions,
+                  }
+                  resolved.append(selected)
+          '''
+          text = replace_once(text, old, new, 'duplicate URL reconciliation')
+          path.write_text(text, encoding='utf-8')
+
+          test_path = Path('tests/catalog_v4/test_builder.py')
+          tests = test_path.read_text(encoding='utf-8')
+          insertion = '''
+              def test_duplicate_product_url_reconciliation_preserves_unique_weights_and_documents(self) -> None:
+                  url = "https://vendor.example/products/blue-dream"
+                  rows = [
+                      {
+                          "source_id": "vendor", "vendor": "Vendor", "source_product_id": "123", "source_variant_id": "v-35",
+                          "name": "Blue Dream THCA Flower | 3.5g", "variant": "3.5g", "url": url,
+                          "availability": "in_stock", "price": 25,
+                          "documents": [{"kind": "coa", "scope": "variant", "source_variant_id": "v-35", "url": "https://lab.example/35.pdf"}],
+                      },
+                      {
+                          "source_id": "vendor", "vendor": "Vendor", "source_variant_id": "v-7",
+                          "name": "Blue Dream THCA Flower | 7g", "variant": "7g", "url": url,
+                          "availability": "in_stock", "price": 40,
+                          "documents": [{"kind": "coa", "scope": "variant", "source_variant_id": "v-7", "url": "https://lab.example/7.pdf"}],
+                      },
+                  ]
+                  result = build_catalog(rows, generated_at="2026-01-01T00:00:00Z", detail_shards=1)
+                  self.assertEqual(result.product_count, 1)
+                  self.assertEqual(result.variant_count, 2)
+                  index_product = read_json_bytes(result.files["catalog-v4/index.json"])["products"][0]
+                  self.assertEqual({float(variant["grams"]) for variant in index_product["variants"]}, {3.5, 7.0})
+                  detail = read_json_bytes(result.files["catalog-v4/details/000.json"])["products"][0]
+                  self.assertEqual(detail["provenance"]["identity"]["method"], "source_product_identity")
+                  self.assertEqual(
+                      {document["public_url"] for variant in detail["variants"] for document in variant["documents"]},
+                      {"https://lab.example/35.pdf", "https://lab.example/7.pdf"},
+                  )
+                  self.assertTrue(all(
+                      document["product_id"] == detail["product_id"]
+                      for variant in detail["variants"]
+                      for document in variant["documents"]
+                  ))
+                  resolution = detail["provenance"]["product_url_conflict_resolution"]
+                  self.assertEqual(resolution["candidate_variant_count"], 2)
+                  self.assertEqual(resolution["retained_variant_count"], 2)
+                  self.assertEqual(resolution["discarded_variant_count"], 0)
+
+              def test_duplicate_product_url_reconciliation_does_not_restore_rejected_stock(self) -> None:
+                  url = "https://vendor.example/products/blue-dream"
+                  rows = [
+                      {
+                          "source_id": "vendor", "vendor": "Vendor", "source_product_id": "123", "source_variant_id": "v-35",
+                          "name": "Blue Dream THCA Flower | 3.5g", "variant": "3.5g", "url": url,
+                          "availability": "in_stock", "price": 25,
+                      },
+                      {
+                          "source_id": "vendor", "vendor": "Vendor", "source_variant_id": "v-7",
+                          "name": "Blue Dream THCA Flower | 7g", "variant": "7g", "url": url,
+                          "availability": "out_of_stock", "price": 40,
+                      },
+                  ]
+                  result = build_catalog(rows, generated_at="2026-01-01T00:00:00Z", detail_shards=1)
+                  self.assertEqual(result.product_count, 1)
+                  self.assertEqual(result.variant_count, 1)
+                  index_product = read_json_bytes(result.files["catalog-v4/index.json"])["products"][0]
+                  self.assertEqual([float(variant["grams"]) for variant in index_product["variants"]], [3.5])
+                  self.assertEqual(result.rejections["reason_counts"]["out_of_stock_variant"], 1)
+          '''.replace('          ', '')
+          marker = '    def test_write_and_verify_publication(self) -> None:\n'
+          tests = replace_once(tests, marker, insertion + '\n' + marker, 'focused builder tests')
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate focused catalog stack
+        run: |
+          python -m py_compile scripts/catalog_v4/*.py
+          python -m unittest tests.catalog_v4.test_builder
+      - name: Commit final reconstruction
+        shell: bash
+        run: |
+          rm -f .github/workflows/tmp-variant-reconciliation-builder.yml .github/.tmp-variant-reconciliation-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/catalog_v4/builder.py tests/catalog_v4/test_builder.py .github/workflows/tmp-variant-reconciliation-builder.yml .github/.tmp-variant-reconciliation-trigger
+          git commit -m "fix: reconcile variants across duplicate product URLs"
+          git push origin HEAD:fix/issue-50-reconcile-duplicate-variants
