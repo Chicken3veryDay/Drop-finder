@@ -107,9 +107,13 @@ def self_test(reliability) -> int:
         worker.FALLBACK_HTML_ROUTES["fixture"] = ["https://example.test/category"]
         worker.card_candidates = lambda payload, route: [{"url": "https://example.test/products/a"}]
         worker.candidate_to_row = lambda candidate, source_id, vendor: {
+            "id": "fixture-product",
             "source_id": source_id,
+            "vendor": vendor,
+            "name": "Fixture THCA Flower",
             "url": candidate["url"],
             "variant": "",
+            "price": 25.0,
         }
         scan = install(reliability)
 
