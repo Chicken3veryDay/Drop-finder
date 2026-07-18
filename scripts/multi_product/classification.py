@@ -6,23 +6,16 @@ from typing import Iterable
 
 CANNABIS_FLOWER = "cannabis_flower"
 CANNABIS_VAPE = "cannabis_vape"
-CANNABIS_EDIBLE = "cannabis_edible"
 PSILOCYBIN_MUSHROOM = "psilocybin_mushroom"
 PSILOCYBIN_VAPE = "psilocybin_vape"
 
 SUPPORTED_PRODUCT_TYPES = (
     CANNABIS_FLOWER,
     CANNABIS_VAPE,
-    CANNABIS_EDIBLE,
     PSILOCYBIN_MUSHROOM,
     PSILOCYBIN_VAPE,
 )
-ENABLED_PRODUCT_TYPES = (
-    CANNABIS_FLOWER,
-    CANNABIS_VAPE,
-    PSILOCYBIN_MUSHROOM,
-    PSILOCYBIN_VAPE,
-)
+ENABLED_PRODUCT_TYPES = SUPPORTED_PRODUCT_TYPES
 CONTROLLED_PRODUCT_TYPES = frozenset((PSILOCYBIN_MUSHROOM, PSILOCYBIN_VAPE))
 
 SPACE = re.compile(r"\s+")
@@ -38,7 +31,6 @@ VAPE = re.compile(
     r"510(?:\s+thread(?:ed)?)?|pods?|vape\s+pens?)\b",
     re.I,
 )
-EDIBLE = re.compile(r"\b(?:gumm(?:y|ies)|edibles?|chocolates?|cand(?:y|ies)|baked\s+goods?)\b", re.I)
 PSILOCYBIN = re.compile(
     r"\b(?:psilocybin|psilocin|magic\s+mushrooms?|psychedelic\s+mushrooms?|"
     r"psilocybe(?:\s+(?:cubensis|natalensis|cyanescens|semilanceata|azurescens))?)\b",
@@ -102,7 +94,6 @@ def classify_product(
     has_cannabis = bool(CANNABIS.search(text))
     has_flower = bool(FLOWER.search(text))
     has_vape = bool(VAPE.search(text))
-    has_edible = bool(EDIBLE.search(text))
     has_psilocybin = bool(PSILOCYBIN.search(text))
     has_mushroom = bool(MUSHROOM.search(text))
     has_amanita = bool(AMANITA.search(text))
@@ -112,16 +103,13 @@ def classify_product(
         tags.append(CANNABIS_FLOWER)
     if has_cannabis and has_vape:
         tags.append(CANNABIS_VAPE)
-    if has_cannabis and has_edible:
-        tags.append(CANNABIS_EDIBLE)
     if has_psilocybin and has_mushroom and not has_vape and not has_amanita:
         tags.append(PSILOCYBIN_MUSHROOM)
     if has_psilocybin and has_vape and not has_amanita:
         tags.append(PSILOCYBIN_VAPE)
 
     ordered = _ordered_tags(tags)
-    enabled = tuple(tag for tag in ordered if tag in ENABLED_PRODUCT_TYPES)
-    if not enabled:
+    if not ordered:
         return None
 
     primary = next(
@@ -132,7 +120,7 @@ def classify_product(
             CANNABIS_VAPE,
             CANNABIS_FLOWER,
         )
-        if product_type in enabled
+        if product_type in ordered
     )
     evidence: dict[str, bool | str | tuple[str, ...]] = {
         "primary_type": primary,
@@ -156,7 +144,7 @@ def classify_product(
 def validates_classification(classification: ProductClassification) -> bool:
     evidence = classification.evidence
     primary = classification.primary_type
-    if primary not in ENABLED_PRODUCT_TYPES or primary not in classification.type_tags:
+    if primary not in SUPPORTED_PRODUCT_TYPES or primary not in classification.type_tags:
         return False
     if primary == CANNABIS_FLOWER:
         return bool(evidence.get("explicit_thca") and evidence.get("explicit_flower"))
