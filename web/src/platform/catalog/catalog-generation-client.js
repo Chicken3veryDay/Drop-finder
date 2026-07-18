@@ -99,9 +99,10 @@ export class CatalogGenerationClient {
   }
 
   async finalizePrepared(generation, signal) {
+    const networkVerified = generation.source !== 'cache-fallback' && generation !== this.active;
     await coordinateCatalogGeneration(generation.generationId, { signal });
     const active = this.activatePrepared(generation, generation.source ?? 'network');
-    if (generation.source !== 'cache-fallback') {
+    if (networkVerified) {
       this.lastNetworkVerification = Object.freeze({
         generationId: generation.generationId,
         verifiedAt: Date.now(),
