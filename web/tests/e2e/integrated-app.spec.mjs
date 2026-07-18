@@ -83,6 +83,27 @@ async function installDocumentCatalogFixture(page) {
   await page.route(/\/data\/catalog-v4\/details\/000\.json(?:\?.*)?$/, (route) => route.fulfill(json(detailText)));
 }
 
+async function waitForFixtureMarketplace(page) {
+  const row = page.locator('.df-row').first();
+  const retry = page.getByRole('button', { name: 'Retry' });
+
+  await expect.poll(async () => {
+    if (await row.isVisible()) return 'ready';
+    if (await retry.isVisible()) return 'retry';
+    return 'pending';
+  }, {
+    timeout: 15_000,
+    message: 'The fixture should either load or expose the tracked initialization retry state',
+  }).not.toBe('pending');
+
+  // Issue #248 tracks the catalog/query-engine startup race separately. Recover
+  // through the real user-facing path so this regression continues to prove the
+  // document focus boundary rather than passing or failing on unrelated timing.
+  if (await retry.isVisible()) await retry.click();
+  await expect(row).toBeVisible();
+  return row;
+}
+
 test('integrated marketplace loads catalog-v4 and preserves bounded accessible interaction', async ({ page }) => {
   await page.goto('/');
 
@@ -117,8 +138,7 @@ test('integrated document portal traps backward focus from its initially focused
   await installDocumentCatalogFixture(page);
   await page.goto('/');
 
-  const row = page.locator('.df-row').first();
-  await expect(row).toBeVisible();
+  const row = await waitForFixtureMarketplace(page);
   await row.click();
 
   const opener = page.getByRole('button', { name: 'Open COA' });
