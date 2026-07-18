@@ -5,8 +5,11 @@ import ipaddress
 import posixpath
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
 
+# Global removal is intentionally limited to unambiguous campaign/tracking
+# namespaces. Generic keys such as ref, source, and referrer are semantic by
+# default because vendors may use them to select reports, batches, or products.
 TRACKING_KEYS = {
-    "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "referrer", "source",
+    "fbclid", "gclid", "mc_cid", "mc_eid",
     "utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term",
 }
 
@@ -63,7 +66,11 @@ def canonicalize_url(value: str, base_url: str = "", allowed_hosts: set[str] | N
     path = quote(posixpath.normpath(path), safe="/%:@-._~!$&'()*+,;=")
     if parsed.path.endswith("/") and not path.endswith("/"):
         path += "/"
-    query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in TRACKING_KEYS]
+    query = [
+        (key, item)
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in TRACKING_KEYS
+    ]
     query.sort(key=lambda pair: (pair[0].lower(), pair[1]))
     return urlunsplit((scheme, netloc, path, urlencode(query, doseq=True), ""))
 
