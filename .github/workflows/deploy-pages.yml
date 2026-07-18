@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "cloud_pages/**"
+      - "web/scripts/verify-publication.mjs"
+      - "web/scripts/verify-pages-endpoint.mjs"
+      - "web/scripts/publication_gate.py"
       - ".github/workflows/deploy-pages.yml"
   issues:
     types: [opened]
@@ -34,6 +37,12 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
@@ -42,23 +51,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s cloud_pages/index.html
-          test -s cloud_pages/data/catalog.json
-          test -s cloud_pages/data/status.json
-          python -m json.tool cloud_pages/data/catalog.json >/dev/null
-          python -m json.tool cloud_pages/data/status.json >/dev/null
-          python -m json.tool cloud_pages/manifest.webmanifest >/dev/null
-          grep -q "DropFinder Cloud" cloud_pages/index.html
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          catalog = json.loads(Path('cloud_pages/data/catalog.json').read_text())
-          status = json.loads(Path('cloud_pages/data/status.json').read_text())
-          assert catalog['product_count'] == len(catalog['products'])
-          assert status['source_count'] == 35
-          assert status['enabled_sources'] == 17
-          print(f"Validated {catalog['product_count']} products")
-          PY
+          node web/scripts/verify-publication.mjs cloud_pages
+          python web/scripts/publication_gate.py verify-published --root cloud_pages
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -83,31 +77,33 @@ jobs:
         run: |
           set -euo pipefail
           : "${PAGE_URL:?Pages did not return a deployment URL}"
-          code=""
+          verified=false
+          verification_error=""
           for attempt in $(seq 1 12); do
-            code="$(curl -L -sS -o /tmp/dropfinder-page.html -w '%{http_code}' \
-              --connect-timeout 10 --max-time 30 "$PAGE_URL" || true)"
-            if [ "$code" = "200" ] && grep -q "DropFinder Cloud" /tmp/dropfinder-page.html; then
+            if node web/scripts/verify-pages-endpoint.mjs "$PAGE_URL" >/tmp/pages-verification.json 2>/tmp/pages-verification.err; then
+              cat /tmp/pages-verification.json
+              verified=true
+              verification_error=""
               break
             fi
-            echo "Endpoint not ready (attempt $attempt, HTTP ${code:-none})"
+            verification_error="$(cat /tmp/pages-verification.err)"
+            echo "Endpoint not ready (attempt $attempt): $verification_error"
             sleep 10
           done
-          test "$code" = "200"
-          grep -q "DropFinder Cloud" /tmp/dropfinder-page.html
+          test "$verified" = "true"
           mkdir -p deployment
-          PAGE_URL="$PAGE_URL" HTTP_CODE="$code" DEPLOYED_SHA="$DEPLOYED_SHA" python - <<'PY'
+          PAGE_URL="$PAGE_URL" VERIFIED="$verified" DEPLOYED_SHA="$DEPLOYED_SHA" python - <<'PY'
           import json, os
           from datetime import datetime, timezone
           from pathlib import Path
           catalog = json.loads(Path('cloud_pages/data/catalog.json').read_text())
           status = json.loads(Path('cloud_pages/data/status.json').read_text())
           payload = {
-              'schema_version': 'dropfinder-pages-deployment-v2',
+              'schema_version': 'dropfinder-pages-deployment-v3',
               'status': 'live',
               'page_url': os.environ['PAGE_URL'],
-              'http_status': int(os.environ['HTTP_CODE']),
-              'content_marker': 'DropFinder Cloud',
+              'http_status': 200,
+              'publication_verified': os.environ['VERIFIED'] == 'true',
               'deployed_sha': os.environ['DEPLOYED_SHA'],
               'verified_at': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
               'product_count': catalog['product_count'],
