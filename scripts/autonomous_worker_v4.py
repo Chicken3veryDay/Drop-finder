@@ -15,6 +15,8 @@ if str(HERE) not in sys.path:
 # Keep the proven reliability and retry layer. Multi-product support patches its
 # classification, normalization, route registry, and admission seams only.
 import autonomous_worker_v2 as reliability  # type: ignore
+from fallback_transport import install as install_fallback_transport
+from fallback_transport import self_test as fallback_transport_self_test
 from multi_product import publication
 from multi_product.runtime import install_multi_product_runtime, runtime_self_test
 from vendor_expansion import apply_registry, load_registry
@@ -49,7 +51,8 @@ INSTALLED_VENDOR_IDS = apply_registry(worker, VENDOR_EXPANSION)
 
 
 def install_runtime() -> dict:
-    """Install generalized classification and the listing-card provenance gate."""
+    """Install generalized classification and bounded fallback retrieval."""
+    install_fallback_transport(reliability)
     state = install_multi_product_runtime(reliability)
     if getattr(worker, "_listing_card_provenance_gate_installed", False):
         return state
@@ -80,6 +83,7 @@ def self_test() -> int:
     reliability.self_test()
     state = install_runtime()
     runtime_self_test(reliability)
+    fallback_transport_self_test(reliability)
 
     classify = worker.aggregate.classify_route_failure
     assert classify(TimeoutError("timed out")) == {
