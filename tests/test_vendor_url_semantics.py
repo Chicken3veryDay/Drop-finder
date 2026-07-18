@@ -51,9 +51,9 @@ class SemanticQueryParameterTests(unittest.TestCase):
 
     def test_html_discovery_preserves_semantic_selectors_but_deduplicates_campaign_variants(self):
         html = """
-        <a href="/report.pdf?ref=batch-A&utm_source=email">Blue Dream COA batch A</a>
-        <a href="/report.pdf?ref=batch-A&utm_source=social">duplicate campaign COA batch A</a>
-        <a href="/report.pdf?ref=batch-B">Northern Lights COA batch B</a>
+        <a href="/report.pdf?ref=batch-A&utm_source=email">Blue Dream COA batch 2024A</a>
+        <a href="/report.pdf?ref=batch-A&utm_source=social">Blue Dream COA batch 2024A</a>
+        <a href="/report.pdf?ref=batch-B">Northern Lights COA batch 2024B</a>
         """
         rows = discover_html_documents(
             html,
