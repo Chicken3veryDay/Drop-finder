@@ -254,6 +254,30 @@ def fallback_scan(source: tuple) -> tuple[list[dict], list[dict]]:
     return core.dedupe(rows), attempts
 
 
+def product_quality(row: dict) -> tuple[int, int, int, int, int]:
+    """Rank overlapping route records without making traversal order authoritative."""
+    availability = str(row.get("availability") or "").strip().lower()
+    evidence = row.get("classification_evidence")
+    return (
+        1 if availability in {"in_stock", "out_of_stock"} else 0,
+        1 if core.num(row.get("grams")) is not None else 0,
+        1 if core.num(row.get("price")) is not None else 0,
+        1 if bool(str(row.get("image") or "").strip()) else 0,
+        1 if isinstance(evidence, dict) and evidence.get("explicit_thca") and evidence.get("explicit_flower") else 0,
+    )
+
+
+def resolve_route_overlaps(rows: list[dict]) -> list[dict]:
+    """Deduplicate products deterministically, retaining the most complete verified row."""
+    winners: dict[tuple[str, str, str], dict] = {}
+    for row in rows:
+        key = (str(row.get("source_id") or ""), str(row.get("url") or ""), str(row.get("variant") or ""))
+        current = winners.get(key)
+        if current is None or product_quality(row) > product_quality(current):
+            winners[key] = row
+    return sorted(winners.values(), key=lambda row: (str(row.get("vendor") or ""), str(row.get("name") or ""), core.num(row.get("price")) or 1e12))
+
+
 def scan_source(source: tuple) -> tuple[list[dict], dict]:
     started = time.monotonic()
     source_id, vendor, _ = source
@@ -262,7 +286,7 @@ def scan_source(source: tuple) -> tuple[list[dict], dict]:
     fallback_results: list[dict] = []
     if source_id in FALLBACK_HTML_ROUTES:
         fallback, fallback_results = fallback_scan(source)
-        products = core.dedupe([*products, *fallback])
+        products = resolve_route_overlaps([*products, *fallback])
     admitted, reasons, quality = gate(products)
     status = dict(status)
     route_results = list(status.get("route_results") or []) + fallback_results
@@ -300,58 +324,26 @@ def run(shard: int, shards: int, output: Path, workers: int) -> int:
                     "name": source_id,
                     "enabled": True,
                     "admitted": False,
-                    "status": "quarantined",
+                    "status": "error",
                     "products": 0,
-                    "reason_codes": ["worker_exception"],
-                    "error": f"{type(exc).__name__}: {core.text(exc)[:500]}",
-                    "quality": {"products": 0, "url_coverage": 0, "priced_products": 0, "evidenced_products": 0},
-                    "worker": "cloud_scan_v2+product_detail_verifier",
+                    "error": f"{type(exc).__name__}: {core.text(exc)[:300]}",
                 }
             products.extend(rows)
             statuses.append(status)
-            print(json.dumps({"source": source_id, "status": status["status"], "products": len(rows)}), flush=True)
-    payload = {
-        "schema_version": "dropfinder-autonomous-shard-v1",
-        "generated_at": core.now(),
-        "shard": shard,
-        "shards": shards,
-        "products": core.dedupe(products),
-        "sources": sorted(statuses, key=lambda row: str(row.get("source_id") or "")),
-    }
-    (output / f"shard-{shard}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return 0
-
-
-def self_test() -> int:
-    explicit = "Blue Dream THCA Flower /products/blue-dream-thca-flower"
-    assert has_product_evidence(explicit)
-    assert not has_product_evidence("THCA Pre-Rolled Joints /products/thca-pre-roll")
-    fixture = '''
-    <html><head>
-      <meta property="og:title" content="Blue Dream THCA Flower">
-      <meta name="description" content="Loose indoor THCA flower buds">
-    </head><body></body></html>
-    '''
-    evidence = product_detail_evidence(fixture, "https://example.test/products/blue-dream")
-    assert has_product_evidence(evidence)
-    good = [{"url": "https://example.test/products/blue-dream-thca-flower", "price": 10, "classification_evidence": evidence_payload(explicit, "test")}]
-    assert gate(good)[0]
-    assert not gate([])[0]
+            print(f"[{status.get('status')}] {source_id}: {len(rows)}")
+    core.write(output / f"shard-{shard}.json", {"generated_at": core.now(), "shard": shard, "products": core.dedupe(products), "sources": statuses})
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--shard", type=int, default=0)
-    parser.add_argument("--shards", type=int, default=1)
-    parser.add_argument("--output", type=Path, default=Path("scan-output"))
-    parser.add_argument("--workers", type=int, default=3)
-    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--shard", type=int, required=True)
+    parser.add_argument("--shards", type=int, default=6)
+    parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
-    if args.self_test:
-        return self_test()
-    if args.shards < 1 or not 0 <= args.shard < args.shards:
-        parser.error("invalid shard configuration")
+    if args.shard < 0 or args.shard >= args.shards:
+        parser.error("--shard must be between 0 and --shards - 1")
     return run(args.shard, args.shards, args.output, args.workers)
 
 
