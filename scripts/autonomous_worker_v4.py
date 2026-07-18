@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import socket
 import sys
+import urllib.error
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -22,6 +24,19 @@ worker = reliability.worker
 # Some storefront WAFs intermittently answer public category/API requests with
 # 403 before succeeding on a later request. Retry remains bounded.
 reliability.RETRYABLE_HTTP.add(403)
+
+# Preserve scanner-classified transport failures before applying the existing
+# HTTP status policy. The v2 retry loop resolves this symbol at runtime.
+_http_route_is_retryable = reliability._route_is_retryable
+
+
+def _structured_route_is_retryable(route: dict) -> bool:
+    if route.get("retryable") is True:
+        return True
+    return _http_route_is_retryable(route)
+
+
+reliability._route_is_retryable = _structured_route_is_retryable
 
 # Green Unicorn product URLs use this WooCommerce path rather than /product/.
 if "/cbd-hemp-flower/" not in worker.PRODUCT_PATHS:
@@ -66,7 +81,47 @@ def self_test() -> int:
     state = install_runtime()
     runtime_self_test(reliability)
 
+    classify = worker.aggregate.classify_route_failure
+    assert classify(TimeoutError("timed out")) == {
+        "error_category": "transport_timeout",
+        "retryable": True,
+    }
+    assert classify(ConnectionResetError("reset"))["retryable"] is True
+    assert classify(ValueError("invalid JSON")) == {
+        "error_category": "processing_error",
+        "retryable": False,
+    }
+    temporary_dns_code = getattr(socket, "EAI_AGAIN", None)
+    if temporary_dns_code is not None:
+        temporary_dns = urllib.error.URLError(
+            socket.gaierror(temporary_dns_code, "temporary failure")
+        )
+        assert classify(temporary_dns) == {
+            "error_category": "temporary_dns_failure",
+            "retryable": True,
+        }
+    assert reliability._route_is_retryable({"retryable": True})
+    assert not reliability._route_is_retryable({"retryable": False})
+
     original_fetch = worker.core.fetch
+    timeout_route = ("html", "https://example.test/timeout", "thca_flower")
+
+    def timeout_fetch(_target: str):
+        raise TimeoutError("timed out")
+
+    worker.core.fetch = timeout_fetch
+    try:
+        timeout_products, timeout_status = reliability._original_scan_all_routes(
+            ("timeout_fixture", "Timeout Fixture", [timeout_route])
+        )
+    finally:
+        worker.core.fetch = original_fetch
+    assert timeout_products == []
+    timeout_result = timeout_status["route_results"][0]
+    assert timeout_result["error_category"] == "transport_timeout"
+    assert timeout_result["retryable"] is True
+    assert reliability._is_retryable(timeout_status)
+
     responses = {
         "https://example.test/products/stale-thca-flower": (
             '<meta property="og:title" content="Ceramic Coffee Mug">',
