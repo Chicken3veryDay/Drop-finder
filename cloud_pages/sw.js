@@ -1,8 +1,16 @@
 /* DropFinder generated-snapshot service worker. Relative-path safe for gh-pages/raw.githack. */
-const SW_VERSION = 'platform-v2';
-const APP_CACHE = `dropfinder-app-${SW_VERSION}`;
-const META_CACHE = 'dropfinder-generation-meta-v1';
-const DOCUMENT_CACHE = 'dropfinder-opened-documents-v1';
+const SW_VERSION = 'platform-v3';
+const DEPLOYMENT_URL = canonicalDeploymentUrl(
+  self.registration?.scope ?? self.location?.href ?? `${self.location.origin}/`,
+);
+const DEPLOYMENT_NAMESPACE = deploymentNamespace(DEPLOYMENT_URL);
+const APP_CACHE_PREFIX = `dropfinder-app-${DEPLOYMENT_NAMESPACE}-`;
+const APP_CACHE = `${APP_CACHE_PREFIX}${SW_VERSION}`;
+const META_CACHE = `dropfinder-generation-meta-v2-${DEPLOYMENT_NAMESPACE}`;
+const DOCUMENT_CACHE = `dropfinder-opened-documents-v2-${DEPLOYMENT_NAMESPACE}`;
+const GENERATION_CACHE_PREFIX = `dropfinder-data-v2-${DEPLOYMENT_NAMESPACE}-`;
+const ACTIVE_META_KEY = new URL('./__dropfinder__/active-generation.json', DEPLOYMENT_URL).href;
+const PREPARED_META_KEY = new URL('./__dropfinder__/prepared-generation.json', DEPLOYMENT_URL).href;
 const SHELL_MANIFEST = './app-shell.json';
 const FALLBACK_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './data/catalog.json', './data/status.json', './data/runtime.json'];
 const MAX_DETAIL_ENTRIES = 96;
@@ -24,7 +32,7 @@ self.addEventListener('activate', event => {
     await restorePromise;
     const keys = await caches.keys();
     await Promise.all(keys
-      .filter(key => key.startsWith('dropfinder-app-') && key !== APP_CACHE)
+      .filter(key => key.startsWith(APP_CACHE_PREFIX) && key !== APP_CACHE)
       .map(key => caches.delete(key)));
     await self.clients.claim();
   })());
@@ -33,7 +41,10 @@ self.addEventListener('activate', event => {
 self.addEventListener('message', event => {
   const message = event.data;
   if (message?.type === 'generation-status') {
-    event.waitUntil(restorePromise.then(() => event.source?.postMessage({ type: 'generation-status', ...(activeGeneration || {}) })));
+    event.waitUntil(restorePromise.then(async () => {
+      await ensureActiveGeneration();
+      event.source?.postMessage({ type: 'generation-status', ...(activeGeneration || {}) });
+    }));
   } else if (message?.type === 'activate-generation') {
     event.waitUntil(activatePreparedGeneration(message.generationId, event.source));
   } else if (message?.type === 'cache-document') {
@@ -81,6 +92,7 @@ async function cacheApplicationShell() {
 
 async function generationAwareMetadata(request) {
   await restorePromise;
+  await ensureActiveGeneration();
   try {
     const response = await fetch(request, { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -178,8 +190,9 @@ async function prepareGeneration(generationId, seedUrl, seedResponse, seedPayloa
 }
 
 async function markPrepared(prepared) {
+  if (!isOwnedGenerationCache(prepared.cacheName)) return;
   const metadata = await caches.open(META_CACHE);
-  await metadata.put('./prepared.json', jsonResponse(prepared));
+  await metadata.put(PREPARED_META_KEY, jsonResponse(prepared));
   if (!activeGeneration) await activatePreparedGeneration(prepared.id, null);
   else await broadcast({ type: 'generation-ready', generationId: prepared.id });
 }
@@ -187,15 +200,16 @@ async function markPrepared(prepared) {
 async function activatePreparedGeneration(generationId, source) {
   await restorePromise;
   const metadata = await caches.open(META_CACHE);
-  const preparedResponse = await metadata.match('./prepared.json');
+  const preparedResponse = await metadata.match(PREPARED_META_KEY);
   const prepared = preparedResponse ? await preparedResponse.json() : null;
-  if (!prepared || prepared.id !== generationId || !(await caches.has(prepared.cacheName))) {
+  if (!prepared || prepared.id !== generationId || !isOwnedGenerationCache(prepared.cacheName)
+      || !(await caches.has(prepared.cacheName))) {
     source?.postMessage({ type: 'generation-error', generationId, code: 'generation_incomplete' });
     return;
   }
   const previous = activeGeneration;
   activeGeneration = { id: prepared.id, cacheName: prepared.cacheName, kind: prepared.kind };
-  await metadata.put('./active.json', jsonResponse(activeGeneration));
+  await metadata.put(ACTIVE_META_KEY, jsonResponse(activeGeneration));
   await cleanupGenerations(new Set([activeGeneration.cacheName, previous?.cacheName].filter(Boolean)));
   await broadcast({ type: 'generation-active', generationId });
 }
@@ -203,13 +217,33 @@ async function activatePreparedGeneration(generationId, source) {
 async function restoreActiveGeneration() {
   try {
     const metadata = await caches.open(META_CACHE);
-    const response = await metadata.match('./active.json');
-    activeGeneration = response ? await response.json() : null;
+    const response = await metadata.match(ACTIVE_META_KEY);
+    const candidate = response ? await response.json() : null;
+    if (!candidate || !isOwnedGenerationCache(candidate.cacheName)
+      || !(await caches.has(candidate.cacheName))) {
+      activeGeneration = null;
+      if (response) await metadata.delete(ACTIVE_META_KEY);
+      return;
+    }
+    activeGeneration = candidate;
   } catch { activeGeneration = null; }
+}
+
+async function ensureActiveGeneration() {
+  if (!activeGeneration) return null;
+  if (!isOwnedGenerationCache(activeGeneration.cacheName)
+    || !(await caches.has(activeGeneration.cacheName))) {
+    activeGeneration = null;
+    const metadata = await caches.open(META_CACHE);
+    await metadata.delete(ACTIVE_META_KEY);
+    return null;
+  }
+  return activeGeneration;
 }
 
 async function generationDetail(request) {
   await restorePromise;
+  await ensureActiveGeneration();
   const generation = request.headers.get('x-dropfinder-generation') || new URL(request.url).searchParams.get('generation');
   if (activeGeneration && generation && generation !== activeGeneration.id) return new Response('', { status: 409 });
   const cache = activeGeneration ? await caches.open(activeGeneration.cacheName) : null;
@@ -258,16 +292,41 @@ async function safeCachePut(cache, request, response, resource = 'generation') {
 }
 async function matchActiveGeneration(request) {
   await restorePromise;
-  return activeGeneration ? caches.open(activeGeneration.cacheName).then(cache => cache.match(request, { ignoreSearch: true })) : null;
+  await ensureActiveGeneration();
+  return activeGeneration
+    ? caches.open(activeGeneration.cacheName).then(cache => cache.match(request, { ignoreSearch: true }))
+    : null;
 }
 async function cleanupGenerations(keep) {
   const keys = await caches.keys();
-  await Promise.all(keys.filter(key => key.startsWith('dropfinder-data-') && !keep.has(key)).map(key => caches.delete(key)));
+  await Promise.all(keys
+    .filter(key => key.startsWith(GENERATION_CACHE_PREFIX) && !keep.has(key))
+    .map(key => caches.delete(key)));
 }
 async function trimCache(cache, max, predicate) {
   const keys = (await cache.keys()).filter(request => predicate(request.url));
   await Promise.all(keys.slice(0, Math.max(0, keys.length - max)).map(request => cache.delete(request)));
 }
+function canonicalDeploymentUrl(value) {
+  const parsed = new URL(value, self.location?.href ?? `${self.location.origin}/`);
+  parsed.search = '';
+  parsed.hash = '';
+  if (!parsed.pathname.endsWith('/')) {
+    parsed.pathname = parsed.pathname.slice(0, parsed.pathname.lastIndexOf('/') + 1);
+  }
+  return parsed.href;
+}
+
+function deploymentNamespace(value) {
+  let hash = 0xcbf29ce484222325n;
+  const encoded = encodeURIComponent(value);
+  for (let index = 0; index < encoded.length; index += 1) {
+    hash ^= BigInt(encoded.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, '0');
+}
+
 function catalogPublicationBase(url) {
   const parsed = new URL(url);
   const marker = '/data/catalog-v4/';
@@ -279,7 +338,12 @@ function catalogPublicationBase(url) {
   }
   return parsed.href;
 }
-function generationCacheName(id) { return `dropfinder-data-${String(id).replace(/[^a-z0-9._-]/gi, '_')}`; }
+function isOwnedGenerationCache(cacheName) {
+      return typeof cacheName === 'string' && cacheName.startsWith(GENERATION_CACHE_PREFIX);
+    }
+    function generationCacheName(id) {
+      return `${GENERATION_CACHE_PREFIX}${String(id).replace(/[^a-z0-9._-]/gi, '_')}`;
+    }
 function isHashedAsset(path) { return /\/assets\/(?:[^/]+\/)*[^/]+-[a-z0-9_-]{8}\.[a-z0-9]+$/i.test(path); }
 function isManifestOrIndex(path) { return /(?:catalog-manifest-v4|catalog-index|vendor-profiles|catalog|status)\.json$/i.test(path) || /\/catalog-v4\/(?:manifest|index)\.json$/i.test(path); }
 function isLegacyCatalogMember(path) { return /\/(?:catalog|status)\.json$/i.test(path) && !path.includes('catalog-manifest-v4'); }
