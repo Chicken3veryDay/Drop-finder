@@ -16,6 +16,7 @@ from . import (
     PSILOCYBIN_MUSHROOM,
     PSILOCYBIN_VAPE,
 )
+from .classification import is_mixed_offer
 
 SHARD_SCHEMA = "dropfinder-autonomous-shard-v1"
 CATALOG_SCHEMA = "dropfinder-cloud-catalog-v4-multi-product"
@@ -102,6 +103,14 @@ def reject_reason(product: dict[str, Any]) -> str | None:
         return "missing_name"
     if not source_id or not vendor:
         return "missing_source_identity"
+    if is_mixed_offer(
+        name,
+        product.get("source_title"),
+        product.get("variant"),
+        internal_url,
+        product.get("public_purchase_url"),
+    ):
+        return "unsupported_mixed_offer"
     if not _http_url(internal_url):
         return "missing_or_invalid_internal_product_url"
     if primary not in ENABLED_PRODUCT_TYPES:
