@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from unittest import mock
 import unittest
 
 from scripts.vendor_adapters.discovery import discover_html_documents
@@ -66,41 +65,46 @@ class IPv6UrlCanonicalizationTests(unittest.TestCase):
 
     def test_fetch_uses_ipv6_canonical_url_without_network(self) -> None:
         expected = f"https://[{GLOBAL_IPV6}]/reports/coa.pdf"
+        request_calls: list[tuple[str, str, dict[str, str]]] = []
+        factory_calls: list[tuple[object, ...]] = []
 
         class Response:
             status = 200
-            headers = {"Content-Type": "application/pdf"}
 
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return None
-
-            def geturl(self) -> str:
-                return expected
+            def getheader(self, name: str, default=None):
+                return "application/pdf" if name.lower() == "content-type" else default
 
             def read(self, _limit: int) -> bytes:
                 return b"pdf"
 
-        class Opener:
-            def open(self, request, *, timeout):
-                self.request_url = request.full_url
-                self.timeout = timeout
+            def close(self) -> None:
+                return None
+
+        class Connection:
+            def request(self, method: str, target: str, body=None, headers=None) -> None:
+                request_calls.append((method, target, dict(headers or {})))
+
+            def getresponse(self):
                 return Response()
 
-        opener = Opener()
-        with mock.patch(
-            "scripts.vendor_adapters.fetch.urllib.request.build_opener",
-            return_value=opener,
-        ):
-            result = fetch_public_document(
-                expected,
-                allowed_hosts={GLOBAL_IPV6},
-                timeout=1.0,
-            )
+            def close(self) -> None:
+                return None
 
-        self.assertEqual(opener.request_url, expected)
+        def connection_factory(*args):
+            factory_calls.append(args)
+            return Connection()
+
+        result = fetch_public_document(
+            expected,
+            allowed_hosts={GLOBAL_IPV6},
+            timeout=1.0,
+            _connection_factory=connection_factory,
+        )
+
+        self.assertEqual(factory_calls[0][0:3], ("https", GLOBAL_IPV6, 443))
+        self.assertEqual(factory_calls[0][3][4], (GLOBAL_IPV6, 443, 0, 0))
+        self.assertEqual(request_calls[0][0:2], ("GET", "/reports/coa.pdf"))
+        self.assertEqual(request_calls[0][2]["Host"], f"[{GLOBAL_IPV6}]")
         self.assertEqual(result.requested_url, expected)
         self.assertEqual(result.final_url, expected)
         self.assertEqual(result.body, b"pdf")
