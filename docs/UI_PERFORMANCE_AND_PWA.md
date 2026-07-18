@@ -4,18 +4,18 @@
 
 This isolated workstream supplies headless platform capabilities for issue #8 through issue #5's versioned registration seam. It does not own marketplace markup, catalog generation, seller research, or global design tokens.
 
-- `CatalogGenerationClient`: manifest-first atomic activation, schema/generation/hash validation, abortable bounded fetches, concurrent-request deduplication, persistent last-complete fallback, and bounded detail LRU.
+- `CatalogGenerationClient`: manifest-first atomic preparation, schema/generation/hash validation, service-worker activation coordination before publication, abortable bounded fetches, concurrent-request deduplication, persistent last-complete fallback, and bounded detail LRU.
 - `MarketplaceQueryEngine`: one-time compact-index transfer to a dedicated worker, deterministic search/filter/sort, stable pagination identity, stale-response rejection, one bounded worker restart, and an honest limited synchronous fallback.
 - `VirtualMarketplaceAdapter`: variable-height measurement, bounded rendered windows and retained pages, duplicate suppression, stable scroll anchors, focus retention, and complete-result accessibility counts.
 - `DocumentViewerCapability`: real lazy PDF.js rendering with a dedicated worker, images, external-only HTML, unsupported fallbacks, bounded bytes/pages/scale, render cancellation, resource release, focus trapping/restoration, and scroll locking.
-- `PwaGenerationCoordinator`: typed service-worker registration and quiet complete-generation update events without forced reloads.
+- `PwaGenerationCoordinator`: typed service-worker registration, normalized generation status, explicit activation acknowledgement, bounded activation failure, and quiet complete-generation updates without forced reloads.
 - `createSyntheticCatalog`: deterministic 1,000/10,000/50,000-product fixtures with four variants and mixed optional detail/document metadata.
 
 All registration descriptors use `PLATFORM_CONTRACT_VERSION = 1`. Catalog manifests currently require schema version 4.
 
 ## Catalog and generation contract
 
-A v4 manifest contains an immutable `generation_id`, compact index descriptor, declared byte counts and SHA-256 hashes, plus optional vendor and detail descriptors. Index, vendor, detail, and document metadata must agree on that generation. The client never publishes a new generation until its manifest and index validate, never combines detail data from a different generation, and preserves current rows while a quiet refresh runs.
+A v4 manifest contains an immutable `generation_id`, compact index descriptor, declared byte counts and SHA-256 hashes, plus optional vendor and detail descriptors. Index, vendor, detail, and document metadata must agree on that generation. The client prepares a complete candidate without replacing the current generation. On a service-worker-controlled page, it then waits for the worker to acknowledge that exact generation as active before publishing the candidate. On an uncontrolled first visit, it may publish directly because no worker intercepts detail requests. Failed, incomplete, stale, aborted, or timed-out activation leaves the last complete active generation intact and returns a typed recoverable error.
 
 The browser cache stores only the last validated complete generation. Missing, malformed, oversized, aborted, hash-mismatched, and generation-mismatched assets fail with concise typed errors. Detail requests are deduplicated and capped at 64 retained shards by default.
 
@@ -40,6 +40,8 @@ The active variant within selected bounds is chosen by lowest price per gram, th
 - refuses oversized, opaque, private, cookie-bearing, or `no-store` document responses;
 - avoids install-time document precaching and forced reload loops.
 
+The catalog client and PWA coordinator complete one activation handshake for every controlled-page generation switch. The coordinator subscribes before requesting status, normalizes the worker's persisted active identity, requests activation for the exact prepared generation, and waits for `generation-active`. `generation-error`, abort, registration failure with an existing controller, and activation timeout reject the refresh instead of exposing mixed-generation rows. The current catalog stays usable until the replacement acknowledgement arrives.
+
 The manifest uses shopper marketplace wording, relative `start_url`/`scope`, dark-only colors, and no source-health/dashboard language.
 
 ## Document security and limits
@@ -59,7 +61,7 @@ npm run test:e2e:install
 npm run test:e2e
 ```
 
-`npm run validate` executes syntax/type checks, 20 unit/resilience tests, deterministic performance fixtures, a Vite production build, and chunk analysis. The current environment-qualified local run on Node 22/Linux passed with 11 maximum rendered rows at every size. Representative p95 results were:
+`npm run validate` executes syntax/type checks, unit/resilience tests, deterministic performance fixtures, a Vite production build, and chunk analysis. The current environment-qualified local run on Node 22/Linux passed with 11 maximum rendered rows at every size. Representative p95 results were:
 
 | Products | Combined query | Rapid typing | All sorts | Retained heap |
 |---:|---:|---:|---:|---:|
