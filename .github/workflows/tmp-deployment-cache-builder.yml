@@ -1,0 +1,398 @@
+name: Temporary Deployment Cache Builder
+
+on:
+  push:
+    branches:
+      - fix/issue-30-deployment-cache-isolation
+
+permissions:
+  contents: write
+
+jobs:
+  reconstruct:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-30-deployment-cache-isolation
+      - name: Compose deployment-scoped cache ownership
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, found {count}')
+              return text.replace(old, new, 1)
+
+          catalog_path = Path('web/src/platform/catalog/catalog-generation-client.js')
+          catalog = catalog_path.read_text(encoding='utf-8')
+          catalog = replace_once(catalog, '''const DEFAULTS = Object.freeze({
+            manifestUrl: './data/catalog-v4/manifest.json',
+            schemaVersion: null,
+            staleMs: 5 * 60_000,
+            maxRetries: 2,
+            maxDetailShards: 64,
+            maxIndexBytes: 24 * 1024 * 1024,
+            maxDetailBytes: 2 * 1024 * 1024,
+          });
+          ''', '''const DEFAULTS = Object.freeze({
+            manifestUrl: './data/catalog-v4/manifest.json',
+            schemaVersion: null,
+            staleMs: 5 * 60_000,
+            maxRetries: 2,
+            maxDetailShards: 64,
+            maxIndexBytes: 24 * 1024 * 1024,
+            maxDetailBytes: 2 * 1024 * 1024,
+          });
+
+          const CACHE_RECORD_SCHEMA = 'dropfinder-generation-cache-v2';
+          ''', 'cache schema')
+          catalog = replace_once(catalog,
+              '    this.cache = options.cache ?? createDefaultGenerationCache(options.cacheName);\n',
+              '''    this.cache = options.cache ?? createDefaultGenerationCache({
+                cacheName: options.cacheName,
+                cacheStorage: options.cacheStorage,
+                deploymentUrl: options.deploymentUrl ?? this.options.manifestUrl,
+              });
+          ''', 'cache construction')
+          old_cache = '''export class BrowserGenerationCache {
+            constructor(options = {}) {
+              this.cacheName = options.cacheName ?? 'dropfinder-client-generation-v1';
+              this.key = new URL('/__dropfinder__/last-complete.json', globalThis.location?.origin ?? 'https://dropfinder.invalid').href;
+            }
+            async getLastComplete() {
+              try {
+                const cache = await globalThis.caches.open(this.cacheName);
+                const response = await cache.match(this.key);
+                if (!response) return null;
+                const value = await response.json();
+                if (!value?.generationId || !value?.manifest || !value?.index) return null;
+                return Object.freeze(value);
+              } catch { return null; }
+            }
+            async putComplete(value) {
+              const cache = await globalThis.caches.open(this.cacheName);
+              await cache.put(this.key, new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } }));
+            }
+          }
+
+          export function createDefaultGenerationCache(cacheName) {
+            return globalThis.caches?.open ? new BrowserGenerationCache({ cacheName }) : new MemoryGenerationCache();
+          }
+          '''
+          new_cache = '''export class BrowserGenerationCache {
+            constructor(options = {}) {
+              this.cacheStorage = options.cacheStorage ?? globalThis.caches;
+              this.cacheName = options.cacheName ?? 'dropfinder-client-generation-v2';
+              this.deploymentUrl = canonicalDeploymentUrl(options.deploymentUrl ?? locationHref());
+              this.deploymentKey = this.deploymentUrl;
+              this.key = new URL('./__dropfinder__/last-complete-v2.json', this.deploymentUrl).href;
+            }
+
+            owns(value) {
+              if (!value?.generationId || !value?.manifest || !value?.index) return false;
+              if (!value.publicationBaseUrl) return false;
+              return canonicalDeploymentUrl(value.publicationBaseUrl) === this.deploymentKey;
+            }
+
+            async getLastComplete() {
+              try {
+                if (!this.cacheStorage?.open) return null;
+                const cache = await this.cacheStorage.open(this.cacheName);
+                const response = await cache.match(this.key);
+                if (!response) return null;
+                const record = await response.json();
+                if (record?.schemaVersion !== CACHE_RECORD_SCHEMA) return null;
+                if (record.deploymentKey !== this.deploymentKey) return null;
+                if (!this.owns(record.generation)) return null;
+                return Object.freeze(record.generation);
+              } catch { return null; }
+            }
+
+            async putComplete(value) {
+              if (!this.cacheStorage?.open || !this.owns(value)) return;
+              const cache = await this.cacheStorage.open(this.cacheName);
+              const record = {
+                schemaVersion: CACHE_RECORD_SCHEMA,
+                deploymentKey: this.deploymentKey,
+                generation: value,
+              };
+              await cache.put(
+                this.key,
+                new Response(JSON.stringify(record), { headers: { 'content-type': 'application/json' } }),
+              );
+            }
+          }
+
+          export function createDefaultGenerationCache(options = {}) {
+            return (options.cacheStorage ?? globalThis.caches)?.open
+              ? new BrowserGenerationCache(options)
+              : new MemoryGenerationCache();
+          }
+          '''
+          catalog = replace_once(catalog, old_cache, new_cache, 'browser cache block')
+          catalog = replace_once(catalog, '''function resolvePublicationUrl(value, manifestUrl, publicationBaseUrl) {
+          ''', '''function canonicalDeploymentUrl(value) {
+            const parsed = new URL(publicationBase(value), locationHref());
+            parsed.search = '';
+            parsed.hash = '';
+            return parsed.href;
+          }
+
+          function resolvePublicationUrl(value, manifestUrl, publicationBaseUrl) {
+          ''', 'canonical deployment helper')
+          catalog_path.write_text(catalog, encoding='utf-8')
+
+          sw_path = Path('cloud_pages/sw.js')
+          sw = sw_path.read_text(encoding='utf-8')
+          sw = replace_once(sw, '''const SW_VERSION = 'platform-v2';
+          const APP_CACHE = `dropfinder-app-${SW_VERSION}`;
+          const META_CACHE = 'dropfinder-generation-meta-v1';
+          const DOCUMENT_CACHE = 'dropfinder-opened-documents-v1';
+          ''', '''const SW_VERSION = 'platform-v3';
+          const DEPLOYMENT_URL = canonicalDeploymentUrl(
+            self.registration?.scope ?? self.location?.href ?? `${self.location.origin}/`,
+          );
+          const DEPLOYMENT_NAMESPACE = deploymentNamespace(DEPLOYMENT_URL);
+          const APP_CACHE_PREFIX = `dropfinder-app-${DEPLOYMENT_NAMESPACE}-`;
+          const APP_CACHE = `${APP_CACHE_PREFIX}${SW_VERSION}`;
+          const META_CACHE = `dropfinder-generation-meta-v2-${DEPLOYMENT_NAMESPACE}`;
+          const DOCUMENT_CACHE = `dropfinder-opened-documents-v2-${DEPLOYMENT_NAMESPACE}`;
+          const GENERATION_CACHE_PREFIX = `dropfinder-data-v2-${DEPLOYMENT_NAMESPACE}-`;
+          const ACTIVE_META_KEY = new URL('./__dropfinder__/active-generation.json', DEPLOYMENT_URL).href;
+          const PREPARED_META_KEY = new URL('./__dropfinder__/prepared-generation.json', DEPLOYMENT_URL).href;
+          ''', 'service worker namespace constants')
+          sw = replace_once(sw,
+              "      .filter(key => key.startsWith('dropfinder-app-') && key !== APP_CACHE)\n",
+              '      .filter(key => key.startsWith(APP_CACHE_PREFIX) && key !== APP_CACHE)\n',
+              'app cleanup scope')
+          sw = replace_once(sw,
+              "    event.waitUntil(restorePromise.then(() => event.source?.postMessage({ type: 'generation-status', ...(activeGeneration || {}) })));\n",
+              '''    event.waitUntil(restorePromise.then(async () => {
+                await ensureActiveGeneration();
+                event.source?.postMessage({ type: 'generation-status', ...(activeGeneration || {}) });
+              }));
+          ''', 'status ownership check')
+          sw = replace_once(sw,
+              '''async function generationAwareMetadata(request) {
+            await restorePromise;
+          ''',
+              '''async function generationAwareMetadata(request) {
+            await restorePromise;
+            await ensureActiveGeneration();
+          ''', 'metadata ownership check')
+          sw = replace_once(sw, '''async function markPrepared(prepared) {
+            const metadata = await caches.open(META_CACHE);
+            await metadata.put('./prepared.json', jsonResponse(prepared));
+          ''', '''async function markPrepared(prepared) {
+            if (!isOwnedGenerationCache(prepared.cacheName)) return;
+            const metadata = await caches.open(META_CACHE);
+            await metadata.put(PREPARED_META_KEY, jsonResponse(prepared));
+          ''', 'prepared metadata')
+          sw = replace_once(sw,
+              "  const preparedResponse = await metadata.match('./prepared.json');\n",
+              '  const preparedResponse = await metadata.match(PREPARED_META_KEY);\n',
+              'prepared lookup')
+          sw = replace_once(sw,
+              '''  if (!prepared || prepared.id !== generationId || !(await caches.has(prepared.cacheName))) {
+          ''',
+              '''  if (!prepared || prepared.id !== generationId || !isOwnedGenerationCache(prepared.cacheName)
+                || !(await caches.has(prepared.cacheName))) {
+          ''', 'prepared ownership validation')
+          sw = replace_once(sw,
+              "  await metadata.put('./active.json', jsonResponse(activeGeneration));\n",
+              '  await metadata.put(ACTIVE_META_KEY, jsonResponse(activeGeneration));\n',
+              'active metadata write')
+          old_restore = '''async function restoreActiveGeneration() {
+            try {
+              const metadata = await caches.open(META_CACHE);
+              const response = await metadata.match('./active.json');
+              activeGeneration = response ? await response.json() : null;
+            } catch { activeGeneration = null; }
+          }
+          '''
+          new_restore = '''async function restoreActiveGeneration() {
+            try {
+              const metadata = await caches.open(META_CACHE);
+              const response = await metadata.match(ACTIVE_META_KEY);
+              const candidate = response ? await response.json() : null;
+              if (!candidate || !isOwnedGenerationCache(candidate.cacheName)
+                || !(await caches.has(candidate.cacheName))) {
+                activeGeneration = null;
+                if (response) await metadata.delete(ACTIVE_META_KEY);
+                return;
+              }
+              activeGeneration = candidate;
+            } catch { activeGeneration = null; }
+          }
+
+          async function ensureActiveGeneration() {
+            if (!activeGeneration) return null;
+            if (!isOwnedGenerationCache(activeGeneration.cacheName)
+              || !(await caches.has(activeGeneration.cacheName))) {
+              activeGeneration = null;
+              const metadata = await caches.open(META_CACHE);
+              await metadata.delete(ACTIVE_META_KEY);
+              return null;
+            }
+            return activeGeneration;
+          }
+          '''
+          sw = replace_once(sw, old_restore, new_restore, 'active restore ownership')
+          sw = replace_once(sw,
+              '''async function generationDetail(request) {
+            await restorePromise;
+          ''',
+              '''async function generationDetail(request) {
+            await restorePromise;
+            await ensureActiveGeneration();
+          ''', 'detail ownership check')
+          old_helpers = '''async function matchActiveGeneration(request) {
+            await restorePromise;
+            return activeGeneration ? caches.open(activeGeneration.cacheName).then(cache => cache.match(request, { ignoreSearch: true })) : null;
+          }
+          async function cleanupGenerations(keep) {
+            const keys = await caches.keys();
+            await Promise.all(keys.filter(key => key.startsWith('dropfinder-data-') && !keep.has(key)).map(key => caches.delete(key)));
+          }
+          '''
+          new_helpers = '''async function matchActiveGeneration(request) {
+            await restorePromise;
+            await ensureActiveGeneration();
+            return activeGeneration
+              ? caches.open(activeGeneration.cacheName).then(cache => cache.match(request, { ignoreSearch: true }))
+              : null;
+          }
+          async function cleanupGenerations(keep) {
+            const keys = await caches.keys();
+            await Promise.all(keys
+              .filter(key => key.startsWith(GENERATION_CACHE_PREFIX) && !keep.has(key))
+              .map(key => caches.delete(key)));
+          }
+          '''
+          sw = replace_once(sw, old_helpers, new_helpers, 'generation cleanup scope')
+          sw = replace_once(sw, '''function catalogPublicationBase(url) {
+          ''', '''function canonicalDeploymentUrl(value) {
+            const parsed = new URL(value, self.location?.href ?? `${self.location.origin}/`);
+            parsed.search = '';
+            parsed.hash = '';
+            if (!parsed.pathname.endsWith('/')) {
+              parsed.pathname = parsed.pathname.slice(0, parsed.pathname.lastIndexOf('/') + 1);
+            }
+            return parsed.href;
+          }
+
+          function deploymentNamespace(value) {
+            let hash = 0xcbf29ce484222325n;
+            const encoded = encodeURIComponent(value);
+            for (let index = 0; index < encoded.length; index += 1) {
+              hash ^= BigInt(encoded.charCodeAt(index));
+              hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+            }
+            return hash.toString(16).padStart(16, '0');
+          }
+
+          function catalogPublicationBase(url) {
+          ''', 'namespace helpers')
+          sw = replace_once(sw,
+              "function generationCacheName(id) { return `dropfinder-data-${String(id).replace(/[^a-z0-9._-]/gi, '_')}`; }\n",
+              '''function isOwnedGenerationCache(cacheName) {
+                return typeof cacheName === 'string' && cacheName.startsWith(GENERATION_CACHE_PREFIX);
+              }
+              function generationCacheName(id) {
+                return `${GENERATION_CACHE_PREFIX}${String(id).replace(/[^a-z0-9._-]/gi, '_')}`;
+              }
+          ''', 'generation namespace')
+          sw_path.write_text(sw, encoding='utf-8')
+
+          Path('web/test/catalog-generation-cache.test.mjs').write_text(r'''import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import { BrowserGenerationCache } from '../src/platform/catalog/catalog-generation-client.js';
+
+          class FakeCache {
+            constructor() { this.entries = new Map(); }
+            async match(input) { return this.entries.get(String(input))?.clone(); }
+            async put(input, response) { this.entries.set(String(input), response.clone()); }
+          }
+          class FakeCacheStorage {
+            constructor() { this.caches = new Map(); }
+            async open(name) {
+              if (!this.caches.has(name)) this.caches.set(name, new FakeCache());
+              return this.caches.get(name);
+            }
+          }
+          function generation(id, deploymentUrl) {
+            return {
+              generationId: id,
+              manifest: { generation_id: id },
+              index: { generation_id: id, products: [] },
+              manifestUrl: new URL('./data/catalog-v4/manifest.json', deploymentUrl).href,
+              publicationBaseUrl: deploymentUrl,
+              activatedAt: 1,
+              source: 'network',
+            };
+          }
+          test('browser generation fallback is isolated between same-origin deployment paths', async () => {
+            const cacheStorage = new FakeCacheStorage();
+            const mainUrl = 'https://raw.githack.com/Chicken3veryDay/Drop-finder/main/';
+            const productionUrl = 'https://raw.githack.com/Chicken3veryDay/Drop-finder/gh-pages/';
+            const main = new BrowserGenerationCache({ cacheStorage, deploymentUrl: mainUrl });
+            const production = new BrowserGenerationCache({ cacheStorage, deploymentUrl: productionUrl });
+            await main.putComplete(generation('main-generation', mainUrl));
+            await production.putComplete(generation('production-generation', productionUrl));
+            assert.notEqual(main.key, production.key);
+            assert.equal((await main.getLastComplete())?.generationId, 'main-generation');
+            assert.equal((await production.getLastComplete())?.generationId, 'production-generation');
+          });
+          test('browser generation fallback rejects foreign and legacy cache envelopes', async () => {
+            const cacheStorage = new FakeCacheStorage();
+            const deploymentUrl = 'https://raw.githack.com/Chicken3veryDay/Drop-finder/gh-pages/';
+            const foreignUrl = 'https://raw.githack.com/Chicken3veryDay/Drop-finder/main/';
+            const cache = new BrowserGenerationCache({ cacheStorage, deploymentUrl });
+            const storage = await cacheStorage.open(cache.cacheName);
+            await storage.put(cache.key, new Response(JSON.stringify({
+              schemaVersion: 'dropfinder-generation-cache-v2',
+              deploymentKey: foreignUrl,
+              generation: generation('foreign', foreignUrl),
+            })));
+            assert.equal(await cache.getLastComplete(), null);
+            await storage.put(cache.key, new Response(JSON.stringify(generation('legacy', deploymentUrl))));
+            assert.equal(await cache.getLastComplete(), null);
+            await cache.putComplete(generation('current', deploymentUrl));
+            assert.equal((await cache.getLastComplete())?.generationId, 'current');
+          });
+          test('browser generation fallback ignores a foreign publication base', async () => {
+            const cacheStorage = new FakeCacheStorage();
+            const deploymentUrl = 'https://raw.githack.com/Chicken3veryDay/Drop-finder/gh-pages/';
+            const cache = new BrowserGenerationCache({ cacheStorage, deploymentUrl });
+            await cache.putComplete(generation('foreign', 'https://raw.githack.com/Chicken3veryDay/Drop-finder/main/'));
+            assert.equal(await cache.getLastComplete(), null);
+            assert.equal((await cacheStorage.open(cache.cacheName)).entries.size, 0);
+          });
+          '''.replace('          ', ''), encoding='utf-8')
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Validate reconstruction
+        working-directory: web
+        run: |
+          npm ci
+          node --test test/catalog-generation-cache.test.mjs test/service-worker.test.mjs test/service-worker-preparation-retry.test.mjs
+          npm run lint
+          npm run typecheck
+      - name: Commit final reconstruction
+        shell: bash
+        run: |
+          rm -f .github/workflows/tmp-deployment-cache-builder.yml .github/.tmp-deployment-cache-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cloud_pages/sw.js web/src/platform/catalog/catalog-generation-client.js web/test/catalog-generation-cache.test.mjs .github/workflows/tmp-deployment-cache-builder.yml .github/.tmp-deployment-cache-trigger
+          git commit -m "fix: isolate cached generations by deployment"
+          git push origin HEAD:fix/issue-30-deployment-cache-isolation
