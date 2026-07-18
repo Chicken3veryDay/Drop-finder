@@ -275,7 +275,14 @@ def resolve_route_overlaps(rows: list[dict]) -> list[dict]:
         current = winners.get(key)
         if current is None or product_quality(row) > product_quality(current):
             winners[key] = row
-    return sorted(winners.values(), key=lambda row: (str(row.get("vendor") or ""), str(row.get("name") or ""), core.num(row.get("price")) or 1e12))
+    return sorted(
+        winners.values(),
+        key=lambda row: (
+            str(row.get("vendor") or ""),
+            str(row.get("name") or ""),
+            core.num(row.get("price")) or 1e12,
+        ),
+    )
 
 
 def scan_source(source: tuple) -> tuple[list[dict], dict]:
@@ -324,26 +331,58 @@ def run(shard: int, shards: int, output: Path, workers: int) -> int:
                     "name": source_id,
                     "enabled": True,
                     "admitted": False,
-                    "status": "error",
+                    "status": "quarantined",
                     "products": 0,
-                    "error": f"{type(exc).__name__}: {core.text(exc)[:300]}",
+                    "reason_codes": ["worker_exception"],
+                    "error": f"{type(exc).__name__}: {core.text(exc)[:500]}",
+                    "quality": {"products": 0, "url_coverage": 0, "priced_products": 0, "evidenced_products": 0},
+                    "worker": "cloud_scan_v2+product_detail_verifier",
                 }
             products.extend(rows)
             statuses.append(status)
-            print(f"[{status.get('status')}] {source_id}: {len(rows)}")
-    core.write(output / f"shard-{shard}.json", {"generated_at": core.now(), "shard": shard, "products": core.dedupe(products), "sources": statuses})
+            print(json.dumps({"source": source_id, "status": status["status"], "products": len(rows)}), flush=True)
+    payload = {
+        "schema_version": "dropfinder-autonomous-shard-v1",
+        "generated_at": core.now(),
+        "shard": shard,
+        "shards": shards,
+        "products": core.dedupe(products),
+        "sources": sorted(statuses, key=lambda row: str(row.get("source_id") or "")),
+    }
+    (output / f"shard-{shard}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return 0
+
+
+def self_test() -> int:
+    explicit = "Blue Dream THCA Flower /products/blue-dream-thca-flower"
+    assert has_product_evidence(explicit)
+    assert not has_product_evidence("THCA Pre-Rolled Joints /products/thca-pre-roll")
+    fixture = '''
+    <html><head>
+      <meta property="og:title" content="Blue Dream THCA Flower">
+      <meta name="description" content="Loose indoor THCA flower buds">
+    </head><body></body></html>
+    '''
+    evidence = product_detail_evidence(fixture, "https://example.test/products/blue-dream")
+    assert has_product_evidence(evidence)
+    good = [{"url": "https://example.test/products/blue-dream-thca-flower", "price": 10, "classification_evidence": evidence_payload(explicit, "test")}]
+    assert gate(good)[0]
+    assert not gate([])[0]
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--shard", type=int, required=True)
-    parser.add_argument("--shards", type=int, default=6)
-    parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--shard", type=int, default=0)
+    parser.add_argument("--shards", type=int, default=1)
+    parser.add_argument("--output", type=Path, default=Path("scan-output"))
+    parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
-    if args.shard < 0 or args.shard >= args.shards:
-        parser.error("--shard must be between 0 and --shards - 1")
+    if args.self_test:
+        return self_test()
+    if args.shards < 1 or not 0 <= args.shard < args.shards:
+        parser.error("invalid shard configuration")
     return run(args.shard, args.shards, args.output, args.workers)
 
 
