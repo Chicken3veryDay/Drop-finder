@@ -1,0 +1,216 @@
+name: Temporary Vape Quantity Builder
+
+on:
+  push:
+    branches:
+      - fix/issue-119-vape-quantity-integrity
+
+permissions:
+  contents: write
+
+jobs:
+  reconstruct:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-119-vape-quantity-integrity
+      - name: Apply volume-only publication invariant
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              return text.replace(old, new, 1)
+
+          normalization_path = Path('scripts/multi_product/normalization.py')
+          normalization = normalization_path.read_text(encoding='utf-8')
+          normalization = replace_once(normalization, '''    if primary_type in (CANNABIS_FLOWER, PSILOCYBIN_MUSHROOM):
+              volume_ml = None
+              if primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE):
+              grams = None
+          ''', '''    if primary_type in (CANNABIS_FLOWER, PSILOCYBIN_MUSHROOM):
+              volume_ml = None
+              elif primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE) and volume_ml:
+              # Prefer explicit source volume when both units are present. Mass-only
+              # labels remain intact so publication can reject them explicitly.
+              grams = None
+          ''', 'quantity preservation')
+          normalization_path.write_text(normalization, encoding='utf-8')
+
+          publication_path = Path('scripts/multi_product/publication.py')
+          publication = publication_path.read_text(encoding='utf-8')
+          publication = replace_once(publication, 'import json\nimport urllib.parse\n', 'import json\nimport math\nimport urllib.parse\n', 'math import')
+          marker = '''def reject_reason(product: dict[str, Any]) -> str | None:
+          '''
+          helpers = '''def _positive_number(value: Any) -> float | None:
+              try:
+                  parsed = float(value)
+              except (TypeError, ValueError):
+                  return None
+              return parsed if math.isfinite(parsed) and parsed > 0 else None
+
+
+          def _vape_quantity_reject_reason(product: dict[str, Any]) -> str | None:
+              unit = str(product.get("quantity_unit") or "")
+              grams = _positive_number(product.get("grams"))
+              volume_ml = _positive_number(product.get("volume_ml"))
+              metric = str(product.get("comparison_metric") or "")
+              comparison = _positive_number(product.get("comparison_price"))
+              price_per_ml = _positive_number(product.get("price_per_ml"))
+
+              if unit == "g" or grams is not None:
+                  return "unsupported_vape_mass_quantity"
+              if unit != "ml" or volume_ml is None:
+                  return "missing_vape_volume"
+              if metric != "price_per_ml" or comparison is None or price_per_ml is None:
+                  return "missing_vape_comparison_price"
+              if abs(comparison - price_per_ml) > 0.0001:
+                  return "inconsistent_vape_comparison_price"
+              return None
+
+
+          def reject_reason(product: dict[str, Any]) -> str | None:
+          '''
+          publication = replace_once(publication, marker, helpers, 'vape quantity validator')
+          publication = replace_once(publication, '''        if not evidence.get("explicit_vape"):
+              return "missing_product_level_vape_evidence"
+              elif primary == PSILOCYBIN_MUSHROOM:
+          ''', '''        if not evidence.get("explicit_vape"):
+              return "missing_product_level_vape_evidence"
+              quantity_reason = _vape_quantity_reject_reason(product)
+              if quantity_reason:
+              return quantity_reason
+              elif primary == PSILOCYBIN_MUSHROOM:
+          ''', 'cannabis vape invariant')
+          publication = replace_once(publication, '''        if evidence.get("amanita_signal"):
+              return "amanita_not_psilocybin"
+              else:
+          ''', '''        if evidence.get("amanita_signal"):
+              return "amanita_not_psilocybin"
+              quantity_reason = _vape_quantity_reject_reason(product)
+              if quantity_reason:
+              return quantity_reason
+              else:
+          ''', 'psilocybin vape invariant')
+          publication_path.write_text(publication, encoding='utf-8')
+
+          Path('tests/multi_product/test_vape_quantity_integrity.py').write_text('''import math
+          import unittest
+
+          from scripts.multi_product.normalization import quantity_fields, comparison_price
+          from scripts.multi_product.publication import reject_reason
+          from scripts.multi_product.taxonomy import CANNABIS_VAPE, PSILOCYBIN_VAPE
+
+
+          class VapeQuantityIntegrityTests(unittest.TestCase):
+              def product(self, primary_type=CANNABIS_VAPE, **values):
+                  evidence = {
+                      "primary_type": primary_type,
+                      "explicit_cannabis": primary_type == CANNABIS_VAPE,
+                      "explicit_psilocybin": primary_type == PSILOCYBIN_VAPE,
+                      "explicit_vape": True,
+                  }
+                  return {
+                      "id": "vape",
+                      "product_id": "vape",
+                      "source_id": "fixture",
+                      "name": "Fixture Vape",
+                      "url": "https://example.test/vape",
+                      "primary_type": primary_type,
+                      "classification_evidence": evidence,
+                      **values,
+                  }
+
+              def test_mass_only_vape_preserves_evidence_and_is_rejected(self):
+                  quantity = quantity_fields("Disposable vape 2g", CANNABIS_VAPE)
+                  self.assertEqual(quantity["grams"], 2.0)
+                  self.assertIsNone(quantity["volume_ml"])
+                  self.assertEqual(quantity["quantity_unit"], "g")
+                  comparison = comparison_price(40, quantity)
+                  product = self.product(**quantity, **comparison, price_per_ml=None)
+                  self.assertEqual(reject_reason(product), "unsupported_vape_mass_quantity")
+
+              def test_explicit_volume_wins_when_both_units_are_present(self):
+                  quantity = quantity_fields("Disposable vape 2g / 1mL", CANNABIS_VAPE)
+                  self.assertIsNone(quantity["grams"])
+                  self.assertEqual(quantity["volume_ml"], 1.0)
+                  self.assertEqual(quantity["quantity_unit"], "ml")
+
+              def test_coherent_volume_quantity_is_publishable_for_both_vape_types(self):
+                  for primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE):
+                      product = self.product(
+                          primary_type,
+                          grams=None,
+                          volume_ml=1.0,
+                          quantity_unit="ml",
+                          comparison_metric="price_per_ml",
+                          comparison_price=20.0,
+                          price_per_ml=20.0,
+                      )
+                      self.assertIsNone(reject_reason(product))
+
+              def test_missing_or_inconsistent_volume_comparison_is_rejected(self):
+                  base = dict(grams=None, volume_ml=1.0, quantity_unit="ml")
+                  self.assertEqual(
+                      reject_reason(self.product(**base, comparison_metric=None, comparison_price=None, price_per_ml=None)),
+                      "missing_vape_comparison_price",
+                  )
+                  self.assertEqual(
+                      reject_reason(self.product(**base, comparison_metric="price_per_ml", comparison_price=19, price_per_ml=20)),
+                      "inconsistent_vape_comparison_price",
+                  )
+                  self.assertEqual(
+                      reject_reason(self.product(grams=None, volume_ml=None, quantity_unit=None)),
+                      "missing_vape_volume",
+                  )
+
+              def test_non_finite_values_do_not_satisfy_quantity_contract(self):
+                  product = self.product(
+                      grams=None,
+                      volume_ml=math.inf,
+                      quantity_unit="ml",
+                      comparison_metric="price_per_ml",
+                      comparison_price=20,
+                      price_per_ml=20,
+                  )
+                  self.assertEqual(reject_reason(product), "missing_vape_volume")
+
+
+          if __name__ == "__main__":
+              unittest.main()
+          '''.replace('          ', ''), encoding='utf-8')
+
+          doc_path = Path('docs/MULTI_PRODUCT_MIGRATION_PLAN.md')
+          docs = doc_path.read_text(encoding='utf-8')
+          note = '''
+
+          ## Vape quantity publication boundary
+
+          Cannabis and psilocybin vape publication currently requires explicit source volume in milliliters and a coherent `price_per_ml` comparison. Explicit mass evidence is preserved for diagnostics, but mass-only vape rows are rejected as `unsupported_vape_mass_quantity`. DropFinder does not infer grams to milliliters without a documented density contract. A future mixed-unit schema requires a versioned product and UI decision.
+          '''.replace('          ', '')
+          if '## Vape quantity publication boundary' not in docs:
+              docs += note
+          doc_path.write_text(docs, encoding='utf-8')
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate multi-product invariants
+        run: |
+          python -m compileall -q scripts/multi_product tests/multi_product
+          python -m unittest discover -s tests/multi_product -p 'test_*.py' -v
+      - name: Commit final reconstruction
+        shell: bash
+        run: |
+          rm -f .github/workflows/tmp-vape-quantity-builder.yml .github/.tmp-vape-quantity-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/multi_product/normalization.py scripts/multi_product/publication.py tests/multi_product/test_vape_quantity_integrity.py docs/MULTI_PRODUCT_MIGRATION_PLAN.md .github/workflows/tmp-vape-quantity-builder.yml .github/.tmp-vape-quantity-trigger
+          git commit -m "fix: preserve and validate vape quantity evidence"
+          git push origin HEAD:fix/issue-119-vape-quantity-integrity
