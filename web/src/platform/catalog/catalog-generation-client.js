@@ -218,18 +218,22 @@ export class CatalogGenerationClient {
   }
 
   async fetchDeduped(key, input, init) {
-    const existing = this.inflight.get(key);
-    if (existing) return existing.promise.then(response => response.clone());
-    const controller = new AbortController();
-    const abort = () => controller.abort(init.signal?.reason);
-    init.signal?.addEventListener('abort', abort, { once: true });
-    const promise = this.fetchBounded(input, { ...init, signal: controller.signal })
-      .finally(() => {
-        init.signal?.removeEventListener('abort', abort);
-        this.inflight.delete(key);
-      });
-    this.inflight.set(key, { controller, promise });
-    return promise.then(response => response.clone());
+    if (init.signal?.aborted) throw abortError();
+    let entry = this.inflight.get(key);
+    if (entry?.controller.signal.aborted) {
+      this.inflight.delete(key);
+      entry = null;
+    }
+    if (!entry) {
+      entry = createSharedOperation(
+        sharedSignal => this.fetchBounded(input, { ...init, signal: sharedSignal }),
+        settledEntry => {
+          if (this.inflight.get(key) === settledEntry) this.inflight.delete(key);
+        },
+      );
+      this.inflight.set(key, entry);
+    }
+    return consumeSharedOperation(entry, init.signal, response => response.clone());
   }
 
   async fetchBounded(input, { signal, maxBytes, ...init }) {
@@ -317,6 +321,67 @@ export class MemoryGenerationCache {
   constructor() { this.complete = null; }
   async getLastComplete() { return this.complete; }
   async putComplete(value) { this.complete = value; }
+}
+
+function createSharedOperation(start, onSettled) {
+  const controller = new AbortController();
+  const entry = {
+    controller,
+    consumers: new Set(),
+    settled: false,
+    promise: null,
+  };
+  entry.promise = Promise.resolve()
+    .then(() => start(controller.signal))
+    .finally(() => {
+      entry.settled = true;
+      onSettled(entry);
+    });
+  return entry;
+}
+
+function consumeSharedOperation(entry, signal, transform = value => value) {
+  if (signal?.aborted) return Promise.reject(abortError());
+  const consumer = {};
+  entry.consumers.add(consumer);
+
+  return new Promise((resolve, reject) => {
+    let completed = false;
+    let onAbort;
+    const release = reason => {
+      signal?.removeEventListener('abort', onAbort);
+      entry.consumers.delete(consumer);
+      if (!entry.settled && entry.consumers.size === 0 && !entry.controller.signal.aborted) {
+        entry.controller.abort(reason ?? 'Shared request has no active consumers');
+      }
+    };
+    const settle = (handler, value, reason) => {
+      if (completed) return;
+      completed = true;
+      release(reason);
+      handler(value);
+    };
+    onAbort = () => settle(reject, abortError(), signal?.reason);
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+    entry.promise.then(
+      value => {
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        let transformed;
+        try { transformed = transform(value); }
+        catch (error) {
+          settle(reject, error);
+          return;
+        }
+        settle(resolve, transformed);
+      },
+      error => settle(reject, error),
+    );
+    if (signal?.aborted) onAbort();
+  });
 }
 
 async function boundedResponse(response, maxBytes, signal) {
