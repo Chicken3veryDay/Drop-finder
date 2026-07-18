@@ -44,7 +44,7 @@ The manifest uses shopper marketplace wording, relative `start_url`/`scope`, dar
 
 ## Document security and limits
 
-`pdfjs-dist` is pinned to `6.1.200`. `pdfjs-loader.js` imports PDF.js only on first PDF open and configures the separately emitted PDF worker. The default limits are 20 MiB, 80 pages, scale 0.5 to 3, and device pixel ratio 2. Closing or replacing a document aborts network work, cancels rendering, destroys the PDF loading task, releases page resources, revokes image object URLs, unlocks scrolling, and restores invoking-control focus.
+The exact `pdfjs-dist` release is pinned in `web/package.json` and resolved in `web/package-lock.json`, which are the version sources of truth. `pdfjs-loader.js` imports PDF.js only on first PDF open and configures the separately emitted PDF worker. The default limits are 20 MiB, 80 pages, scale 0.5 to 3, and device pixel ratio 2. Closing or replacing a document aborts network work, cancels rendering, destroys the PDF loading task, releases page resources, revokes image object URLs, unlocks scrolling, and restores invoking-control focus.
 
 Arbitrary seller HTML is never embedded. It is external-only. Unsupported, encrypted, malformed, oversized, unavailable, or blocked documents expose one concise original-document fallback. No proxy or analytics service receives document bytes.
 

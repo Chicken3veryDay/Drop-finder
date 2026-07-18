@@ -14,17 +14,26 @@ GRAM_PATTERN = re.compile(
     r"(?<![\d.-])(?P<value>0\.5|1|2|3\.5|4|7|14|28|56|112)\s*(?:g|grams?)\b",
     re.I,
 )
+POUND_PATTERN = re.compile(
+    r"(?<![\d.-])(?P<value>1/4|1/2|1|2|4)\s*(?:lb|lbs|pounds?)\b",
+    re.I,
+)
+WORD_POUND_PATTERN = re.compile(r"\b(?P<value>quarter|half|one|two|four)\s+pounds?\b", re.I)
 OUNCE_PATTERN = re.compile(
     r"(?<![\d.-])(?P<value>1/8|1/4|1/2|1|2|4)\s*(?:st|nd|rd|th)?\s*(?:oz|ounces?)\b",
     re.I,
 )
 BARE_FRACTION_OUNCE_PATTERN = re.compile(r"(?<![\d.-])(?P<value>1/8|1/4|1/2)\s*(?:th|st|nd|rd)?\b", re.I)
 WORD_WEIGHT_PATTERN = re.compile(
-    r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b",
+    r"\b(?P<value>eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|two\s+ounces?|four\s+ounces?|zip)\b(?!\s*(?:lb|lbs|pounds?)\b)",
     re.I,
 )
 PERCENT_PATTERN = re.compile(r"(?<!\d)(?P<value>\d{1,3}(?:\.\d+)?)\s*%")
 ND_PATTERN = re.compile(r"\b(?:nd|n/?d|non[- ]?detect(?:ed|able)?|below\s+(?:loq|lod))\b", re.I)
+NEGATIVE_STOCK_PATTERN = re.compile(
+    r"\b(?:out\s+of\s+stock|outofstock|sold\s+out|unavailable|not(?:\s+\w+){0,2}\s+(?:available|in\s+stock))\b"
+)
+POSITIVE_STOCK_PATTERN = re.compile(r"\b(?:in\s+stock|instock|available(?:\s+for\s+order)?)\b")
 
 TRAILING_NAME_PATTERNS = [
     re.compile(
@@ -134,46 +143,53 @@ def delta9_value(value: Any) -> tuple[Decimal | None, str]:
     return parsed, "measured" if parsed is not None else "missing"
 
 
-
-
 def _snap_commercial_weight(value: Decimal) -> Decimal:
     standards = (
         Decimal("0.5"), Decimal("1"), Decimal("2"), Decimal("3.5"),
         Decimal("4"), Decimal("7"), Decimal("14"), Decimal("28"),
-        Decimal("56"), Decimal("112"),
+        Decimal("56"), Decimal("112"), Decimal("224"), Decimal("448"),
+        Decimal("896"), Decimal("1792"),
     )
     closest = min(standards, key=lambda candidate: abs(candidate - value))
     tolerance = max(Decimal("0.02"), closest * Decimal("0.02"))
     return closest if abs(closest - value) <= tolerance else value
 
-def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str]:
-    direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
-    source_label = clean_text(label if label not in (None, "") else value)
-    # The first argument is a normalized grams field when supplied by an
-    # adapter. Numeric strings are therefore valid here; arbitrary labels are
-    # parsed only from the second argument below.
-    if direct is not None:
-        return _snap_commercial_weight(direct), source_label or f"{direct.normalize()}g"
-    text = source_label
+
+def _weight_from_label(text: str) -> tuple[Decimal | None, str]:
     match = GRAM_PATTERN.search(text)
     if match:
-        return Decimal(match.group("value")), text
+        return Decimal(match.group("value")), clean_text(match.group(0))
+    match = POUND_PATTERN.search(text)
+    if match:
+        return {
+            "1/4": Decimal("112"),
+            "1/2": Decimal("224"),
+            "1": Decimal("448"),
+            "2": Decimal("896"),
+            "4": Decimal("1792"),
+        }[match.group("value")], clean_text(match.group(0))
+    match = WORD_POUND_PATTERN.search(text)
+    if match:
+        return {
+            "quarter": Decimal("112"),
+            "half": Decimal("224"),
+            "one": Decimal("448"),
+            "two": Decimal("896"),
+            "four": Decimal("1792"),
+        }[normalized_search(match.group("value"))], clean_text(match.group(0))
     match = OUNCE_PATTERN.search(text) or BARE_FRACTION_OUNCE_PATTERN.search(text)
     if match:
-        amount = match.group("value")
-        grams = {
+        return {
             "1/8": Decimal("3.5"),
             "1/4": Decimal("7"),
             "1/2": Decimal("14"),
             "1": Decimal("28"),
             "2": Decimal("56"),
             "4": Decimal("112"),
-        }[amount]
-        return grams, text
+        }[match.group("value")], clean_text(match.group(0))
     match = WORD_WEIGHT_PATTERN.search(text)
     if match:
-        token = normalized_search(match.group("value"))
-        grams = {
+        return {
             "eighth": Decimal("3.5"),
             "quarter": Decimal("7"),
             "half ounce": Decimal("14"),
@@ -185,10 +201,28 @@ def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str
             "four ounces": Decimal("112"),
             "four ounce": Decimal("112"),
             "zip": Decimal("28"),
-        }.get(token)
-        if grams is not None:
-            return grams, text
-    return None, text
+        }.get(normalized_search(match.group("value"))), clean_text(match.group(0))
+    return None, ""
+
+
+def normalize_weight(value: Any, label: Any = None) -> tuple[Decimal | None, str]:
+    direct = safe_decimal(value, minimum=Decimal("0.05"), maximum=Decimal("5000"))
+    supplied_label = clean_text(label)
+    source_label = supplied_label or clean_text(value)
+    label_weight, matched_label = _weight_from_label(supplied_label) if supplied_label else (None, "")
+
+    # Direct numeric values are not self-authenticating package-weight
+    # evidence. Require a source label with an explicit unit or recognized
+    # weight term, then require that evidence to agree with the normalized
+    # numeric value. This prevents inherited Tier/count/potency numbers and
+    # unitless legacy grams from producing shopper-visible price-per-gram data.
+    if direct is not None:
+        snapped = _snap_commercial_weight(direct)
+        if label_weight is None or label_weight != snapped:
+            return None, source_label
+        return label_weight, matched_label
+
+    return label_weight, matched_label or source_label
 
 
 def canonical_url(value: Any, *, keep_variant: bool = False) -> str:
@@ -311,12 +345,10 @@ def explicit_stock(value: Any) -> tuple[bool | None, str]:
     text = normalized_search(value)
     if not text:
         return None, "missing"
-    in_tokens = {"in stock", "instock", "in_stock", "available", "available for order", "true"}
-    out_tokens = {"out of stock", "outofstock", "out_of_stock", "sold out", "unavailable", "false"}
-    if text in in_tokens or any(token in text for token in ("in stock", "available for order")):
-        return True, "explicit_source_state"
-    if text in out_tokens or any(token in text for token in ("out of stock", "sold out")):
+    if text == "false" or NEGATIVE_STOCK_PATTERN.search(text):
         return False, "explicit_source_state"
+    if text == "true" or POSITIVE_STOCK_PATTERN.search(text):
+        return True, "explicit_source_state"
     return None, "unknown"
 
 

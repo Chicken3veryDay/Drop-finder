@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .builder import build_catalog, write_result
-from .normalization import normalize_weight
+from .normalization import clean_text, normalize_weight, safe_decimal
 from .vendor_profiles import merge_vendor_profiles, optional_json, write_public_age_index
 from .verify import verify_publication
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_VENDOR_PROFILES = ROOT / "data" / "vendor_profiles.json"
 DEFAULT_VENDOR_EXPANSION = ROOT / "data" / "vendor_expansion.json"
+POUND_UNIT = re.compile(r"\b(?:lb|lbs|pounds?)\b", re.I)
 
 
 def _optional_json(path: Path | None) -> Any:
@@ -32,14 +35,47 @@ def declared_product_type(product: dict[str, Any]) -> str:
     return ""
 
 
+def _weight_evidence_labels(product: dict[str, Any]) -> Iterable[Any]:
+    seen: set[str] = set()
+    for key in (
+        "source_weight_label",
+        "weight_label",
+        "variant",
+        "weight",
+        "size",
+        "source_title",
+        "name",
+        "title",
+    ):
+        value = product.get(key)
+        normalized = clean_text(value).casefold()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        yield value
+
+
+def _legacy_pound_correction(direct: Any, label: Any) -> tuple[Decimal | None, str]:
+    """Repair the known pre-#162 pound-as-ounce conversion, and nothing broader."""
+    label_weight, matched_label = normalize_weight(None, label)
+    direct_weight = safe_decimal(direct, minimum=Decimal("0.05"), maximum=Decimal("5000"))
+    if label_weight is None or direct_weight is None or not POUND_UNIT.search(matched_label):
+        return None, ""
+    expected_from_legacy_ounce = direct_weight * Decimal("16")
+    tolerance = max(Decimal("0.05"), label_weight * Decimal("0.02"))
+    if abs(label_weight - expected_from_legacy_ounce) > tolerance:
+        return None, ""
+    return label_weight, matched_label
+
+
 def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     """Adapt the generalized raw catalog to the mature flower catalog-v4 contract.
 
     Explicit non-flower records remain available to the type-aware raw-catalog UI
     but are excluded from the flower-specific catalog-v4 builder. Legacy untyped
-    rows remain eligible. When generalized retrieval could not normalize a flower
-    weight, recover it conservatively from the variant or source title using the
-    catalog-v4 parser, which retains historical fraction and word-weight support.
+    rows remain eligible. Package weights require explicit source text. Newly
+    generated cloud-scan rows carry `source_weight_label`; older admitted rows
+    may recover the same evidence conservatively from their variant or title.
     """
     admitted: list[dict[str, Any]] = []
     excluded = 0
@@ -51,18 +87,16 @@ def strict_flower_products(products: list[dict[str, Any]]) -> tuple[list[dict[st
             excluded += 1
             continue
         prepared = dict(product)
-        if prepared.get("grams") in (None, "") and prepared.get("weight_grams") in (None, ""):
-            label = next(
-                (
-                    prepared.get(key)
-                    for key in ("source_weight_label", "weight_label", "variant", "weight", "size", "source_title", "name", "title")
-                    if prepared.get(key) not in (None, "")
-                ),
-                None,
-            )
-            grams, _ = normalize_weight(None, label)
-            if grams is not None:
-                prepared["grams"] = float(grams)
+        direct = prepared.get("grams") if prepared.get("grams") not in (None, "") else prepared.get("weight_grams")
+        for label in _weight_evidence_labels(prepared):
+            grams, matched_label = normalize_weight(direct, label)
+            if grams is None:
+                grams, matched_label = _legacy_pound_correction(direct, label)
+            if grams is None:
+                continue
+            prepared["grams"] = float(grams)
+            prepared["source_weight_label"] = matched_label
+            break
         admitted.append(prepared)
     return admitted, excluded
 

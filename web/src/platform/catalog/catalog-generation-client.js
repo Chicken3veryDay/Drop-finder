@@ -1,4 +1,5 @@
 import { PlatformError, assertGenerationEnvelope, abortError } from '../contracts.js';
+import { coordinateCatalogGeneration } from '../pwa/pwa-generation-coordinator.js';
 
 const DEFAULTS = Object.freeze({
   manifestUrl: './data/catalog-v4/manifest.json',
@@ -37,20 +38,19 @@ export class CatalogGenerationClient {
   }
 
   async initialize({ signal, force = false } = {}) {
-    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) return this.active;
-    try {
-      return await this.refresh({ signal, allowCachedFallback: true });
-    } catch (error) {
-      const cached = await this.cache.getLastComplete();
-      if (cached) {
-        this.activate(cached, 'cache-fallback');
-        return cached;
-      }
-      throw error;
-    }
+    const generation = await this.prepare({
+      signal,
+      force,
+      allowCachedFallback: true,
+    });
+    await coordinateCatalogGeneration(generation.generationId, { signal });
+    return this.activatePrepared(generation, generation.source ?? 'network');
   }
 
-  async refresh({ signal, allowCachedFallback = false } = {}) {
+  async prepare({ signal, force = false, allowCachedFallback = false } = {}) {
+    if (!force && this.active && Date.now() - this.active.activatedAt <= this.options.staleMs) {
+      return this.active;
+    }
     if (this.pending) return this.pending;
     const controller = new AbortController();
     const linkedAbort = () => controller.abort(signal?.reason);
@@ -68,11 +68,28 @@ export class CatalogGenerationClient {
         this.pending = null;
       });
     const generation = await this.pending;
-    if (generation.generationId !== this.active?.generationId) {
-      await this.cache.putComplete(generation);
-      this.activate(generation, 'network');
-    }
+    await this.cache.putComplete(generation);
     return generation;
+  }
+
+  async refresh({ signal, allowCachedFallback = false } = {}) {
+    const generation = await this.prepare({
+      signal,
+      force: true,
+      allowCachedFallback,
+    });
+    await coordinateCatalogGeneration(generation.generationId, { signal });
+    return this.activatePrepared(generation, generation.source ?? 'network');
+  }
+
+  activatePrepared(generation, source = generation?.source ?? 'network') {
+    if (!generation?.generationId || !generation?.manifest || !generation?.index) {
+      throw new PlatformError('invalid_generation', 'A complete catalog generation is required for activation');
+    }
+    if (generation.generationId !== this.active?.generationId) {
+      this.activate(generation, source);
+    }
+    return this.active;
   }
 
   async loadCompleteGeneration(signal) {
@@ -187,20 +204,28 @@ export class CatalogGenerationClient {
 
   async fetchBounded(input, { signal, maxBytes, ...init }) {
     if (signal?.aborted) throw abortError();
+    const byteLimit = assertByteLimit(maxBytes);
     let lastError;
     for (let attempt = 0; attempt <= this.options.maxRetries; attempt += 1) {
       try {
         const response = await this.fetchImpl(input, { ...init, signal });
-        if (!response.ok) throw new PlatformError('http_error', `Catalog request failed with ${response.status}`);
-        const declared = Number(response.headers.get('content-length'));
-        if (Number.isFinite(declared) && declared > maxBytes) {
+        if (!response.ok) {
+          await cancelResponseBody(response, `HTTP ${response.status}`);
+          const error = new PlatformError('http_error', `Catalog request failed with ${response.status}`);
+          error.status = response.status;
+          throw error;
+        }
+        const contentLength = response.headers.get('content-length');
+        const declared = contentLength === null ? null : Number(contentLength);
+        if (Number.isFinite(declared) && declared > byteLimit) {
+          await cancelResponseBody(response, 'Catalog asset exceeds its size limit');
           throw new PlatformError('asset_oversized', 'Catalog asset exceeds its size limit');
         }
-        return boundedResponse(response, maxBytes);
+        return await boundedResponse(response, byteLimit, signal);
       } catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw abortError();
         lastError = error;
-        if (attempt >= this.options.maxRetries) break;
+        if (attempt >= this.options.maxRetries || !isRetryableFetchError(error)) break;
         await delay(50 * (2 ** attempt), signal);
       }
     }
@@ -239,10 +264,80 @@ export class MemoryGenerationCache {
   async putComplete(value) { this.complete = value; }
 }
 
-async function boundedResponse(response, maxBytes) {
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > maxBytes) throw new PlatformError('asset_oversized', 'Catalog asset exceeds its size limit');
-  return new Response(buffer, { status: response.status, statusText: response.statusText, headers: response.headers });
+async function boundedResponse(response, maxBytes, signal) {
+  if (!response.body) {
+    return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers });
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  const onAbort = () => { void cancelReader(reader, signal?.reason); };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    while (true) {
+      if (signal?.aborted) throw abortError();
+      const { done, value } = await reader.read();
+      if (signal?.aborted) throw abortError();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      if (totalBytes + chunk.byteLength > maxBytes) {
+        await cancelReader(reader, 'Catalog asset exceeds its size limit');
+        throw new PlatformError('asset_oversized', 'Catalog asset exceeds its size limit');
+      }
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+  } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') {
+      await cancelReader(reader, signal?.reason);
+      throw abortError();
+    }
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    try { reader.releaseLock(); } catch { /* already released by stream implementation */ }
+  }
+
+  let chunkIndex = 0;
+  const boundedBody = new ReadableStream({
+    pull(controller) {
+      if (chunkIndex >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunks[chunkIndex]);
+      chunks[chunkIndex] = null;
+      chunkIndex += 1;
+    },
+    cancel() {
+      chunks.length = 0;
+    },
+  });
+  return new Response(boundedBody, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+function assertByteLimit(value) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new PlatformError('invalid_size_limit', 'Catalog asset size limit must be a nonnegative safe integer');
+  }
+  return value;
+}
+
+function isRetryableFetchError(error) {
+  if (!(error instanceof PlatformError)) return true;
+  if (error.code !== 'http_error') return false;
+  return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+}
+
+async function cancelResponseBody(response, reason) {
+  if (!response.body) return;
+  try { await response.body.cancel(reason); } catch { /* best-effort transport cleanup */ }
+}
+
+async function cancelReader(reader, reason) {
+  try { await reader.cancel(reason); } catch { /* best-effort transport cleanup */ }
 }
 
 async function verifyHash(text, expected) {
@@ -282,7 +377,6 @@ function resolvePublicationUrl(value, manifestUrl, publicationBaseUrl) {
   if (path.startsWith('./') || path.startsWith('../')) return new URL(path, manifestUrl).href;
   return new URL(path, publicationBaseUrl).href;
 }
-
 
 function locationHref() {
   return globalThis.location?.href ?? 'https://dropfinder.invalid/';

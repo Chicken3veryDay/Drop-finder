@@ -81,6 +81,39 @@ class RuntimeTests(unittest.TestCase):
             ],
         )
 
+    def test_mixed_offers_never_become_records_or_product_links(self):
+        reliability = self.make_reliability()
+        install_multi_product_runtime(reliability)
+        route = ("html", "https://example.test/shop", "storewide")
+        for index, name in enumerate((
+            "THCA Flower Sampler Bundle 1 oz",
+            "THCA Flower Bundle 4oz Mix & Match",
+            "Dad's Day Stash Kit THCA Disposable Vape 1mL",
+            "THCA Flower Variety Pack",
+            "THCA Flower Mystery Pack",
+        )):
+            with self.subTest(name=name):
+                row = reliability.worker.core.record(
+                    "fixture",
+                    "Fixture",
+                    route,
+                    name,
+                    f"https://example.test/products/mixed-{index}",
+                    "",
+                    50,
+                    "in_stock",
+                )
+                self.assertIsNone(row)
+
+        links = reliability.worker.core.product_links(
+            """
+              <a href="/products/bundle">THCA Flower Bundle 4oz Mix & Match</a>
+              <a href="/products/valid">Blue Dream THCA Flower 3.5g</a>
+            """,
+            route,
+        )
+        self.assertEqual(links, ["https://example.test/products/valid"])
+
 
 if __name__ == "__main__":
     unittest.main()

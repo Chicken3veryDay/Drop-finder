@@ -20,6 +20,8 @@ export class DocumentViewerCapability {
     this.state = closedState();
     this.listeners = new Set();
     this.session = null;
+    this.lifecycleRevision = 0;
+    this.cleanupSequence = Promise.resolve();
     this.invoker = null;
     this.scrollLock = null;
   }
@@ -28,7 +30,9 @@ export class DocumentViewerCapability {
   snapshot() { return this.state; }
 
   async open(documentRef, context = {}) {
-    await this.close({ restoreFocus: false });
+    const lifecycleRevision = ++this.lifecycleRevision;
+    await this.closeSession({ restoreFocus: false, lifecycleRevision, publishClosed: false });
+    if (lifecycleRevision !== this.lifecycleRevision) return this.state;
     const type = classifyDocument(documentRef);
     this.invoker = context.invoker ?? globalThis.document?.activeElement ?? null;
     this.lockScroll();
@@ -214,18 +218,29 @@ export class DocumentViewerCapability {
   setFitWidth(enabled = true) { this.setState({ ...this.state, fitWidth: Boolean(enabled) }); }
   setZoom(scale) { this.setState({ ...this.state, scale: clamp(scale, this.options.minScale, this.options.maxScale), fitWidth: false }); }
 
-  async close({ restoreFocus = true } = {}) {
+  close({ restoreFocus = true } = {}) {
+    const lifecycleRevision = ++this.lifecycleRevision;
+    return this.closeSession({ restoreFocus, lifecycleRevision });
+  }
+
+  async closeSession({ restoreFocus, lifecycleRevision, publishClosed = true }) {
     const session = this.session;
     this.session = null;
+    let cleanup = this.cleanupSequence;
     if (session) {
       session.controller.abort('Document viewer closed');
       session.renderRevision += 1;
       try { session.renderTask?.cancel?.(); } catch {}
-      try { await session.renderSequence; } catch {}
-      try { await session.loadingTask?.destroy?.(); } catch {}
-      try { await session.pdf?.cleanup?.(); } catch {}
-      if (session.objectUrl) URL.revokeObjectURL(session.objectUrl);
+      cleanup = this.cleanupSequence.then(async () => {
+        try { await session.renderSequence; } catch {}
+        try { await session.loadingTask?.destroy?.(); } catch {}
+        try { await session.pdf?.cleanup?.(); } catch {}
+        if (session.objectUrl) URL.revokeObjectURL(session.objectUrl);
+      });
+      this.cleanupSequence = cleanup.catch(() => undefined);
     }
+    await cleanup;
+    if (lifecycleRevision !== this.lifecycleRevision || !publishClosed) return;
     this.unlockScroll();
     this.setState(closedState());
     if (restoreFocus && this.invoker?.isConnected && typeof this.invoker.focus === 'function') this.invoker.focus({ preventScroll: true });
@@ -240,8 +255,9 @@ export class DocumentViewerCapability {
       .filter(node => !node.hidden && node.getAttribute('aria-hidden') !== 'true');
     if (!focusable.length) { event.preventDefault(); overlayRoot.focus?.(); return true; }
     const first = focusable[0]; const last = focusable.at(-1);
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); return true; }
-    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); return true; }
+    const activeIndex = focusable.indexOf(globalThis.document?.activeElement);
+    if (event.shiftKey && activeIndex <= 0) { event.preventDefault(); last.focus(); return true; }
+    if (!event.shiftKey && (activeIndex === -1 || activeIndex === focusable.length - 1)) { event.preventDefault(); first.focus(); return true; }
     return false;
   }
 

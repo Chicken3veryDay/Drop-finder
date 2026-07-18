@@ -52,6 +52,12 @@ ACCESSORY = re.compile(
     r"wholesale|display\s+case|storage\s+jar)\b",
     re.I,
 )
+MIXED_OFFER = re.compile(
+    r"\b(?:bundles?|samplers?(?![-\s]+sized\b)|sample\s+packs?|variety\s+packs?|"
+    r"stash\s+kits?|mystery\s+(?:box(?:es)?|bags?|packs?)|"
+    r"mix(?:\s*&\s*|[-\s]+and[-\s]+|[-\s]+)match)\b",
+    re.I,
+)
 FLOWER_FORM_EXCLUDE = re.compile(
     r"\b(?:pre[- ]?rolls?|prerolls?|joints?|blunts?|cones?|vapes?|cartridges?|"
     r"carts?|disposables?|gumm(?:y|ies)|edibles?|tinctures?|capsules?|beverages?|"
@@ -72,6 +78,10 @@ def normalized_text(*values: object) -> str:
     return SPACE.sub(" ", " ".join(str(value or "") for value in values)).strip()
 
 
+def is_mixed_offer(*values: object) -> bool:
+    return bool(MIXED_OFFER.search(normalized_text(*values)))
+
+
 def _ordered_tags(tags: Iterable[str]) -> tuple[str, ...]:
     found = set(tags)
     return tuple(product_type for product_type in SUPPORTED_PRODUCT_TYPES if product_type in found)
@@ -85,7 +95,7 @@ def classify_product(
     route_hint: object = "",
 ) -> ProductClassification | None:
     text = normalized_text(name, description, url, route_hint)
-    if not text or ACCESSORY.search(text):
+    if not text or ACCESSORY.search(text) or is_mixed_offer(name, description, url):
         return None
 
     has_thca = bool(THCA.search(text))

@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { executeQuery, SORTS } from '../../src/platform/workers/marketplace-query-engine.js';
+import { executeQuery, normalizeSearch, SORTS } from '../../src/platform/workers/marketplace-query-engine.js';
 import { VirtualMarketplaceAdapter } from '../../src/platform/virtualization/virtual-marketplace-adapter.js';
 import { CatalogGenerationClient, MemoryGenerationCache } from '../../src/platform/catalog/catalog-generation-client.js';
 import { DocumentViewerCapability } from '../../src/platform/documents/document-viewer-capability.js';
@@ -27,6 +27,7 @@ function compact(product) {
     vendorId: product.vendor_id,
     vendor: product.vendor,
     strain: product.strain,
+    searchText: normalizeSearch(`${product.vendor}\n${product.strain}`),
     lineage: product.lineage,
     totalThc: product.total_thc,
     image: product.image,

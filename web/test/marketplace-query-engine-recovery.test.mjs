@@ -120,3 +120,81 @@ test('an inconsistent worker mode rejects before allocating pending state', asyn
   );
   assert.equal(engine.pending.size, 0);
 });
+
+test('late callbacks from a prior generation cannot mutate the active worker', async () => {
+  const workers = [];
+  const engine = new MarketplaceQueryEngine({
+    workerFactory: () => {
+      const worker = new FakeWorker();
+      workers.push(worker);
+      return worker;
+    },
+  });
+
+  await engine.initialize('g1', fixtureProducts(2));
+  const staleError = workers[0].onerror;
+  const staleMessage = workers[0].onmessage;
+
+  await engine.initialize('g2', fixtureProducts(2));
+  const activeWorker = workers[1];
+  const pending = engine.query({ search: 'Strain 1' });
+  const query = activeWorker.messages.at(-1);
+
+  staleError(new Error('queued error from g1'));
+  staleMessage({
+    data: {
+      type: 'result',
+      generationId: 'g2',
+      version: query.version,
+      result: { poisoned: true },
+    },
+  });
+
+  assert.equal(engine.worker, activeWorker);
+  assert.equal(activeWorker.terminated, undefined);
+  assert.equal(engine.workerRestarts, 0);
+  assert.equal(engine.crashCount, 0);
+  assert.equal(engine.pending.size, 1);
+  assert.equal(workers.length, 2);
+
+  const expected = { rows: ['current-generation-result'] };
+  activeWorker.onmessage({
+    data: {
+      type: 'result',
+      generationId: 'g2',
+      version: query.version,
+      result: expected,
+    },
+  });
+  assert.deepEqual(await pending, expected);
+  assert.equal(engine.pending.size, 0);
+});
+
+test('duplicate late error from a replaced worker does not consume another restart', async () => {
+  const workers = [];
+  const engine = new MarketplaceQueryEngine({
+    maxWorkerRestarts: 2,
+    workerFactory: () => {
+      const worker = new FakeWorker();
+      workers.push(worker);
+      return worker;
+    },
+  });
+
+  await engine.initialize('g1', fixtureProducts(1));
+  const firstWorkerError = workers[0].onerror;
+  firstWorkerError(new Error('current worker crash'));
+
+  const replacement = workers[1];
+  assert.equal(engine.worker, replacement);
+  assert.equal(engine.workerRestarts, 1);
+  assert.equal(engine.crashCount, 1);
+
+  firstWorkerError(new Error('duplicate queued error'));
+
+  assert.equal(engine.worker, replacement);
+  assert.equal(replacement.terminated, undefined);
+  assert.equal(engine.workerRestarts, 1);
+  assert.equal(engine.crashCount, 1);
+  assert.equal(workers.length, 2);
+});
