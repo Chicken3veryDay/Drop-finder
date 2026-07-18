@@ -34,38 +34,46 @@ export class MarketplaceQueryEngine {
     this.rows = [];
     this.requestVersion = 0;
     this.pending = new Map();
+    this.initializationWaiters = new Set();
     this.crashCount = 0;
     this.workerRestarts = 0;
     this.mode = 'uninitialized';
   }
 
   async initialize(generationId, products) {
-    if (!Array.isArray(products)) throw new PlatformError('invalid_index', 'Products must be an array');
-    this.disposeWorker();
-    for (const deferred of this.pending.values()) {
-      deferred.reject(new DOMException('Superseded by a new catalog generation', 'AbortError'));
-    }
-    this.pending.clear();
-    this.workerRestarts = 0;
-    this.generationId = generationId;
-    this.rows = products.map(compactProduct);
     try {
-      this.worker = this.workerFactory?.();
-    } catch {
-      this.worker = null;
-    }
-    if (this.worker) {
-      this.attachWorker(this.worker);
-    } else {
-      this.mode = 'sync';
-      if (this.rows.length > this.options.syncFallbackLimit) {
-        this.mode = 'failed';
-        throw new PlatformError('worker_required', `Worker support is required above ${this.options.syncFallbackLimit} products`);
+      if (!Array.isArray(products)) throw new PlatformError('invalid_index', 'Products must be an array');
+      this.disposeWorker();
+      for (const deferred of this.pending.values()) {
+        deferred.reject(new DOMException('Superseded by a new catalog generation', 'AbortError'));
       }
+      this.pending.clear();
+      this.workerRestarts = 0;
+      this.generationId = generationId;
+      this.rows = products.map(compactProduct);
+      try {
+        this.worker = this.workerFactory?.();
+      } catch {
+        this.worker = null;
+      }
+      if (this.worker) {
+        this.attachWorker(this.worker);
+      } else {
+        this.mode = 'sync';
+        if (this.rows.length > this.options.syncFallbackLimit) {
+          this.mode = 'failed';
+          throw new PlatformError('worker_required', `Worker support is required above ${this.options.syncFallbackLimit} products`);
+        }
+      }
+      this.resolveInitializationWaiters();
+    } catch (error) {
+      this.rejectInitializationWaiters(error);
+      throw error;
     }
   }
 
   async query(input = {}) {
+    if (!this.generationId) await this.waitForInitialization();
     if (!this.generationId) throw new PlatformError('not_initialized', 'Query engine is not initialized');
     if (this.mode === 'failed') {
       throw new PlatformError(
@@ -109,6 +117,26 @@ export class MarketplaceQueryEngine {
         reject(new PlatformError('worker_dispatch_failed', 'Marketplace search worker could not accept the query', error));
       }
     });
+  }
+
+  waitForInitialization() {
+    if (this.generationId) return Promise.resolve();
+    if (this.mode === 'disposed') {
+      return Promise.reject(new DOMException('Engine disposed', 'AbortError'));
+    }
+    return new Promise((resolve, reject) => {
+      this.initializationWaiters.add({ resolve, reject });
+    });
+  }
+
+  resolveInitializationWaiters() {
+    for (const waiter of this.initializationWaiters) waiter.resolve();
+    this.initializationWaiters.clear();
+  }
+
+  rejectInitializationWaiters(error) {
+    for (const waiter of this.initializationWaiters) waiter.reject(error);
+    this.initializationWaiters.clear();
   }
 
   handleWorkerMessage(message, worker = this.worker) {
@@ -162,8 +190,10 @@ export class MarketplaceQueryEngine {
 
   dispose() {
     this.disposeWorker();
-    for (const deferred of this.pending.values()) deferred.reject(new DOMException('Engine disposed', 'AbortError'));
+    const disposed = new DOMException('Engine disposed', 'AbortError');
+    for (const deferred of this.pending.values()) deferred.reject(disposed);
     this.pending.clear();
+    this.rejectInitializationWaiters(disposed);
     this.rows = [];
     this.generationId = null;
     this.mode = 'disposed';
