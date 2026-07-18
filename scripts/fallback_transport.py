@@ -5,6 +5,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HTML_CONTENT_TYPES = {"text/html", "application/xhtml+xml"}
+RETRYABLE_TRANSPORT_EXCEPTIONS = (ConnectionError, TimeoutError, OSError)
+
+
+def _is_retryable_transport_exception(exc: Exception) -> bool:
+    """Retry network/transport failures without hiding deterministic code defects."""
+    return isinstance(exc, RETRYABLE_TRANSPORT_EXCEPTIONS)
 
 
 def install(reliability):
@@ -61,7 +67,10 @@ def install(reliability):
                             products=len(terminal_rows),
                         )
                 except Exception as exc:
-                    result.update(status="error", error=f"{type(exc).__name__}: {worker.core.text(exc)[:300]}")
+                    result.update(
+                        status="retryable_error" if _is_retryable_transport_exception(exc) else "error",
+                        error=f"{type(exc).__name__}: {worker.core.text(exc)[:300]}",
+                    )
                 result["duration_seconds"] = round(time.monotonic() - started, 3)
                 attempts.append(result)
                 if result.get("status") != "retryable_error":
@@ -103,6 +112,35 @@ def self_test(reliability) -> int:
         rows, attempts = scan(("fixture", "Fixture", []))
         assert not rows and len(attempts) == 3
         assert all(row["status"] == "retryable_error" for row in attempts)
+
+        transport_responses = iter([
+            TimeoutError("timed out"),
+            ("<a>ok</a>", "text/html", 200),
+        ])
+
+        def fetch_after_timeout(target):
+            response = next(transport_responses)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        worker.core.fetch = fetch_after_timeout
+        rows, attempts = scan(("fixture", "Fixture", []))
+        assert len(rows) == 1
+        assert [row["status"] for row in attempts] == ["retryable_error", "healthy"]
+        assert attempts[0]["error"].startswith("TimeoutError:")
+
+        worker.core.fetch = lambda target: (_ for _ in ()).throw(ConnectionError("connection reset"))
+        rows, attempts = scan(("fixture", "Fixture", []))
+        assert not rows and len(attempts) == 3
+        assert all(row["status"] == "retryable_error" for row in attempts)
+        assert all(row["error"].startswith("ConnectionError:") for row in attempts)
+
+        worker.core.fetch = lambda target: (_ for _ in ()).throw(ValueError("invalid fixture"))
+        rows, attempts = scan(("fixture", "Fixture", []))
+        assert not rows and len(attempts) == 1
+        assert attempts[0]["status"] == "error"
+        assert attempts[0]["error"].startswith("ValueError:")
 
         worker.core.fetch = lambda target: ("not html", "application/json", 200)
         rows, attempts = scan(("fixture", "Fixture", []))
