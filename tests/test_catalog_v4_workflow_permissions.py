@@ -40,6 +40,26 @@ class CatalogWorkflowPermissionTests(unittest.TestCase):
         validate = _block(self.lines, "validate", 2)
         self.assertNotIn("    permissions:", validate)
 
+    def test_publish_job_uses_shared_pages_lock_and_generation_guard(self) -> None:
+        publish = _block(self.lines, "publish", 2)
+        self.assertEqual(
+            _mapping(publish, "concurrency", 4),
+            {"group": "dropfinder-pages-publication", "cancel-in-progress": "false"},
+        )
+        joined = "\n".join(publish)
+        self.assertIn(
+            "git show origin/main:cloud_pages/data/catalog-v4/manifest.json",
+            joined,
+        )
+        self.assertIn(
+            "Catalog v4 generation was superseded on main; refusing to update gh-pages.",
+            joined,
+        )
+        self.assertIn(
+            "Catalog v4 publication completed without main/gh-pages manifest parity.",
+            joined,
+        )
+
     def test_only_publish_job_receives_repository_write_access(self) -> None:
         publish = _block(self.lines, "publish", 2)
         self.assertEqual(_mapping(publish, "permissions", 4), {"contents": "write"})
