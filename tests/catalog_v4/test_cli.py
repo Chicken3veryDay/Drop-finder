@@ -13,7 +13,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "legacy_rows.json"
 
 
 class CliTests(unittest.TestCase):
-    def test_structured_numeric_weight_without_text_label_reaches_builder(self) -> None:
+    def test_structured_numeric_weight_without_text_label_reaches_builder_and_is_rejected(self) -> None:
         prepared, excluded = strict_flower_products([{
             "source_id": "structured",
             "vendor": "Structured Vendor",
@@ -35,8 +35,9 @@ class CliTests(unittest.TestCase):
             generated_at="2026-07-16T00:00:00Z",
             detail_shards=1,
         )
-        self.assertEqual(result.product_count, 1)
-        self.assertEqual(result.variant_count, 1)
+        self.assertEqual(result.product_count, 0)
+        self.assertEqual(result.variant_count, 0)
+        self.assertEqual(result.rejections["reason_counts"]["invalid_or_missing_weight"], 1)
 
     def test_cli_build_and_verify(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
