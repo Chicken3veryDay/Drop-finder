@@ -36,18 +36,19 @@ def canonicalize_url(value: str, base_url: str = "", allowed_hosts: set[str] | N
     raw = urljoin(base_url, str(value or "").strip())
     try:
         parsed = urlsplit(raw)
+        hostname = parsed.hostname or ""
+        port = parsed.port
     except ValueError as exc:
         raise UnsafeUrl("malformed URL") from exc
     if parsed.scheme.lower() not in {"http", "https"}:
         raise UnsafeUrl("only http and https URLs are accepted")
     if parsed.username or parsed.password:
         raise UnsafeUrl("userinfo in URL rejected")
-    host = _safe_host(parsed.hostname or "")
+    host = _safe_host(hostname)
     if allowed_hosts:
         normalized = {_safe_host(item) for item in allowed_hosts}
         if host not in normalized and not any(host.endswith("." + suffix) for suffix in normalized):
             raise UnsafeUrl(f"host {host!r} is outside the adapter allowlist")
-    port = parsed.port
     netloc = host
     if port and not ((parsed.scheme.lower() == "http" and port == 80) or (parsed.scheme.lower() == "https" and port == 443)):
         netloc = f"{host}:{port}"
