@@ -16,7 +16,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: pages-repair
+  group: dropfinder-pages-publication
   cancel-in-progress: false
 
 jobs:
@@ -51,6 +51,14 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: cloud_pages
+      - name: Prove current-main repair ownership
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+            echo "::error::The Pages repair artifact was superseded on main; refusing to deploy it."
+            exit 1
+          fi
       - name: Deploy Pages
         id: deploy
         continue-on-error: true

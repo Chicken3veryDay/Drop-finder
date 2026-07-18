@@ -6,6 +6,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "catalog-v4.yml"
+PUBLISHER_WORKFLOWS = {
+    "catalog-v4": ROOT / ".github" / "workflows" / "catalog-v4.yml",
+    "autonomous-cloud": ROOT / ".github" / "workflows" / "dropfinder-cloud.yml",
+    "artifact-pages": ROOT / ".github" / "workflows" / "deploy-pages.yml",
+    "branch-fallback": ROOT / ".github" / "workflows" / "pages-branch-fallback.yml",
+    "pages-repair": ROOT / ".github" / "workflows" / "pages-repair.yml",
+}
 
 
 def _block(lines: list[str], header: str, indent: int) -> list[str]:
@@ -39,6 +46,46 @@ class CatalogWorkflowPermissionTests(unittest.TestCase):
         self.assertEqual(_mapping(self.lines, "permissions", 0), {"contents": "read"})
         validate = _block(self.lines, "validate", 2)
         self.assertNotIn("    permissions:", validate)
+
+    def test_every_pages_writer_uses_one_repository_wide_lock(self) -> None:
+        expected = {
+            "group": "dropfinder-pages-publication",
+            "cancel-in-progress": "false",
+        }
+        for name, path in PUBLISHER_WORKFLOWS.items():
+            with self.subTest(workflow=name):
+                lines = path.read_text(encoding="utf-8").splitlines()
+                if name in {"catalog-v4", "autonomous-cloud"}:
+                    publish = _block(lines, "publish", 2)
+                    actual = _mapping(publish, "concurrency", 4)
+                else:
+                    actual = _mapping(lines, "concurrency", 0)
+                self.assertEqual(actual, expected)
+
+    def test_publishers_refuse_superseded_artifacts(self) -> None:
+        required_evidence = {
+            "catalog-v4": "Catalog v4 generation was superseded on main; refusing to update gh-pages.",
+            "autonomous-cloud": "The production snapshot was superseded on main; refusing to publish stale",
+            "artifact-pages": "The Pages artifact was superseded on main; refusing to deploy it.",
+            "branch-fallback": "The fallback Pages snapshot was superseded on main; refusing to publish it.",
+            "pages-repair": "The Pages repair artifact was superseded on main; refusing to deploy it.",
+        }
+        for name, path in PUBLISHER_WORKFLOWS.items():
+            with self.subTest(workflow=name):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(required_evidence[name], text)
+
+    def test_catalog_publish_requires_post_push_manifest_parity(self) -> None:
+        publish = _block(self.lines, "publish", 2)
+        joined = "\n".join(publish)
+        self.assertIn(
+            "git show origin/main:cloud_pages/data/catalog-v4/manifest.json",
+            joined,
+        )
+        self.assertIn(
+            "Catalog v4 publication completed without main/gh-pages manifest parity.",
+            joined,
+        )
 
     def test_only_publish_job_receives_repository_write_access(self) -> None:
         publish = _block(self.lines, "publish", 2)
