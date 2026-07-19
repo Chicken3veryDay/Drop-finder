@@ -46,17 +46,10 @@ jobs:
           npm run lint
           npm run typecheck
           npm test
-          npm run build
-      - name: Verify exact file boundary
+      - name: Verify exact source boundary
         shell: bash
         run: |
-          git diff --name-only HEAD -- \
-            web/src/features/integration/register-marketplace-props.tsx \
-            web/src/features/marketplace/MarketplaceFeature.tsx \
-            web/src/features/marketplace/TypeAwareMarketplaceFeature.tsx \
-            web/src/platform/catalog/catalog-generation-client.js \
-            web/test/catalog-generation-stale-detail.test.mjs \
-            | sort > /tmp/actual-files
+          git diff --name-only HEAD | grep -v '^\.github/' | sort > /tmp/actual-files
           printf '%s\n' \
             web/src/features/integration/register-marketplace-props.tsx \
             web/src/features/marketplace/MarketplaceFeature.tsx \
@@ -65,13 +58,20 @@ jobs:
             web/test/catalog-generation-stale-detail.test.mjs \
             | sort > /tmp/expected-files
           diff -u /tmp/expected-files /tmp/actual-files
-          test "$(git diff --name-only HEAD | grep -vc '^\.github/' || true)" -eq 5
+      - name: Validate production build
+        working-directory: web
+        run: npm run build
       - name: Commit clean implementation
         shell: bash
         run: |
-          rm -f .github/workflows/tmp-issue94-replay.yml .github/.issue94-replay-trigger
+          git rm .github/workflows/tmp-issue94-replay.yml
+          git add \
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx \
+            web/src/features/marketplace/TypeAwareMarketplaceFeature.tsx \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-generation-stale-detail.test.mjs
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
           git commit -m "fix: reject stale detail work after catalog activation"
           git push origin HEAD:fix/issue-94-generation-safe-details-post-vape
