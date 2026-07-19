@@ -1,0 +1,100 @@
+name: Temporary Final Closure Current State
+
+on:
+  pull_request:
+    branches:
+      - verification/final-closure-current-state
+
+permissions:
+  contents: read
+  actions: read
+  deployments: read
+  pages: read
+
+jobs:
+  inspect:
+    if: github.head_ref == 'trigger/final-closure-current-state'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verification/final-closure-current-state
+          fetch-depth: 0
+      - name: Capture current tree and publication mutation paths
+        shell: bash
+        run: |
+          mkdir -p /tmp/current-state
+          git rev-parse HEAD > /tmp/current-state/head.txt
+          git show --no-patch --pretty=fuller HEAD > /tmp/current-state/head-commit.txt
+          git show --no-patch --pretty=fuller faf7a69a706e715caa5ec1ebeee11085cc48def6 > /tmp/current-state/catalog-commit.txt
+          git diff-tree --no-commit-id --name-status -r faf7a69a706e715caa5ec1ebeee11085cc48def6 > /tmp/current-state/catalog-commit-files.txt
+          find .github/workflows -maxdepth 1 -type f -printf '%P\n' | sort > /tmp/current-state/workflow-files.txt
+          find . -type f \( -name '*.json' -o -name '*.webmanifest' \) -not -path './.git/*' -printf '%p\n' | sort > /tmp/current-state/json-files.txt
+          grep -RIl --exclude-dir=.git 'ebd4681243a636355912e1b86578aea6' . > /tmp/current-state/current-generation-files.txt || true
+          grep -RIn --exclude-dir=.git --include='*.json' --include='*.md' --include='*.yml' --include='*.yaml' '"product_count"[[:space:]]*:[[:space:]]*5\|ebd4681243a636355912e1b86578aea6' . > /tmp/current-state/current-generation-evidence.txt || true
+          du -ah . | sort -h | tail -n 250 > /tmp/current-state/largest-files.txt
+      - name: Summarize workflow mutation and trigger boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          root = Path('.github/workflows')
+          rows = []
+          for path in sorted(root.glob('*')):
+              if not path.is_file():
+                  continue
+              text = path.read_text(encoding='utf-8', errors='replace')
+              rows.append({
+                  'path': str(path),
+                  'temporary_name': path.name.startswith('tmp-'),
+                  'writes_contents': bool(re.search(r'contents:\s*write', text)),
+                  'pushes_git': 'git push' in text,
+                  'mentions_main': bool(re.search(r'\bmain\b', text)),
+                  'mentions_gh_pages': 'gh-pages' in text,
+                  'publishes_pages': 'pages' in text.lower() and ('deploy' in text.lower() or 'gh-pages' in text),
+                  'workflow_dispatch': 'workflow_dispatch' in text,
+                  'schedule': bool(re.search(r'^\s*schedule:', text, re.M)),
+                  'issues_trigger': bool(re.search(r'^\s*issues:', text, re.M)),
+                  'pull_request_target': 'pull_request_target' in text,
+              })
+          Path('/tmp/current-state/workflows-summary.json').write_text(json.dumps(rows, indent=2) + '\n', encoding='utf-8')
+          PY
+      - name: Capture located generation JSON summaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          output = []
+          generation = 'ebd4681243a636355912e1b86578aea6'
+          for path in Path('.').rglob('*.json'):
+              if '.git' in path.parts:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except OSError:
+                  continue
+              if generation not in text and '"product_count": 5' not in text:
+                  continue
+              row = {'path': str(path), 'size': path.stat().st_size}
+              try:
+                  payload = json.loads(text)
+                  if isinstance(payload, dict):
+                      for key in ('generation_id','generated_at','product_count','variant_count','active_source_count','status','zero_degraded'):
+                          if key in payload:
+                              row[key] = payload[key]
+                      if isinstance(payload.get('products'), list):
+                          row['products_length'] = len(payload['products'])
+              except Exception as exc:
+                  row['parse_error'] = str(exc)
+              output.append(row)
+          Path('/tmp/current-state/generation-json-summary.json').write_text(json.dumps(output, indent=2) + '\n', encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-closure-current-state
+          path: /tmp/current-state
