@@ -1,0 +1,93 @@
+name: Temporary Issue 69 Document Scope Integrity
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-69-document-scope-integrity
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue69-document-scope-integrity'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-69-document-scope-integrity
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply builder and verifier integration
+        run: python .github/tmp/issue69_document_scope_integrity.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/catalog_v4/builder.py \
+            scripts/catalog_v4/documents.py \
+            scripts/catalog_v4/verify.py \
+            tests/catalog_v4/test_document_scope_integrity.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Capture focused and complete catalog validation
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+            python -m unittest -v tests.catalog_v4.test_document_scope_integrity
+            python -m scripts.catalog_v4.selftest
+            python -m unittest discover -s tests/catalog_v4 -v
+            rm -rf /tmp/issue69-catalog
+            python -m scripts.catalog_v4 \
+              --input cloud_pages/data/catalog.json \
+              --output /tmp/issue69-catalog \
+              --detail-shards 16 \
+              --minimum-products 1 \
+              --minimum-variants 1
+            python -m scripts.catalog_v4 \
+              --input cloud_pages/data/catalog.json \
+              --output /tmp/issue69-catalog \
+              --verify-only
+          } > /tmp/issue69-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue69-validation.status
+          cat /tmp/issue69-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue69-validation
+          path: |
+            /tmp/issue69-validation.log
+            /tmp/issue69-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        shell: bash
+        run: test "$(cat /tmp/issue69-validation.status)" -eq 0
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue69-document-scope-integrity.yml \
+            .github/tmp/issue69_document_scope_integrity.py
+          git add \
+            scripts/catalog_v4/builder.py \
+            scripts/catalog_v4/documents.py \
+            scripts/catalog_v4/verify.py \
+            tests/catalog_v4/test_document_scope_integrity.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: enforce document scope identity at publication"
+          git push origin HEAD:fix/issue-69-document-scope-integrity
