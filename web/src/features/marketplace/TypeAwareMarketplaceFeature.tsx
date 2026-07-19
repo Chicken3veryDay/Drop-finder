@@ -454,7 +454,7 @@ function TypedCatalogSection({
   );
 }
 
-export function TypeAwareMarketplaceFeature(props: MarketplaceFeatureProps) {
+export function TypeAwareMarketplaceFeature(props: MarketplaceFeatureProps & { catalogGenerationId?: string | null }) {
   const [activeType, setActiveType] = useState<ProductType>("cannabis_flower");
   const [rawProducts, setRawProducts] = useState<RawCatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
