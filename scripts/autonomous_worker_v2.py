@@ -80,23 +80,16 @@ def scored_card_candidates(payload: str, route: tuple) -> list[dict]:
         form_text = f"{label} {worker.path_text(target)}"
         if worker.core.HARD_EXCLUDE.search(form_text) or worker.FALLBACK_EXCLUDE.search(form_text):
             continue
-        nearby = worker.core.text(payload[match.start() : min(len(payload), match.end() + 2200)])
-        prices = [worker.core.num(value) for value in worker.PRICE.findall(nearby)]
-        price = next((value for value in prices if value is not None), None)
-        stock = (
-            "out_of_stock"
-            if "out of stock" in nearby.lower()
-            else "in_stock"
-            if any(token in nearby.lower() for token in ("add to cart", "choose an option", "in stock"))
-            else ""
-        )
+        # Anchor discovery does not establish ownership of surrounding price or
+        # availability text. Those fields are admitted only from this URL's own
+        # fetched product-detail metadata below.
         candidate = {
             "name": label,
             "url": target,
-            "price": price,
-            "stock": stock,
+            "price": None,
+            "stock": "",
             "card_evidence": form_text,
-            "candidate_score": _candidate_score(label, target, price),
+            "candidate_score": _candidate_score(label, target, None),
         }
         current = candidates.get(target)
         if current is None or candidate["candidate_score"] > current.get("candidate_score", -1):
@@ -138,12 +131,8 @@ def descriptive_candidate_to_row(candidate: dict, source_id: str, vendor: str) -
         or _slug_title(target)
         or name
     )
-    price = (
-        meta.get("product:price:amount")
-        or meta.get("og:price:amount")
-        or candidate.get("price")
-    )
-    stock = meta.get("product:availability") or candidate.get("stock")
+    price = meta.get("product:price:amount") or meta.get("og:price:amount")
+    stock = meta.get("product:availability")
     image = meta.get("og:image") or meta.get("twitter:image") or ""
     row = worker.core.record(source_id, vendor, detail_route, title, target, evidence, price, stock, image)
     if not row:
@@ -424,7 +413,8 @@ def self_test() -> int:
     rows = scored_card_candidates(fixture, route)
     assert len(rows) == 1
     assert rows[0]["name"] == "Blue Dream THCA Flower"
-    assert rows[0]["price"] == 24.99
+    assert rows[0]["price"] is None
+    assert rows[0]["stock"] == ""
     assert _is_retryable({"products": 1, "route_results": [{"http_status": 202}]})
     assert not _is_retryable({"products": 1, "route_results": [{"http_status": 404}]})
     _self_test_route_retries()
