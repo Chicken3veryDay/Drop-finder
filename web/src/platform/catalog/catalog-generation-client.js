@@ -41,6 +41,10 @@ export class CatalogGenerationClient {
     return () => this.listeners.delete(listener);
   }
 
+  emit(event) {
+    for (const listener of this.listeners) listener(event);
+  }
+
   snapshot() {
     return this.active;
   }
@@ -74,7 +78,17 @@ export class CatalogGenerationClient {
     const run = async () => {
       try {
         const generation = await this.loadCompleteGeneration(controller.signal);
-        await this.cache.putComplete(generation);
+        try {
+          await this.cache.putComplete(generation);
+        } catch (error) {
+          if (controller.signal.aborted || error?.name === 'AbortError') throw abortError();
+          this.emit(Object.freeze({
+            type: 'generation-cache-degraded',
+            generationId: generation.generationId,
+            code: cachePersistenceCode(error),
+            error,
+          }));
+        }
         return generation;
       } catch (error) {
         if (!allowCachedFallback || error?.name === 'AbortError') throw error;
@@ -229,7 +243,7 @@ export class CatalogGenerationClient {
     this.lastNetworkVerification = null;
     this.activationEpoch += 1;
     this.active = Object.freeze({ ...generation, source });
-    for (const listener of this.listeners) listener({ type: 'generation-activated', previous, current: this.active });
+    this.emit(Object.freeze({ type: 'generation-activated', previous, current: this.active }));
   }
 
   async fetchDeduped(key, input, init) {
@@ -458,6 +472,12 @@ function assertByteLimit(value) {
     throw new PlatformError('invalid_size_limit', 'Catalog asset size limit must be a nonnegative safe integer');
   }
   return value;
+}
+
+function cachePersistenceCode(error) {
+  if (error?.name === 'QuotaExceededError') return 'cache_quota_exceeded';
+  if (error?.name === 'SecurityError') return 'cache_security_denied';
+  return 'cache_persistence_failed';
 }
 
 function isRetryableFetchError(error) {
