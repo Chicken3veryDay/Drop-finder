@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+// @ts-expect-error The production worker is an intentionally untyped JavaScript module; this test validates its runtime contract.
 import { executeQuery } from "../../platform/workers/marketplace-query-engine.js";
 import {
   DEFAULT_FILTERS,
