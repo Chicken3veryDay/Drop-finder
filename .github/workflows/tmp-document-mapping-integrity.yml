@@ -1,0 +1,107 @@
+name: Temporary Document Mapping Integrity
+
+on:
+  pull_request:
+    branches:
+      - fix/issues-72-74-81-86-document-mapping
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.head_ref == 'trigger/document-mapping-integrity'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issues-72-74-81-86-document-mapping
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          git diff --name-only "$merge_base" HEAD | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/vendor_adapters/annotate.py \
+            scripts/vendor_adapters/discovery.py \
+            scripts/vendor_adapters/mapping.py \
+            scripts/vendor_adapters/models.py \
+            tests/test_vendor_document_mapping_integrity.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Capture complete Python validation
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts tests
+            python -m unittest -v tests.test_vendor_document_mapping_integrity
+            python -m unittest -v tests.test_vendor_adapters
+            python -m unittest discover -s tests -p 'test_*.py' -v
+            python -m scripts.vendor_adapters.cli verify
+            python -m scripts.catalog_v4.selftest
+            python -m unittest discover -s tests/catalog_v4 -v
+          } > /tmp/document-mapping-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/document-mapping-validation.status
+          cat /tmp/document-mapping-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: document-mapping-validation
+          path: |
+            /tmp/document-mapping-validation.log
+            /tmp/document-mapping-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        shell: bash
+        run: test "$(cat /tmp/document-mapping-validation.status)" -eq 0
+      - name: Validate annotation-to-catalog document import
+        shell: bash
+        run: |
+          python - <<'PY'
+          from scripts.catalog_v4 import build_catalog
+          from scripts.vendor_adapters.annotate import annotate_products
+          from scripts.vendor_adapters.models import DocumentCandidate
+
+          products = [{
+              'id': 'p1', 'source_product_id': 'p1', 'source_id': 'example', 'vendor': 'Example',
+              'name': 'Blue Dream THCA Flower 7g', 'variant': '7g', 'variant_id': 'v7',
+              'source_variant_id': 'v7', 'grams': 7, 'availability': 'in_stock', 'price': 35,
+              'url': 'https://shop.example/products/blue-dream?variant=v7',
+          }]
+          candidates = [
+              DocumentCandidate('example', 'https://cdn.example.com/blue-coa.pdf', 'coa', product_id='p1', variant_id='v7', weight_grams=7),
+              DocumentCandidate('example', 'https://cdn.example.com/blue-terpenes.pdf', 'terpene_report', product_id='p1', variant_id='v7', weight_grams=7),
+          ]
+          annotated = annotate_products(products, candidates, [])
+          result = build_catalog(annotated, generated_at='2026-07-19T00:00:00Z', detail_shards=1)
+          detail = next(blob for path, blob in result.files.items() if path.startswith('catalog-v4/details/'))
+          import json
+          payload = json.loads(detail)
+          documents = payload['products'][0]['variants'][0]['documents']
+          assert {row['kind'] for row in documents} == {'coa', 'terpene'}, documents
+          assert all(row['variant_id'] for row in documents), documents
+          PY
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm .github/workflows/tmp-document-mapping-integrity.yml
+          git add \
+            scripts/vendor_adapters/annotate.py \
+            scripts/vendor_adapters/discovery.py \
+            scripts/vendor_adapters/mapping.py \
+            scripts/vendor_adapters/models.py \
+            tests/test_vendor_document_mapping_integrity.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: preserve structured document mapping identity"
+          git push origin HEAD:fix/issues-72-74-81-86-document-mapping
