@@ -74,6 +74,7 @@ test('replacing results clears a focused key that no longer exists', () => {
 
 Path("web/src/features/integration/virtual-marketplace-focus.test.tsx").write_text(r'''import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// @ts-expect-error The production virtualization adapter is intentionally authored in JavaScript.
 import { VirtualMarketplaceAdapter } from "../../platform/virtualization/virtual-marketplace-adapter.js";
 import type { MarketplaceRowProjection } from "../marketplace/marketplace-core";
 import { VirtualizedMarketplace } from "./register-marketplace-props";
@@ -136,7 +137,9 @@ describe("virtual marketplace semantic scroll and focus policy", () => {
       model,
       rows: original,
       total: original.length,
+      expandedProductId: null,
       renderRow: (row: MarketplaceRowProjection) => <button>{row.product.id}</button>,
+      renderExpanded: () => null,
     };
     const view = render(<VirtualizedMarketplace {...props} queryKey="ascending" />);
     view.rerender(<VirtualizedMarketplace {...props} queryKey="ascending" />);
@@ -159,7 +162,9 @@ describe("virtual marketplace semantic scroll and focus policy", () => {
       model,
       rows: original,
       total: original.length,
+      expandedProductId: null,
       renderRow: (row: MarketplaceRowProjection) => <button>{row.product.id}</button>,
+      renderExpanded: () => null,
     };
     const view = render(<VirtualizedMarketplace {...props} queryKey="all" />);
     view.rerender(<VirtualizedMarketplace {...props} queryKey="all" />);
