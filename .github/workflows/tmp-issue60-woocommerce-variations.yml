@@ -21,12 +21,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Capture WooCommerce variation transformation
+      - name: Apply WooCommerce variation expansion
         shell: bash
         run: |
           set +e
           python .github/tmp/issue60_woocommerce_variations.py > /tmp/issue60-transform.log 2>&1
-          printf '%s\n' "$?" > /tmp/issue60-transform.status
+          primary_status=$?
+          if [ "$primary_status" -ne 0 ] && grep -q "rows=shopify(payload" /tmp/issue60-transform.log; then
+            python .github/tmp/issue60_finish_scan_router.py >> /tmp/issue60-transform.log 2>&1
+            status=$?
+          else
+            status=$primary_status
+          fi
+          printf '%s\n' "$status" > /tmp/issue60-transform.status
           cat /tmp/issue60-transform.log
           exit 0
       - uses: actions/upload-artifact@v4
@@ -147,7 +154,8 @@ jobs:
         run: |
           git rm \
             .github/workflows/tmp-issue60-woocommerce-variations.yml \
-            .github/tmp/issue60_woocommerce_variations.py
+            .github/tmp/issue60_woocommerce_variations.py \
+            .github/tmp/issue60_finish_scan_router.py
           git add scripts/cloud_scan.py tests/test_woocommerce_variations.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
