@@ -1,0 +1,54 @@
+name: Temporary Issues 98 99 Browser Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - fix/issues-98-99-virtual-scroll-focus
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'diagnostic/issues98-99-browser'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/issues-98-99-virtual-scroll-focus
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply candidate policy and tests
+        run: |
+          python .github/tmp/issues98_99_virtual_policy.py
+          python .github/tmp/issues98_99_tests.py
+      - name: Install dependencies and Chromium
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Capture integrated browser result
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          npx playwright test tests/e2e/integrated-app.spec.mjs --project=chromium --reporter=line > /tmp/issues98-99-browser.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issues98-99-browser.status
+          cat /tmp/issues98-99-browser.log
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: issues98-99-browser-diagnostic
+          path: |
+            /tmp/issues98-99-browser.log
+            /tmp/issues98-99-browser.status
+            web/test-results
+            web/playwright-report
+          if-no-files-found: warn
+          retention-days: 7
