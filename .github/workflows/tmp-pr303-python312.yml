@@ -1,0 +1,40 @@
+name: Temporary PR 303 Python 3.12 Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - verification/pr303-python312
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'trigger/pr303-python312'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verification/pr303-python312
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run exact repository command
+        shell: bash
+        run: |
+          set +e
+          python -m compileall -q scripts/multi_product tests/multi_product
+          python -m unittest discover -s tests/multi_product -v > /tmp/pr303-python312.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/pr303-python312.status
+          tail -n 400 /tmp/pr303-python312.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr303-python312-diagnostic
+          path: |
+            /tmp/pr303-python312.log
+            /tmp/pr303-python312.status
+      - name: Preserve result
+        run: test "$(cat /tmp/pr303-python312.status)" = "0"
