@@ -1,7 +1,7 @@
 name: Temporary Image Decode Regression Builder
 
 on:
-  push:
+  pull_request:
     branches:
       - fix/image-decode-main-regression
 
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   reconstruct:
-    if: github.actor != 'github-actions[bot]'
+    if: github.head_ref == 'trigger/image-decode-main-regression'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -26,146 +26,125 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
           path = Path('web/src/platform/documents/document-viewer-capability.js')
           text = path.read_text(encoding='utf-8')
 
-          def replace_once(old: str, new: str, label: str) -> None:
-              global text
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: expected one match, found {count}')
-              text = text.replace(old, new, 1)
+          constructor_anchor = "    this.loadPdfJs = options.loadPdfJs ?? (() => loadPdfJsRuntime({ workerSrc: options.pdfWorkerUrl }));\n"
+          decoder_line = "    this.decodeImage = options.decodeImage ?? decodeImageUrl;\n"
+          if decoder_line not in text:
+              if text.count(constructor_anchor) != 1:
+                  raise SystemExit('image decoder option anchor is not unique')
+              text = text.replace(constructor_anchor, constructor_anchor + decoder_line, 1)
 
-          replace_once(
-              "    this.loadPdfJs = options.loadPdfJs ?? (() => loadPdfJsRuntime({ workerSrc: options.pdfWorkerUrl }));\n",
-              "    this.loadPdfJs = options.loadPdfJs ?? (() => loadPdfJsRuntime({ workerSrc: options.pdfWorkerUrl }));\n    this.decodeImage = options.decodeImage ?? decodeImageUrl;\n",
-              'image decoder option',
-          )
-
-          replace_once(
-              '''  async openImage(documentRef, sessionId, signal) {
-              if (!this.fetchImpl) {
-              this.setState({ ...this.state, status: 'ready', displayUrl: documentRef.url });
-              return;
-              }
-              const response = await this.fetchImpl(documentRef.url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
-              const length = Number(response.headers.get('content-length'));
-              if (Number.isFinite(length) && length > this.options.maxBytes) throw new PlatformError('document_oversized', 'Image is too large');
-              if (!response.ok) throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
-              const bytes = await response.arrayBuffer();
-              if (bytes.byteLength > this.options.maxBytes) throw new PlatformError('document_oversized', 'Image is too large');
-              if (sessionId !== this.session?.id || signal.aborted) return;
-              const blob = new Blob([bytes], { type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream' });
-              const objectUrl = URL.createObjectURL(blob);
-              this.session.objectUrl = objectUrl;
-              this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
-            }
-          ''',
-              '''  async openImage(documentRef, sessionId, signal) {
+          start = text.index('  async openImage(documentRef, sessionId, signal) {')
+          end = text.index('\n\n  renderPage(', start)
+          open_image = dedent('''
+            async openImage(documentRef, sessionId, signal) {
               let objectUrl = null;
               try {
-              const sourceUrl = documentRef.url;
-              if (!this.fetchImpl) {
-              await this.decodeImage(sourceUrl, signal);
-              if (sessionId !== this.session?.id || signal.aborted) return;
-              this.setState({ ...this.state, status: 'ready', displayUrl: sourceUrl });
-              return;
-              }
-              const response = await this.fetchImpl(sourceUrl, {
-              signal,
-              credentials: 'omit',
-              referrerPolicy: 'no-referrer',
-              });
-              const length = Number(response.headers.get('content-length'));
-              if (Number.isFinite(length) && length > this.options.maxBytes) {
-              throw new PlatformError('document_oversized', 'Image is too large');
-              }
-              if (!response.ok) {
-              throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
-              }
-              const bytes = await response.arrayBuffer();
-              if (bytes.byteLength > this.options.maxBytes) {
-              throw new PlatformError('document_oversized', 'Image is too large');
-              }
-              if (sessionId !== this.session?.id || signal.aborted) return;
-              const blob = new Blob([bytes], {
-              type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream',
-              });
-              objectUrl = URL.createObjectURL(blob);
-              await this.decodeImage(objectUrl, signal);
-              if (sessionId !== this.session?.id || signal.aborted) return;
-              this.session.objectUrl = objectUrl;
-              this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
-              objectUrl = null;
+                const sourceUrl = documentRef.url;
+                if (!this.fetchImpl) {
+                  await this.decodeImage(sourceUrl, signal);
+                  if (sessionId !== this.session?.id || signal.aborted) return;
+                  this.setState({ ...this.state, status: 'ready', displayUrl: sourceUrl });
+                  return;
+                }
+                const response = await this.fetchImpl(sourceUrl, {
+                  signal,
+                  credentials: 'omit',
+                  referrerPolicy: 'no-referrer',
+                });
+                const length = Number(response.headers.get('content-length'));
+                if (Number.isFinite(length) && length > this.options.maxBytes) {
+                  throw new PlatformError('document_oversized', 'Image is too large');
+                }
+                if (!response.ok) {
+                  throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
+                }
+                const bytes = await response.arrayBuffer();
+                if (bytes.byteLength > this.options.maxBytes) {
+                  throw new PlatformError('document_oversized', 'Image is too large');
+                }
+                if (sessionId !== this.session?.id || signal.aborted) return;
+                const blob = new Blob([bytes], {
+                  type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream',
+                });
+                objectUrl = URL.createObjectURL(blob);
+                await this.decodeImage(objectUrl, signal);
+                if (sessionId !== this.session?.id || signal.aborted) return;
+                this.session.objectUrl = objectUrl;
+                this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
+                objectUrl = null;
               } catch (error) {
-              if (objectUrl) {
-              URL.revokeObjectURL(objectUrl);
-              objectUrl = null;
-              }
-              if (signal.aborted || error?.name === 'AbortError') throw abortError();
-              if (error instanceof PlatformError) throw error;
-              throw new PlatformError('image_decode_failed', 'This image could not be displayed.', error);
+                if (objectUrl) {
+                  URL.revokeObjectURL(objectUrl);
+                  objectUrl = null;
+                }
+                if (signal.aborted || error?.name === 'AbortError') throw abortError();
+                if (error instanceof PlatformError) throw error;
+                throw new PlatformError('image_decode_failed', 'This image could not be displayed.', error);
               } finally {
-              if (objectUrl) URL.revokeObjectURL(objectUrl);
+                if (objectUrl) URL.revokeObjectURL(objectUrl);
               }
             }
-          ''',
-              'image open lifecycle',
-          )
+          ''').strip('\n')
+          text = text[:start] + open_image + text[end:]
 
-          replace_once(
-              'export function classifyDocument(documentRef) {\n',
-              '''function decodeImageUrl(url, signal) {
-              if (signal?.aborted) return Promise.reject(abortError());
-              if (typeof Image === 'undefined') {
-              return Promise.reject(new PlatformError('image_decode_unavailable', 'Image decoding is unavailable'));
+          classify_anchor = 'export function classifyDocument(documentRef) {\n'
+          if 'function decodeImageUrl(url, signal) {' not in text:
+              helper = dedent('''
+              function decodeImageUrl(url, signal) {
+                if (signal?.aborted) return Promise.reject(abortError());
+                if (typeof Image === 'undefined') {
+                  return Promise.reject(new PlatformError('image_decode_unavailable', 'Image decoding is unavailable'));
+                }
+                return new Promise((resolve, reject) => {
+                  const image = new Image();
+                  let settled = false;
+                  const cleanup = () => {
+                    image.onload = null;
+                    image.onerror = null;
+                    signal?.removeEventListener('abort', onAbort);
+                  };
+                  const finish = handler => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    handler();
+                  };
+                  const onAbort = () => finish(() => {
+                    image.src = '';
+                    reject(abortError());
+                  });
+                  image.onload = () => finish(resolve);
+                  image.onerror = () => finish(() => reject(new PlatformError(
+                    'image_decode_failed',
+                    'This image could not be displayed.',
+                  )));
+                  signal?.addEventListener('abort', onAbort, { once: true });
+                  image.decoding = 'async';
+                  image.src = url;
+                  if (signal?.aborted) onAbort();
+                });
               }
-              return new Promise((resolve, reject) => {
-              const image = new Image();
-              let settled = false;
-              const cleanup = () => {
-              image.onload = null;
-              image.onerror = null;
-              signal?.removeEventListener('abort', onAbort);
-              };
-              const finish = handler => {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              handler();
-              };
-              const onAbort = () => finish(() => {
-              image.src = '';
-              reject(abortError());
-              });
-              image.onload = () => finish(resolve);
-              image.onerror = () => finish(() => reject(new PlatformError(
-              'image_decode_failed',
-              'This image could not be displayed.',
-              )));
-              signal?.addEventListener('abort', onAbort, { once: true });
-              image.decoding = 'async';
-              image.src = url;
-              if (signal?.aborted) onAbort();
-              });
-            }
-          
-          export function classifyDocument(documentRef) {
-          ''',
-              'default image decoder',
-          )
 
-          replace_once(
-              "    malformed: 'This document could not be read.',\n",
-              "    malformed: 'This document could not be read.',\n    image_decode_failed: 'This image could not be displayed.',\n    image_decode_unavailable: 'This image could not be displayed.',\n",
-              'image error messages',
-          )
+              ''')
+              if text.count(classify_anchor) != 1:
+                  raise SystemExit('document classifier anchor is not unique')
+              text = text.replace(classify_anchor, helper + classify_anchor, 1)
 
-          # Normalize only the deliberately generated replacement blocks.
-          text = text.replace('\n            if (!this.fetchImpl)', '\n    if (!this.fetchImpl)')
-          text = text.replace('\n            let objectUrl', '\n    let objectUrl')
-          text = text.replace('\n            try {', '\n    try {', 1)
+          malformed = "    malformed: 'This document could not be read.',\n"
+          image_messages = (
+              "    image_decode_failed: 'This image could not be displayed.',\n"
+              "    image_decode_unavailable: 'This image could not be displayed.',\n"
+          )
+          if 'image_decode_failed:' not in text:
+              if text.count(malformed) != 1:
+                  raise SystemExit('document error message anchor is not unique')
+              text = text.replace(malformed, malformed + image_messages, 1)
+
           path.write_text(text, encoding='utf-8')
           PY
       - name: Validate image and document lifecycle
@@ -178,7 +157,7 @@ jobs:
       - name: Commit implementation and remove builder
         shell: bash
         run: |
-          rm -f .github/workflows/tmp-image-decode-regression-builder.yml
+          rm -f .github/workflows/tmp-image-decode-regression-builder.yml .github/.image-decode-regression-trigger
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
