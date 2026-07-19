@@ -20,5 +20,9 @@ if text.count(old) != 1:
 text = text.replace(old, new, 1)
 text = text.replace("      ...(overrides.manifest ?? {}),\n", "      ...manifestOverrides,\n", 1)
 text = text.replace("      ...(overrides.index ?? {}),\n", "      ...indexOverrides,\n", 1)
-text = text.replace("    ...overrides,\n", "    ...generationOverrides,\n", 1)
+old_tail = "    source: 'cache',\n    ...overrides,\n"
+new_tail = "    source: 'cache',\n    ...generationOverrides,\n"
+if text.count(old_tail) != 1:
+    raise SystemExit(f"validGeneration tail anchors: {text.count(old_tail)}")
+text = text.replace(old_tail, new_tail, 1)
 path.write_text(text, encoding="utf-8")
