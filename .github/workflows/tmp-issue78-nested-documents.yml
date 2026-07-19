@@ -46,8 +46,8 @@ jobs:
             python -m unittest -v tests.catalog_v4.test_nested_documents tests.catalog_v4.test_document_scope_integrity tests.catalog_v4.test_builder
             python -m scripts.catalog_v4.selftest
             python -m unittest discover -s tests/catalog_v4 -v
-            python -m scripts.catalog_v4 build --input cloud_pages/data/catalog.json --output /tmp/catalog-v4-issue78
-            python -m scripts.catalog_v4 verify --output /tmp/catalog-v4-issue78
+            python -m scripts.catalog_v4 --input cloud_pages/data/catalog.json --output /tmp/catalog-v4-issue78
+            python -m scripts.catalog_v4 --verify-only --input cloud_pages/data/catalog.json --output /tmp/catalog-v4-issue78
           } > /tmp/issue78-validation.log 2>&1
           printf '%s\n' "$?" > /tmp/issue78-validation.status
           tail -200 /tmp/issue78-validation.log
