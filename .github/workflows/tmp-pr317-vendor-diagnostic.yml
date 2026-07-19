@@ -1,0 +1,36 @@
+name: Temporary PR 317 Vendor Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - verification/vendor-profile-contract-43
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'trigger/pr317-vendor-diagnostic'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verification/vendor-profile-contract-43
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Capture focused vendor validation tests
+        shell: bash
+        run: |
+          set +e
+          python -m unittest -v tests.test_vendor_profile_validation > /tmp/pr317-vendor.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/pr317-vendor.status
+          cat /tmp/pr317-vendor.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr317-vendor-diagnostic
+          path: |
+            /tmp/pr317-vendor.log
+            /tmp/pr317-vendor.status
