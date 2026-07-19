@@ -21,7 +21,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Keep lifecycle fixtures independent from decode behavior
+      - name: Keep newest-open fixture independent from decode behavior
         shell: bash
         run: |
           python - <<'PY'
@@ -29,19 +29,16 @@ jobs:
 
           path = Path('web/test/platform.test.mjs')
           text = path.read_text(encoding='utf-8')
-
-          old = '  const viewer = new DocumentViewerCapability({ fetchImpl });\n'
-          new = '  const viewer = new DocumentViewerCapability({ fetchImpl, decodeImage: async () => {} });\n'
-          if text.count(old) != 1:
-              raise SystemExit(f'superseded-open fixture: expected one match, found {text.count(old)}')
-          text = text.replace(old, new, 1)
-
-          old = "    loadPdfJs: async () => ({ getDocument: () => loadingTask }),\n  });\n  await viewer.open({ url: 'https://x/original.pdf', mimeType: 'application/pdf' });\n"
-          new = "    loadPdfJs: async () => ({ getDocument: () => loadingTask }),\n    decodeImage: async () => {},\n  });\n  await viewer.open({ url: 'https://x/original.pdf', mimeType: 'application/pdf' });\n"
-          if text.count(old) != 1:
-              raise SystemExit(f'newest-open fixture: expected one match, found {text.count(old)}')
-          text = text.replace(old, new, 1)
-
+          start = text.index("test('document viewer keeps the newest open when older cleanup finishes later'")
+          end = text.index("\ntest('document viewer close waits for cleanup already claimed by a superseded open'", start)
+          block = text[start:end]
+          anchor = "    loadPdfJs: async () => ({ getDocument: () => loadingTask }),\n"
+          decoder = "    decodeImage: async () => {},\n"
+          if decoder not in block:
+              if block.count(anchor) != 1:
+                  raise SystemExit(f'newest-open decoder anchor: expected one match, found {block.count(anchor)}')
+              block = block.replace(anchor, anchor + decoder, 1)
+          text = text[:start] + block + text[end:]
           path.write_text(text, encoding='utf-8')
           PY
       - name: Validate complete frontend platform lifecycle
@@ -58,5 +55,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "test: isolate document lifecycle fixtures from image decoding"
+          git commit -m "test: isolate document lifecycle fixture from image decoding"
           git push origin HEAD:fix/image-decode-main-regression
