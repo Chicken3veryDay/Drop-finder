@@ -152,7 +152,14 @@ test('transient failures retry while deterministic HTTP failures do not', async 
 
 test('cached generation fallback activates after one bounded oversized attempt', async () => {
   const cache = new MemoryGenerationCache();
-  await cache.putComplete({ generationId: 'cached', manifest: {}, index: { products: [] }, activatedAt: 1, source: 'cache' });
+  const cachedAt = Date.now();
+  await cache.putComplete({
+    generationId: 'cached',
+    manifest: { generated_at: new Date(cachedAt).toISOString() },
+    index: { products: [] },
+    activatedAt: cachedAt,
+    source: 'cache',
+  });
   let calls = 0;
   let stats;
   const client = new CatalogGenerationClient({
