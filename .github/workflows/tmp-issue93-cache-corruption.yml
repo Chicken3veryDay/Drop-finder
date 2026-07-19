@@ -39,6 +39,8 @@ jobs:
           printf '%s\n' \
             web/src/platform/catalog/catalog-generation-client.js \
             web/test/catalog-cache-corruption.test.mjs \
+            web/test/catalog-cache-fallback-age.test.mjs \
+            web/test/catalog-cache-persistence.test.mjs \
             | sort > /tmp/expected-files
           diff -u /tmp/expected-files /tmp/actual-files
       - name: Install frozen frontend dependencies
@@ -75,6 +77,7 @@ jobs:
         run: |
           set +e
           {
+            set -e
             npm run lint
             npm run typecheck
             npm test
@@ -108,7 +111,9 @@ jobs:
             .github/tmp/issue93_test_helper.py
           git add \
             web/src/platform/catalog/catalog-generation-client.js \
-            web/test/catalog-cache-corruption.test.mjs
+            web/test/catalog-cache-corruption.test.mjs \
+            web/test/catalog-cache-fallback-age.test.mjs \
+            web/test/catalog-cache-persistence.test.mjs
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix: quarantine corrupt cached generations"
