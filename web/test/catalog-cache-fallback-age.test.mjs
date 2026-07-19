@@ -103,12 +103,13 @@ test('an old publication cannot become fresh merely by being cached again', asyn
 
 test('missing, malformed, and materially future timestamps fail closed', async () => {
   await withClock(async () => {
+    const base = cachedGeneration();
     const invalid = [
-      cachedGeneration({ cachedAt: undefined }),
-      cachedGeneration({ generatedAt: undefined }),
-      cachedGeneration({ generatedAt: 'not-a-date' }),
-      cachedGeneration({ cachedAt: NOW + 60_001 }),
-      cachedGeneration({ generatedAt: NOW + 60_001 }),
+      { ...base, cachedAt: undefined },
+      { ...base, manifest: { generation_id: base.generationId } },
+      { ...base, manifest: { ...base.manifest, generated_at: 'not-a-date' } },
+      { ...base, cachedAt: NOW + 60_001 },
+      { ...base, manifest: { ...base.manifest, generated_at: new Date(NOW + 60_001).toISOString() } },
     ];
     for (const generation of invalid) {
       const client = clientFor(generation);
