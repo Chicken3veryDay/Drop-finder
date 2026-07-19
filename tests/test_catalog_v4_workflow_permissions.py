@@ -6,93 +6,48 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "catalog-v4.yml"
-PUBLISHER_WORKFLOWS = {
-    "catalog-v4": ROOT / ".github" / "workflows" / "catalog-v4.yml",
-    "autonomous-cloud": ROOT / ".github" / "workflows" / "dropfinder-cloud.yml",
-    "artifact-pages": ROOT / ".github" / "workflows" / "deploy-pages.yml",
-    "branch-fallback": ROOT / ".github" / "workflows" / "pages-branch-fallback.yml",
-    "pages-repair": ROOT / ".github" / "workflows" / "pages-repair.yml",
-}
-
-
-def _block(lines: list[str], header: str, indent: int) -> list[str]:
-    marker = f"{' ' * indent}{header}:"
-    start = lines.index(marker) + 1
-    result: list[str] = []
-    for line in lines[start:]:
-        if line.strip() and len(line) - len(line.lstrip()) <= indent:
-            break
-        result.append(line)
-    return result
-
-
-def _mapping(lines: list[str], header: str, indent: int) -> dict[str, str]:
-    entries: dict[str, str] = {}
-    entry_indent = " " * (indent + 2)
-    for line in _block(lines, header, indent):
-        if not line.startswith(entry_indent) or line.startswith(f"{entry_indent} "):
-            continue
-        key, separator, value = line.strip().partition(":")
-        if separator and value.strip():
-            entries[key] = value.strip()
-    return entries
+RETIRED_WORKFLOWS = (
+    "bootstrap-dropfinder.yml",
+    "deploy-pages.yml",
+    "dropfinder-ui-publish.yml",
+    "pages-branch-fallback.yml",
+    "pages-repair.yml",
+    "tmp-image-decode-builder.yml",
+    "tmp-vape-quantity-builder.yml",
+)
 
 
 class CatalogWorkflowPermissionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        self.text = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_validation_inherits_read_only_workflow_permissions(self) -> None:
-        self.assertEqual(_mapping(self.lines, "permissions", 0), {"contents": "read"})
-        validate = _block(self.lines, "validate", 2)
-        self.assertNotIn("    permissions:", validate)
+    def test_catalog_workflow_is_validation_only(self) -> None:
+        self.assertIn("permissions:\n  contents: read", self.text)
+        self.assertNotIn("contents: write", self.text)
+        self.assertNotIn("workflow_run:", self.text)
+        self.assertNotIn("jobs:\n  publish:", self.text)
+        self.assertNotIn("git push", self.text)
+        self.assertNotIn("gh-pages", self.text)
 
-    def test_every_pages_writer_uses_one_repository_wide_lock(self) -> None:
-        expected = {
-            "group": "dropfinder-pages-publication",
-            "cancel-in-progress": "false",
-        }
-        for name, path in PUBLISHER_WORKFLOWS.items():
+    def test_validation_builds_and_verifies_without_mutating_tracked_data(self) -> None:
+        self.assertIn("--input cloud_pages/data/catalog.json", self.text)
+        self.assertIn("--output /tmp/dropfinder-catalog-v4", self.text)
+        self.assertIn("--verify-only", self.text)
+        self.assertIn("actions/upload-artifact@v4", self.text)
+        self.assertNotIn("cp -a /tmp/dropfinder-catalog-v4", self.text)
+
+    def test_competing_and_temporary_workflows_are_absent(self) -> None:
+        workflow_root = ROOT / ".github" / "workflows"
+        for name in RETIRED_WORKFLOWS:
             with self.subTest(workflow=name):
-                lines = path.read_text(encoding="utf-8").splitlines()
-                if name in {"catalog-v4", "autonomous-cloud"}:
-                    publish = _block(lines, "publish", 2)
-                    actual = _mapping(publish, "concurrency", 4)
-                else:
-                    actual = _mapping(lines, "concurrency", 0)
-                self.assertEqual(actual, expected)
+                self.assertFalse((workflow_root / name).exists())
 
-    def test_publishers_refuse_superseded_artifacts(self) -> None:
-        required_evidence = {
-            "catalog-v4": "Catalog v4 generation was superseded on main; refusing to update gh-pages.",
-            "autonomous-cloud": "The production snapshot was superseded on main; refusing to publish stale",
-            "artifact-pages": "The Pages artifact was superseded on main; refusing to deploy it.",
-            "branch-fallback": "The fallback Pages snapshot was superseded on main; refusing to publish it.",
-            "pages-repair": "The Pages repair artifact was superseded on main; refusing to deploy it.",
-        }
-        for name, path in PUBLISHER_WORKFLOWS.items():
-            with self.subTest(workflow=name):
-                text = path.read_text(encoding="utf-8")
-                self.assertIn(required_evidence[name], text)
-
-    def test_catalog_publish_requires_post_push_manifest_parity(self) -> None:
-        publish = _block(self.lines, "publish", 2)
-        joined = "\n".join(publish)
+    def test_validation_regression_runs_when_it_changes(self) -> None:
+        path_entry = '      - "tests/test_catalog_v4_workflow_permissions.py"'
+        self.assertEqual(self.text.count(path_entry), 2)
         self.assertIn(
-            "git show origin/main:cloud_pages/data/catalog-v4/manifest.json",
-            joined,
-        )
-        self.assertIn(
-            "Catalog v4 publication completed without main/gh-pages manifest parity.",
-            joined,
-        )
-
-    def test_only_publish_job_receives_repository_write_access(self) -> None:
-        publish = _block(self.lines, "publish", 2)
-        self.assertEqual(_mapping(publish, "permissions", 4), {"contents": "write"})
-        self.assertEqual(
-            [line for line in self.lines if line.strip() == "contents: write"],
-            ["      contents: write"],
+            "python -m unittest -v tests.test_catalog_v4_workflow_permissions",
+            self.text,
         )
 
 

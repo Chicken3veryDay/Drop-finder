@@ -2,10 +2,8 @@ name: DropFinder Catalog V4
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["DropFinder Autonomous Cloud"]
-    types: [completed]
   pull_request:
+    branches: [main]
     paths:
       - "scripts/catalog_v4/**"
       - "tests/catalog_v4/**"
@@ -25,18 +23,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: dropfinder-catalog-v4-${{ github.event_name }}-${{ github.ref || github.event.workflow_run.head_branch }}
-  cancel-in-progress: false
+  group: dropfinder-catalog-v4-validation-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && 'main' || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -54,7 +49,7 @@ jobs:
           python scripts/autonomous_worker_v4.py --self-test
           rm -rf /tmp/dropfinder-autonomous-merge-test
           python scripts/autonomous_merge.py --self-test
-      - name: Build current admitted catalog through v4
+      - name: Build and verify current admitted catalog
         run: |
           set -euo pipefail
           rm -rf /tmp/dropfinder-catalog-v4
@@ -74,85 +69,3 @@ jobs:
           path: /tmp/dropfinder-catalog-v4/catalog-v4
           if-no-files-found: error
           retention-days: 7
-
-  publish:
-    needs: validate
-    if: >-
-      github.event_name == 'workflow_run' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    permissions:
-      contents: write
-    concurrency:
-      group: dropfinder-pages-publication
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Build verified production generation
-        run: |
-          set -euo pipefail
-          git pull --ff-only origin main
-          rm -rf /tmp/dropfinder-catalog-v4
-          python -m scripts.catalog_v4 \
-            --input cloud_pages/data/catalog.json \
-            --output /tmp/dropfinder-catalog-v4 \
-            --detail-shards 16 \
-            --minimum-products 1 \
-            --minimum-variants 1
-          rm -rf cloud_pages/data/catalog-v4
-          cp -a /tmp/dropfinder-catalog-v4/catalog-v4 cloud_pages/data/catalog-v4
-          python -m scripts.catalog_v4 \
-            --input cloud_pages/data/catalog.json \
-            --output cloud_pages/data \
-            --verify-only
-      - name: Commit generation to main
-        run: |
-          set -euo pipefail
-          git config user.name "DropFinder Catalog V4 Publisher"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add cloud_pages/data/catalog-v4
-          if ! git diff --cached --quiet; then
-            git commit -m "Publish DropFinder catalog v4 [skip ci]"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
-      - name: Publish identical generation to gh-pages
-        run: |
-          set -euo pipefail
-          git fetch origin main gh-pages
-          git show origin/main:cloud_pages/data/catalog-v4/manifest.json > /tmp/dropfinder-current-main-manifest.json
-          if ! cmp -s cloud_pages/data/catalog-v4/manifest.json /tmp/dropfinder-current-main-manifest.json; then
-            echo "::error::Catalog v4 generation was superseded on main; refusing to update gh-pages."
-            exit 1
-          fi
-          rm -rf /tmp/dropfinder-v4-pages
-          git worktree add -B catalog-v4-pages /tmp/dropfinder-v4-pages origin/gh-pages
-          rm -rf /tmp/dropfinder-v4-pages/data/catalog-v4
-          mkdir -p /tmp/dropfinder-v4-pages/data
-          cp -a cloud_pages/data/catalog-v4 /tmp/dropfinder-v4-pages/data/catalog-v4
-          python -m scripts.catalog_v4 \
-            --input cloud_pages/data/catalog.json \
-            --output /tmp/dropfinder-v4-pages/data \
-            --verify-only
-          git -C /tmp/dropfinder-v4-pages config user.name "DropFinder Catalog V4 Publisher"
-          git -C /tmp/dropfinder-v4-pages config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C /tmp/dropfinder-v4-pages add data/catalog-v4
-          if ! git -C /tmp/dropfinder-v4-pages diff --cached --quiet; then
-            git -C /tmp/dropfinder-v4-pages commit -m "Publish DropFinder catalog v4 ${GITHUB_SHA}"
-            git -C /tmp/dropfinder-v4-pages push origin HEAD:gh-pages
-          fi
-          git fetch origin main gh-pages
-          git show origin/main:cloud_pages/data/catalog-v4/manifest.json > /tmp/dropfinder-post-main-manifest.json
-          git show origin/gh-pages:data/catalog-v4/manifest.json > /tmp/dropfinder-post-pages-manifest.json
-          if ! cmp -s /tmp/dropfinder-post-main-manifest.json /tmp/dropfinder-post-pages-manifest.json; then
-            echo "::error::Catalog v4 publication completed without main/gh-pages manifest parity."
-            exit 1
-          fi
