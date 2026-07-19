@@ -10,13 +10,13 @@ permissions:
 
 jobs:
   audit:
-    if: github.head_ref == 'trigger/issue4-source-boundary'
+    if: github.head_ref == 'trigger/issue4-source-boundary-r2'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: audit/issue-4-source-boundary
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
