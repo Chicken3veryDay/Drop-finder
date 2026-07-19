@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -48,16 +48,17 @@ describe("MarketplaceFeature detail failure state", () => {
 
     function Harness() {
       const [products, setProducts] = useState<MarketplaceProduct[]>([product]);
+      const loadDetail = useCallback(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("detail hash mismatch");
+        setProducts([{ ...product, variants: [{ ...product.variants[0]!, coa }] }]);
+        return detail;
+      }, []);
       return (
         <MarketplaceFeature
           products={products}
           catalogGenerationId="generation-1"
-          loadDetail={async () => {
-            attempts += 1;
-            if (attempts === 1) throw new Error("detail hash mismatch");
-            setProducts([{ ...product, variants: [{ ...product.variants[0]!, coa }] }]);
-            return detail;
-          }}
+          loadDetail={loadDetail}
         />
       );
     }
