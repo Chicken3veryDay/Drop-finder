@@ -37,14 +37,31 @@ jobs:
             tests/catalog_v4/test_nested_documents.py \
             | sort > /tmp/expected-files
           diff -u /tmp/expected-files /tmp/actual-files
-      - name: Validate focused and complete Catalog V4 contracts
+      - name: Capture focused and complete Catalog V4 contracts
+        shell: bash
         run: |
-          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
-          python -m unittest -v tests.catalog_v4.test_nested_documents tests.catalog_v4.test_document_scope_integrity tests.catalog_v4.test_builder
-          python -m scripts.catalog_v4.selftest
-          python -m unittest discover -s tests/catalog_v4 -v
-          python -m scripts.catalog_v4 build --input cloud_pages/data/catalog.json --output /tmp/catalog-v4-issue78
-          python -m scripts.catalog_v4 verify --output /tmp/catalog-v4-issue78
+          set +e
+          {
+            python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+            python -m unittest -v tests.catalog_v4.test_nested_documents tests.catalog_v4.test_document_scope_integrity tests.catalog_v4.test_builder
+            python -m scripts.catalog_v4.selftest
+            python -m unittest discover -s tests/catalog_v4 -v
+            python -m scripts.catalog_v4 build --input cloud_pages/data/catalog.json --output /tmp/catalog-v4-issue78
+            python -m scripts.catalog_v4 verify --output /tmp/catalog-v4-issue78
+          } > /tmp/issue78-validation.log 2>&1
+          printf '%s\n' "$?" > /tmp/issue78-validation.status
+          tail -200 /tmp/issue78-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue78-validation
+          path: |
+            /tmp/issue78-validation.log
+            /tmp/issue78-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        run: test "$(cat /tmp/issue78-validation.status)" -eq 0
       - name: Commit clean implementation
         shell: bash
         run: |
