@@ -477,6 +477,8 @@ const activeQueryKey = useRef(queryKey);
 activeQueryKey.current = queryKey;
 const expandedProductIdRef = useRef(expandedProductId);
 expandedProductIdRef.current = expandedProductId;
+const productsRef = useRef(products);
+productsRef.current = products;
 const [asyncWindow, setAsyncWindow] = useState(() => emptyMarketplacePageWindow(queryKey));
 const activeAsyncWindow = useMemo(
   () => asyncWindow.queryKey === queryKey ? asyncWindow : emptyMarketplacePageWindow(queryKey),
@@ -511,7 +513,7 @@ useEffect(() => {
   setAsyncWindow(emptyMarketplacePageWindow(queryKey));
   setQueryLoading(true);
   setQueryError(null);
-  void asyncQueryEngine.query(products, filters, sort, {
+  void asyncQueryEngine.query(productsRef.current, filters, sort, {
     queryKey,
     generationId: catalogGenerationId,
     offset: 0,
@@ -552,7 +554,7 @@ useEffect(() => {
     controller.abort();
     if (controllers.get(requestKey) === controller) controllers.delete(requestKey);
   };
-}, [asyncQueryEngine, catalogGenerationId, filters, products, queryKey, queryRetryToken, sort]);
+}, [asyncQueryEngine, catalogGenerationId, filters, queryKey, queryRetryToken, sort]);
 
 const loadPage = useCallback((direction: "forward" | "backward") => {
   if (!asyncQueryEngine || queryLoading || !activeAsyncWindow.pageZeroAccepted) return;
@@ -564,7 +566,7 @@ const loadPage = useCallback((direction: "forward" | "backward") => {
   if (requestControllers.current.has(requestKey)) return;
   const controller = new AbortController();
   requestControllers.current.set(requestKey, controller);
-  void asyncQueryEngine.query(products, filters, sort, {
+  void asyncQueryEngine.query(productsRef.current, filters, sort, {
     queryKey,
     generationId: catalogGenerationId,
     offset,
@@ -581,7 +583,7 @@ const loadPage = useCallback((direction: "forward" | "backward") => {
   }).finally(() => {
     if (requestControllers.current.get(requestKey) === controller) requestControllers.current.delete(requestKey);
   });
-}, [activeAsyncWindow, asyncQueryEngine, catalogGenerationId, filters, products, queryKey, queryLoading, sort]);
+}, [activeAsyncWindow, asyncQueryEngine, catalogGenerationId, filters, queryKey, queryLoading, sort]);
 
 const loadMore = useCallback(() => loadPage("forward"), [loadPage]);
 const loadPrevious = useCallback(() => loadPage("backward"), [loadPage]);

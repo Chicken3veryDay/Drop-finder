@@ -75,6 +75,52 @@ describe("MarketplaceFeature query execution", () => {
     expect(synchronousQuery).not.toHaveBeenCalled();
   });
 
+  it("does not restart page zero when only detail-enrichment fields change", async () => {
+    const asynchronousQuery = vi.fn<MarketplaceAsyncQueryCapability["query"]>(async (
+      products,
+      _filters,
+      _sort,
+      options,
+    ) => ({
+      queryKey: options.queryKey,
+      offset: options.offset,
+      rows: [{
+        ...row,
+        product: products[0]!,
+        activeVariant: products[0]!.variants[0]!,
+      }],
+      total: 1,
+      nextOffset: null,
+    }));
+    const asyncEngine: MarketplaceAsyncQueryCapability = { query: asynchronousQuery };
+    const view = render(
+      <MarketplaceFeature
+        products={[product]}
+        asyncQueryEngine={asyncEngine}
+      />,
+    );
+
+    expect(await screen.findByRole("list", { name: "1 marketplace results" })).toBeInTheDocument();
+    expect(asynchronousQuery).toHaveBeenCalledTimes(1);
+
+    const enrichedProduct: MarketplaceProduct = {
+      ...product,
+      vendorFaviconUrl: "https://example.test/favicon.png",
+      variants: [{
+        ...product.variants[0]!,
+        imageUrl: "https://example.test/blue-example.jpg",
+      }],
+    };
+    view.rerender(
+      <MarketplaceFeature
+        products={[enrichedProduct]}
+        asyncQueryEngine={asyncEngine}
+      />,
+    );
+
+    await waitFor(() => expect(asynchronousQuery).toHaveBeenCalledTimes(1));
+  });
+
   it("retains the synchronous query fallback when no async engine is available", () => {
     const synchronousQuery = vi.fn<MarketplaceQueryCapability["query"]>(() => ({
       rows: [row],
