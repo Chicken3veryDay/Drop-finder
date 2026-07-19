@@ -1,0 +1,36 @@
+name: Temporary Issue 4 Archive History Recovery
+
+on:
+  pull_request:
+    branches:
+      - audit/issue-4-source-boundary
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    if: github.head_ref == 'trigger/issue4-archive-history'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/issue-4-source-boundary
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reconstruct historical archive candidates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python .github/tmp/issue4_archive_history.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue4-archive-history
+          path: |
+            /tmp/issue4-archive-history.json
+            /tmp/issue4-archive-history.md
+            /tmp/dropfinder-os-v9-recovered.zip
+          if-no-files-found: warn
+          retention-days: 7
