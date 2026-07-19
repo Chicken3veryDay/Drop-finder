@@ -25,12 +25,19 @@ replace_once(
   effects: [],
   growEnvironment: "unknown",
 };
+const EMPTY_DETAILS_BY_PRODUCT_ID: Record<string, MarketplaceProductDetail> = Object.freeze({});
 
 type DetailLoadStatus = "loading" | "ready" | "error";
 type DetailLoadEntry = {
   status: DetailLoadStatus;
   message: string | null;
 };
+''')
+
+replace_once(
+'''  detailsByProductId = {},
+''',
+'''  detailsByProductId = EMPTY_DETAILS_BY_PRODUCT_ID,
 ''')
 
 replace_once(
@@ -192,7 +199,7 @@ replace_once(
 '''  const loadedDetails = useMemo(
     () => loadedDetailState.generationId === catalogGenerationId
       ? loadedDetailState.details
-      : {},
+      : EMPTY_DETAILS_BY_PRODUCT_ID,
     [catalogGenerationId, loadedDetailState],
   );
   const [detailLoadState, setDetailLoadState] = useState<{
