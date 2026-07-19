@@ -40,8 +40,17 @@ function generationFetch(generationId = 'network-current') {
 function cachedGeneration(generationId = 'cached-old') {
   return Object.freeze({
     generationId,
-    manifest: { generation_id: generationId, generated_at: new Date().toISOString() },
+    manifest: {
+      schema_version: 4,
+      generation_id: generationId,
+      generated_at: new Date().toISOString(),
+      compact_index: {
+        path: 'data/catalog-v4/index.json',
+        sha256: 'a'.repeat(64),
+      },
+    },
     index: { generation_id: generationId, products: [] },
+    publicationBaseUrl: 'https://example.test/data/catalog-v4/',
     activatedAt: Date.now(),
     cachedAt: Date.now(),
     source: 'cache',

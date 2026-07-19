@@ -32,6 +32,20 @@ const malformedIndex = {
   }],
 };
 
+const cachedIndex = {
+  generation_id: "g1",
+  product_count: 1,
+  in_stock_variant_count: 1,
+  products: [{
+    product_id: "p1",
+    vendor_id: "v1",
+    vendor_name: "Vendor",
+    strain_name: "Blue Dream",
+    default_variant_id: "valid-7",
+    variants: [malformedIndex.products[0].variants[0]],
+  }],
+};
+
 describe("CanonicalCatalogGenerationClient", () => {
   it("applies the marketplace renderability contract before publication to consumers", async () => {
     const result = await canonicalizeCatalogIndex(malformedIndex);
@@ -40,12 +54,21 @@ describe("CanonicalCatalogGenerationClient", () => {
     expect(result.products[0].variants).toEqual([malformedIndex.products[0].variants[0]]);
   });
 
-  it("canonicalizes a fresh cached fallback before activating or returning it", async () => {
+  it("canonicalizes a fresh structurally valid cached fallback before activating or returning it", async () => {
     const cachedAt = Date.now();
     const cached = {
       generationId: "g1",
-      manifest: { generation_id: "g1", generated_at: new Date(cachedAt).toISOString() },
-      index: malformedIndex,
+      manifest: {
+        schema_version: 4,
+        generation_id: "g1",
+        generated_at: new Date(cachedAt).toISOString(),
+        compact_index: {
+          path: "data/catalog-v4/index.json",
+          sha256: "a".repeat(64),
+        },
+      },
+      index: cachedIndex,
+      publicationBaseUrl: "https://example.test/data/catalog-v4/",
       activatedAt: cachedAt,
       cachedAt,
       source: "cache",

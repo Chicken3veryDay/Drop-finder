@@ -56,8 +56,13 @@ test('catalog client rejects mixed generations and preserves cached complete gen
   const cache = new MemoryGenerationCache();
   await cache.putComplete({
     generationId: 'cached',
-    manifest: { generated_at: new Date().toISOString() },
-    index: { products: [] },
+    manifest: {
+      schema_version: 4,
+      generation_id: 'cached',
+      generated_at: new Date().toISOString(),
+      index: { url: 'https://x/index' },
+    },
+    index: { generation_id: 'cached', products: [] },
     activatedAt: 1,
     source: 'cache',
   });

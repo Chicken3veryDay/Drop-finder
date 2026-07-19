@@ -155,8 +155,13 @@ test('cached generation fallback activates after one bounded oversized attempt',
   const cachedAt = Date.now();
   await cache.putComplete({
     generationId: 'cached',
-    manifest: { generated_at: new Date(cachedAt).toISOString() },
-    index: { products: [] },
+    manifest: {
+      schema_version: 4,
+      generation_id: 'cached',
+      generated_at: new Date(cachedAt).toISOString(),
+      index: { url: 'https://x/index.json' },
+    },
+    index: { generation_id: 'cached', products: [] },
     activatedAt: cachedAt,
     source: 'cache',
   });
