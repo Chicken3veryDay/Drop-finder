@@ -1,32 +1,43 @@
-# DropFinder OS Repository Status
+# DropFinder Repository Status
 
 Repository: `Chicken3veryDay/Drop-finder`
 
-## Current checkpoint
+## Supported runtime boundaries
 
-- The validated DropFinder OS v9.0 source archive exists outside this repository as `dropfinder_os_v9_0_github_ready.zip` and `dropfinder_os_v9_0_initial.bundle`.
-- The repository contains a mixture of deployment work, selected v9 modules, generated static data, and remnants of an incomplete bootstrap upload under `bootstrap/`.
-- The `bootstrap/source.part*.b64` files are **not** the canonical source tree and must not be treated as a usable application checkout.
-- The intended zero-credential deployment is a read-only GitHub Pages dashboard refreshed by scheduled GitHub Actions scans. GitHub Pages cannot host the persistent FastAPI/worker runtime.
-- No cloud credentials, payment details, Oracle account, Tailscale account, or personal server are required for the static dashboard mode.
-- The next implementation thread must recover the canonical archive, compare it with the current branch, review and reconcile the repository section by section, commit each reviewed section separately, then validate and deploy.
+DropFinder has two explicit, independently testable boundaries:
+
+1. **Static production application.** Scheduled GitHub Actions retrieve public storefront data, validate it, build immutable Catalog V4 artifacts, and publish the PWA to GitHub Pages.
+2. **Tracked reliability package.** The editable `app/` package contains the supported reliability contracts, adapter registry, and durable adapter store. It is installed from `pyproject.toml` and verified from a clean checkout by `.github/workflows/source-boundary.yml`.
+
+The repository does not claim to contain the unrecoverable historical `dropfinder_os_v9_0_complete_build.zip` archive or a continuously resident FastAPI/worker server. Complete indexed, ref, and orphan history was searched on July 19, 2026; no valid ZIP or archive matching the historical SHA-256 was found.
+
+## Source checkout
+
+From a clean checkout:
+
+```sh
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+python scripts/verify_source_boundary.py
+python -m unittest discover -s tests/app -p 'test_*.py' -v
+```
+
+The verifier compiles and imports every tracked `app` module, validates all first-party import edges, requires package metadata, and fails if obsolete encoded bootstrap fragments return.
+
+## Deployment boundary
+
+- Live application: `https://chicken3veryday.github.io/Drop-finder/`
+- GitHub Pages hosts a static, read-only PWA. It cannot host a persistent API daemon, browser pool, writable SQLite service, or background worker process.
+- No cloud credentials, payment details, personal server, API token, SSH key, or private browser profile are required for the current production mode.
+- Generated catalog and health artifacts remain authoritative for current counts and source state.
 
 ## Safety rules
 
 1. Work only in `Chicken3veryDay/Drop-finder`.
 2. Do not modify `Chicken3veryDay/Agent---ChatGPT`.
 3. Do not commit secrets, `.env` files, databases, evidence bodies, cookies, tokens, runtime queues, logs, browser profiles, virtual environments, caches, build caches, or test runtime output.
-4. Do not claim the app is deployed until the Pages URL returns the expected dashboard and its latest data artifact.
-5. Preserve fail-closed source certification. Static dashboard publishing must never bypass classification or source-certification gates.
-6. Keep the full server application in the repository even though Pages hosts only the static dashboard.
-7. Treat existing generated catalog/status files as untrusted until regenerated from reviewed code.
-
-## Required final state
-
-- Canonical source reconciled as normal files, not encoded bootstrap chunks.
-- Partial `bootstrap/source.part*.b64` files removed after successful import verification.
-- Existing autonomous/deployment scripts reviewed rather than blindly retained.
-- Section-by-section commits with validation evidence.
-- Full static and test gates green.
-- GitHub Pages workflow committed and passing.
-- Repository README contains the live phone URL and clearly describes static-dashboard limitations.
+4. Do not claim a deployment is current until the Pages URL and its immutable publication receipt are independently verified.
+5. Preserve fail-closed source certification and publication gates.
+6. Keep server-side code claims limited to the modules actually tracked and tested in this repository.
+7. Treat checked-in generated artifacts as untrusted until regenerated and verified by the authoritative publication workflow.
