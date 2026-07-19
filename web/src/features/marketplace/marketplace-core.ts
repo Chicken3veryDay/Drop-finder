@@ -125,10 +125,14 @@ export interface MarketplaceQueryCapability {
 }
 
 export interface MarketplaceAsyncQueryPage extends MarketplaceQueryResult {
+  queryKey: string;
+  offset: number;
   nextOffset: number | null;
 }
 
 export interface MarketplaceAsyncQueryOptions {
+  queryKey: string;
+  generationId: string | null;
   offset: number;
   limit: number;
   expandedProductId: string | null;
@@ -146,10 +150,15 @@ export interface MarketplaceAsyncQueryCapability {
 
 export interface VirtualMarketplaceAdapterProps {
   rows: readonly MarketplaceRowProjection[];
+  pages?: readonly { offset: number; rows: readonly MarketplaceRowProjection[] }[];
+  queryKey?: string;
   total: number;
   expandedProductId: string | null;
+  hasPreviousPage?: boolean;
+  hasNextPage?: boolean;
   renderRow(row: MarketplaceRowProjection): ReactNode;
   renderExpanded(row: MarketplaceRowProjection): ReactNode;
+  onStartReached?: (() => void) | undefined;
   onEndReached?: (() => void) | undefined;
 }
 

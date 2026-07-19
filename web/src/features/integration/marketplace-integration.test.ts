@@ -66,6 +66,9 @@ describe("integrated marketplace contracts", () => {
   it("adapts exact marketplace filters and sorts to the worker engine", async () => {
     const products = mapCatalogIndex(index);
     const query = vi.fn().mockResolvedValue({
+      generationId: "g1",
+      queryKey: "worker-query",
+      offset: 0,
       rows: [{ productId: "p1", variantId: "v1-7" }],
       total: 1,
       nextOffset: null,
@@ -83,6 +86,8 @@ describe("integrated marketplace contracts", () => {
       price: {},
       pricePerGram: {},
     }, "lowest_price_per_gram", {
+      queryKey: "test-query",
+      generationId: "g1",
       offset: 0,
       limit: 120,
       expandedProductId: null,

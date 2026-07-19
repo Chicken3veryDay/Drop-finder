@@ -168,12 +168,12 @@ export class VirtualMarketplaceAdapter {
     const totalHeight = this.totalHeight();
     const loaded = this.loadedRange();
     if (!this.items.length || this.viewport.height <= 0) {
-      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount };
+      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount, ariaRowCount: this.totalCount, renderedCount: 0 };
     }
     const localTop = this.viewport.scrollTop - loaded.startPx;
     const localBottom = localTop + this.viewport.height;
     if (localBottom < -this.options.overscanPx || localTop > (this.offsets.at(-1) ?? 0) + this.options.overscanPx) {
-      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount };
+      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount, ariaRowCount: this.totalCount, renderedCount: 0 };
     }
     const min = Math.max(0, localTop - this.options.overscanPx);
     const max = Math.max(0, localBottom + this.options.overscanPx);

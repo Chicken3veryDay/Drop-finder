@@ -42,7 +42,14 @@ describe("MarketplaceFeature query execution", () => {
       rows: [row],
       total: 1,
     }));
-    const asynchronousQuery = vi.fn<MarketplaceAsyncQueryCapability["query"]>(async () => ({
+    const asynchronousQuery = vi.fn<MarketplaceAsyncQueryCapability["query"]>(async (
+      _products,
+      _filters,
+      _sort,
+      options,
+    ) => ({
+      queryKey: options.queryKey,
+      offset: options.offset,
       rows: [row],
       total: 1,
       nextOffset: null,

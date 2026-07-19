@@ -40,6 +40,9 @@ type CatalogClient = {
 };
 
 type PlatformQueryResult = {
+  generationId: string;
+  queryKey: string;
+  offset: number;
   rows: Array<{ productId: string; variantId: string }>;
   total: number;
   nextOffset: number | null;
@@ -58,8 +61,8 @@ type VirtualWindow = {
 };
 
 type VirtualModel = {
-  replace(input: {
-    rows: Array<{ productId: string; row: MarketplaceRowProjection }>;
+  replacePages(input: {
+    pages: Array<{ offset: number; rows: Array<{ productId: string; row: MarketplaceRowProjection }> }>;
     total: number;
     version: number;
     queryKey: string;
@@ -68,6 +71,7 @@ type VirtualModel = {
   setViewport(scrollTop: number, height: number): void;
   measure(key: string, height: number): boolean;
   window(): VirtualWindow;
+  loadedRange(): { startPx: number; endPx: number };
   subscribe(listener: () => void): () => void;
   totalHeight(): number;
 };
@@ -330,6 +334,12 @@ export const createMarketplaceQueryAdapter = (
       expandedProductId: options.expandedProductId,
     });
     if (options.signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+    if (options.generationId && result.generationId !== options.generationId) {
+      throw new DOMException("The catalog generation changed", "AbortError");
+    }
+    if (result.offset !== options.offset) {
+      throw new DOMException("The marketplace page offset changed", "AbortError");
+    }
     const productById = new Map(products.map((product) => [product.id, product]));
     const rows = result.rows.flatMap((row, index): MarketplaceRowProjection[] => {
       const product = productById.get(row.productId);
@@ -343,6 +353,8 @@ export const createMarketplaceQueryAdapter = (
       }];
     });
     return {
+      queryKey: options.queryKey,
+      offset: result.offset,
       rows,
       total: result.total,
       nextOffset: result.nextOffset,
@@ -376,26 +388,34 @@ function MeasuredRow({
 function VirtualizedMarketplace({
   model,
   rows,
+  pages,
+  queryKey = "marketplace",
   total,
   renderRow,
+  hasPreviousPage = false,
+  hasNextPage = false,
+  onStartReached,
   onEndReached,
 }: VirtualMarketplaceAdapterProps & { model: VirtualModel }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [, setRevision] = useState(0);
-  const identity = useMemo(
-    () => rows.map((row) => row.product.id).join("|"),
-    [rows],
+  const virtualPages = useMemo(
+    () => (pages ?? [{ offset: 0, rows }]).map((page) => ({
+      offset: page.offset,
+      rows: page.rows.map((row) => ({ productId: row.product.id, row })),
+    })),
+    [pages, rows],
   );
 
   useLayoutEffect(() => {
-    model.replace({
-      rows: rows.map((row) => ({ productId: row.product.id, row })),
+    model.replacePages({
+      pages: virtualPages,
       total,
-      version: rows.length,
-      queryKey: identity,
+      version: virtualPages.length,
+      queryKey,
       preserveAnchor: true,
     });
-  }, [identity, model, rows, total]);
+  }, [model, queryKey, total, virtualPages]);
 
   useEffect(() => model.subscribe(() => setRevision((value) => value + 1)), [model]);
 
@@ -415,9 +435,14 @@ function VirtualizedMarketplace({
     const viewport = viewportRef.current;
     if (!viewport) return;
     model.setViewport(viewport.scrollTop, viewport.clientHeight);
+    const range = model.loadedRange();
+    if (hasPreviousPage && onStartReached && viewport.scrollTop <= range.startPx + 900) {
+      onStartReached();
+    }
     if (
+      hasNextPage &&
       onEndReached &&
-      viewport.scrollTop + viewport.clientHeight >= model.totalHeight() - 900
+      viewport.scrollTop + viewport.clientHeight >= range.endPx - 900
     ) {
       onEndReached();
     }
@@ -440,7 +465,8 @@ function VirtualizedMarketplace({
   );
 }
 
-const createVirtualizationAdapter = (model: VirtualModel): VirtualMarketplaceAdapter => ({
+const createVirtualizationAdapter
+ = (model: VirtualModel): VirtualMarketplaceAdapter => ({
   render(props: VirtualMarketplaceAdapterProps): ReactNode {
     return <VirtualizedMarketplace {...props} model={model} />;
   },
