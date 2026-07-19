@@ -27,11 +27,14 @@ _PUBLIC_ROUTE_FIELDS = (
     "candidates",
     "duration_seconds",
     "retry_attempt",
+    "retry_attempts",
+    "verification_rejections",
 )
 _ERROR_LIMIT = 300
 _VERIFICATION_REASON = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
 _MAX_VERIFICATION_REASONS = 12
 _MAX_VERIFICATION_FAILURES = 100_000
+_MAX_VERIFICATION_RECORDS = 24
 
 _original_merge = publication.merge
 _original_self_test = publication.self_test
@@ -69,6 +72,34 @@ def _public_verification_reasons(value: Any) -> dict[str, int]:
     return public
 
 
+def _public_verification_records(value: Any) -> list[dict[str, Any]]:
+    """Retain a bounded, non-secret product verification failure ledger."""
+    if not isinstance(value, list):
+        return []
+    records: list[dict[str, Any]] = []
+    for item in value:
+        if len(records) >= _MAX_VERIFICATION_RECORDS:
+            break
+        if not isinstance(item, dict):
+            continue
+        reason = str(item.get("reason") or "")
+        if not _VERIFICATION_REASON.fullmatch(reason):
+            continue
+        try:
+            attempts = max(1, min(int(item.get("attempts") or 1), 10))
+        except (TypeError, ValueError):
+            attempts = 1
+        record = {
+            "product_id": str(item.get("product_id") or "")[:160],
+            "url": str(item.get("url") or "")[:500],
+            "reason": reason,
+            "attempts": attempts,
+            "retryable": bool(item.get("retryable")),
+        }
+        records.append(record)
+    return records
+
+
 def _public_route_result(route: dict[str, Any]) -> dict[str, Any]:
     """Return the bounded, non-secret route diagnostic contract."""
     public: dict[str, Any] = {}
@@ -87,6 +118,13 @@ def _public_route_result(route: dict[str, Any]) -> dict[str, Any]:
             failures = 0
         if failures > 0:
             public["verification_failures"] = min(failures, _MAX_VERIFICATION_FAILURES)
+    records = _public_verification_records(route.get("verification_failure_records"))
+    if records:
+        public["verification_failure_records"] = records
+    rejection_reasons = _public_verification_reasons(route.get("verification_rejection_reasons"))
+    if rejection_reasons:
+        public["verification_rejection_reasons"] = rejection_reasons
+        public["verification_rejections"] = min(sum(rejection_reasons.values()), _MAX_VERIFICATION_FAILURES)
     error = route.get("error")
     if error not in (None, ""):
         public["error"] = str(error)[:_ERROR_LIMIT]
@@ -120,11 +158,14 @@ def _source_status(row: dict[str, Any], accepted_count: int, rejected_count: int
         for route in route_results
     )
 
+    source_status = str(row.get("status") or "")
+    public_status = "degraded" if verification_failures > 0 or source_status == "degraded" else "healthy"
+
     return {
         "source_id": row.get("source_id"),
         "name": row.get("name"),
         "enabled": True,
-        "status": "healthy",
+        "status": public_status,
         "products": accepted_count,
         "active_route": active_route,
         "routes_attempted": len(route_results),
@@ -246,7 +287,7 @@ def self_test(root: Path) -> int:
         merge(input_dir, output_dir, 1, 1)
         status = json.loads((output_dir / "status.json").read_text(encoding="utf-8"))
         source = status["sources"][0]
-        assert source["status"] == "healthy"
+        assert source["status"] == "degraded"
         assert source["routes_attempted"] == 2
         assert source["healthy_routes"] == 1
         assert source["non_healthy_routes"] == 1

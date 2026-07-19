@@ -19,6 +19,8 @@ from fallback_transport import install as install_fallback_transport
 from fallback_transport import self_test as fallback_transport_self_test
 from multi_product import publication
 from multi_product.runtime import install_multi_product_runtime, runtime_self_test
+from product_detail_reliability import install as install_product_detail_reliability
+from product_detail_reliability import self_test as product_detail_reliability_self_test
 from vendor_expansion import apply_registry, load_registry
 
 worker = reliability.worker
@@ -54,6 +56,7 @@ def install_runtime() -> dict:
     """Install generalized classification and bounded fallback retrieval."""
     install_fallback_transport(reliability)
     state = install_multi_product_runtime(reliability)
+    install_product_detail_reliability(reliability)
     if getattr(worker, "_listing_card_provenance_gate_installed", False):
         return state
     original_gate = worker.gate
@@ -84,6 +87,7 @@ def self_test() -> int:
     state = install_runtime()
     runtime_self_test(reliability)
     fallback_transport_self_test(reliability)
+    product_detail_reliability_self_test(reliability)
 
     classify = worker.aggregate.classify_route_failure
     assert classify(TimeoutError("timed out")) == {
