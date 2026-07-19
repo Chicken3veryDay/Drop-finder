@@ -40,11 +40,23 @@ def _hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _verify_bytes(path:Path,meta:dict[str,Any],*,label:str,maximum:int|None=None,required:bool=False)->int:
-    actual=path.stat().st_size;declared=meta.get("bytes")
-    if required and (not isinstance(declared,int) or declared<0):raise VerificationError(f"{label} missing declared bytes: {path}")
-    if declared is not None and declared!=actual:raise VerificationError(f"{label} byte count mismatch: {path}")
-    if maximum is not None and actual>maximum:raise VerificationError(f"{label} exceeds browser byte limit: {path}")
+def _verify_bytes(
+    path: Path,
+    meta: dict[str, Any],
+    *,
+    label: str,
+    maximum: int | None = None,
+    required: bool = False,
+    check_declared: bool = True,
+) -> int:
+    actual = path.stat().st_size
+    declared = meta.get("bytes")
+    if required and (not isinstance(declared, int) or declared < 0):
+        raise VerificationError(f"{label} missing declared bytes: {path}")
+    if maximum is not None and actual > maximum:
+        raise VerificationError(f"{label} exceeds browser byte limit: {path}")
+    if check_declared and declared is not None and declared != actual:
+        raise VerificationError(f"{label} byte count mismatch: {path}")
     return actual
 
 
@@ -103,7 +115,14 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
     index_meta = manifest.get("compact_index") or {}
     index_path = _resolve_data_path(output_root, str(index_meta.get("path") or ""))
     size_contract=manifest.get("asset_limits") or {};required=size_contract.get("schema_version")=="dropfinder-asset-limits-v1"
-    _verify_bytes(index_path,index_meta,label="compact index",maximum=MAX_INDEX_BYTES,required=required)
+    _verify_bytes(
+        index_path,
+        index_meta,
+        label="compact index",
+        maximum=MAX_INDEX_BYTES,
+        required=required,
+        check_declared=False,
+    )
     if _hash(index_path) != index_meta.get("sha256"):
         raise VerificationError("compact index hash mismatch")
     index = _load(index_path)
@@ -112,7 +131,13 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
 
     vendors_meta = manifest.get("vendor_profiles") or {}
     vendors_path = _resolve_data_path(output_root, str(vendors_meta.get("path") or ""))
-    _verify_bytes(vendors_path,vendors_meta,label="vendor profile",required=required)
+    _verify_bytes(
+        vendors_path,
+        vendors_meta,
+        label="vendor profile",
+        required=required,
+        check_declared=False,
+    )
     if _hash(vendors_path) != vendors_meta.get("sha256"):
         raise VerificationError("vendor profile hash mismatch")
     vendors = _load(vendors_path)
@@ -121,7 +146,13 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
 
     rejections_meta = manifest.get("rejections") or {}
     rejections_path = _resolve_data_path(output_root, str(rejections_meta.get("path") or ""))
-    _verify_bytes(rejections_path,rejections_meta,label="rejections",required=required)
+    _verify_bytes(
+        rejections_path,
+        rejections_meta,
+        label="rejections",
+        required=required,
+        check_declared=False,
+    )
     if _hash(rejections_path) != rejections_meta.get("sha256"):
         raise VerificationError("rejections hash mismatch")
     rejections = _load(rejections_path)
@@ -192,12 +223,21 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
             raise VerificationError(f"default active variant mismatch: {product_id}")
 
     detail_product_ids: set[str] = set()
+    detail_byte_checks: list[tuple[Path, dict[str, Any]]] = []
     declared_detail_count = 0
     for entry in manifest.get("product_detail_shards") or []:
         if not isinstance(entry, dict):
             raise VerificationError("invalid detail shard declaration")
         path = _resolve_data_path(output_root, str(entry.get("path") or ""))
-        _verify_bytes(path,entry,label="detail shard",maximum=MAX_DETAIL_BYTES,required=required)
+        _verify_bytes(
+            path,
+            entry,
+            label="detail shard",
+            maximum=MAX_DETAIL_BYTES,
+            required=required,
+            check_declared=False,
+        )
+        detail_byte_checks.append((path, entry))
         if _hash(path) != entry.get("sha256"):
             raise VerificationError(f"detail shard hash mismatch: {path}")
         payload = _load(path)
@@ -310,6 +350,21 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
         raise VerificationError("detail product count mismatch")
     if manifest.get("vendor_count") != vendors.get("vendor_count"):
         raise VerificationError("vendor count mismatch")
+
+    # Descriptor byte parity is a final consistency check. Hard browser ceilings
+    # were enforced before parsing, while hash/schema/identity failures remain the
+    # primary diagnostic when a test or publication intentionally mutates content.
+    _verify_bytes(index_path, index_meta, label="compact index", maximum=MAX_INDEX_BYTES, required=required)
+    _verify_bytes(vendors_path, vendors_meta, label="vendor profile", required=required)
+    _verify_bytes(rejections_path, rejections_meta, label="rejections", required=required)
+    for detail_path, detail_meta in detail_byte_checks:
+        _verify_bytes(
+            detail_path,
+            detail_meta,
+            label="detail shard",
+            maximum=MAX_DETAIL_BYTES,
+            required=required,
+        )
     return {
         "generation_id": generation_id,
         "products": len(product_ids),
