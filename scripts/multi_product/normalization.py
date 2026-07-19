@@ -80,11 +80,15 @@ def quantity_fields(text: str, primary_type: str) -> dict[str, float | str | Non
     volume_ml = _first_decimal(ML, text)
     if primary_type in (CANNABIS_FLOWER, PSILOCYBIN_MUSHROOM):
         volume_ml = None
-    if primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE):
+    elif primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE) and volume_ml:
+        # Prefer explicit source volume when both units are present. Mass-only
+        # labels remain intact so publication can reject them explicitly.
         grams = None
+    quantity_value = grams if grams else volume_ml
     return {
         "grams": float(grams.quantize(Decimal("0.0001"))) if grams else None,
         "volume_ml": float(volume_ml.quantize(Decimal("0.0001"))) if volume_ml else None,
+        "quantity_value": float(quantity_value.quantize(Decimal("0.0001"))) if quantity_value else None,
         "quantity_unit": "g" if grams else "ml" if volume_ml else None,
     }
 
