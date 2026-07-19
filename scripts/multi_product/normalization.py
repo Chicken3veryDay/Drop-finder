@@ -80,11 +80,15 @@ def quantity_fields(text: str, primary_type: str) -> dict[str, float | str | Non
     volume_ml = _first_decimal(ML, text)
     if primary_type in (CANNABIS_FLOWER, PSILOCYBIN_MUSHROOM):
         volume_ml = None
-    if primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE):
+    elif primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE) and volume_ml:
+        # Prefer explicit source volume when both units are present. Mass-only
+        # labels remain intact so publication can reject them explicitly.
         grams = None
+    quantity_value = grams if grams else volume_ml
     return {
         "grams": float(grams.quantize(Decimal("0.0001"))) if grams else None,
         "volume_ml": float(volume_ml.quantize(Decimal("0.0001"))) if volume_ml else None,
+        "quantity_value": float(quantity_value.quantize(Decimal("0.0001"))) if quantity_value else None,
         "quantity_unit": "g" if grams else "ml" if volume_ml else None,
     }
 
@@ -128,32 +132,12 @@ def type_specific_fields(text: str, primary_type: str) -> dict[str, Any]:
         if token in f" {lowered} ":
             device_type = label
             break
-    terpenes = [name for name in TERPENES if re.search(rf"\b{re.escape(name)}\b", normalized, re.I)]
-    total_terpenes = _first_decimal(TERPENE_TOTAL, normalized)
     return {
-        "species": species_match.group(1).title() if species_match else None,
-        "claimed_potency_percent": float((psilocybin or potency)) if (psilocybin or potency) else None,
-        "psilocybin_percent": float(psilocybin) if psilocybin else None,
+        "species": species_match.group(1).title() if species_match and primary_type == PSILOCYBIN_MUSHROOM else None,
+        "psilocybin_percent": float(psilocybin) if psilocybin and primary_type in (PSILOCYBIN_MUSHROOM, PSILOCYBIN_VAPE) else None,
+        "claimed_potency_percent": float(potency) if potency else None,
         "device_type": device_type if primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE) else None,
         "puff_count": int(puffs.group(1)) if puffs and primary_type in (CANNABIS_VAPE, PSILOCYBIN_VAPE) else None,
-        "terpenes": terpenes if primary_type in (CANNABIS_FLOWER, CANNABIS_VAPE) else [],
-        "total_terpenes_percent": float(total_terpenes) if total_terpenes and primary_type in (CANNABIS_FLOWER, CANNABIS_VAPE) else None,
+        "terpenes": [terpene for terpene in TERPENES if re.search(rf"\b{re.escape(terpene)}\b", lowered)],
+        "total_terpenes_percent": float(_first_decimal(TERPENE_TOTAL, normalized) or 0) or None,
     }
-
-
-def completeness_score(row: dict[str, Any]) -> int:
-    primary_type = str(row.get("primary_type") or "")
-    common = ("name", "vendor", "price", "availability", "image")
-    common_present = sum(row.get(field) not in (None, "", [], {}) for field in common)
-    common_score = common_present / len(common) * 35
-    type_fields = {
-        CANNABIS_FLOWER: ("grams", "thca", "lineage", "terpenes", "price_per_gram"),
-        CANNABIS_VAPE: ("volume_ml", "device_type", "terpenes", "price_per_ml"),
-        PSILOCYBIN_MUSHROOM: ("species", "strain", "grams", "claimed_potency_percent", "price_per_gram"),
-        PSILOCYBIN_VAPE: ("volume_ml", "device_type", "psilocybin_percent", "price_per_ml"),
-    }.get(primary_type, ())
-    type_present = sum(row.get(field) not in (None, "", [], {}) for field in type_fields)
-    type_score = type_present / len(type_fields) * 45 if type_fields else 0
-    evidence = row.get("classification_evidence")
-    evidence_score = 20 if isinstance(evidence, dict) and evidence.get("primary_type") == primary_type else 0
-    return max(0, min(100, round(common_score + type_score + evidence_score)))
