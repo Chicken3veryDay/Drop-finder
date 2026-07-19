@@ -81,6 +81,21 @@ const parseObject = (text, label) => {
   return value;
 };
 
+const verifyIndex = (index, label) => {
+  if (!index.includes('href="./manifest.webmanifest"')) {
+    throw new Error(`${label} does not reference the relative PWA manifest.`);
+  }
+  if (!index.includes('href="./icon.svg"')) {
+    throw new Error(`${label} does not reference the relative application icon.`);
+  }
+  if (!index.includes("./assets/")) {
+    throw new Error(`${label} does not reference a built application asset.`);
+  }
+  if (/\b(?:src|href)="\/(?!\/)/.test(index)) {
+    throw new Error(`${label} contains a root-absolute asset path.`);
+  }
+};
+
 export const verifyPagesEndpoint = async (
   baseUrl,
   {
@@ -92,34 +107,35 @@ export const verifyPagesEndpoint = async (
   if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required.");
   const root = normalizeBaseUrl(baseUrl);
   const options = { maxBytes, timeoutMs };
-  const paths = [
-    "index.html",
-    "manifest.webmanifest",
-    "app-shell.json",
-    "sw.js",
-    "data/catalog.json",
-    "data/status.json",
-    "data/runtime.json",
-    "data/catalog-v4/manifest.json",
-    "data/catalog-v4/index.json",
+  const endpoints = [
+    { key: "/", path: "", label: "/" },
+    { key: "index.html", path: "index.html", label: "index.html" },
+    { key: "manifest.webmanifest", path: "manifest.webmanifest", label: "manifest.webmanifest" },
+    { key: "app-shell.json", path: "app-shell.json", label: "app-shell.json" },
+    { key: "sw.js", path: "sw.js", label: "sw.js" },
+    { key: "data/catalog.json", path: "data/catalog.json", label: "data/catalog.json" },
+    { key: "data/status.json", path: "data/status.json", label: "data/status.json" },
+    { key: "data/runtime.json", path: "data/runtime.json", label: "data/runtime.json" },
+    {
+      key: "data/catalog-v4/manifest.json",
+      path: "data/catalog-v4/manifest.json",
+      label: "catalog-v4 manifest",
+    },
+    {
+      key: "data/catalog-v4/index.json",
+      path: "data/catalog-v4/index.json",
+      label: "catalog-v4 index",
+    },
   ];
-  const resources = Object.fromEntries(await Promise.all(paths.map(async (path) => [
-    path,
-    await fetchResource(fetchImpl, new URL(path, root), path, options),
+  const resources = Object.fromEntries(await Promise.all(endpoints.map(async ({ key, path, label }) => [
+    key,
+    await fetchResource(fetchImpl, new URL(path, root), label, options),
   ])));
 
-  const index = resources["index.html"].text;
-  if (!index.includes('href="./manifest.webmanifest"')) {
-    throw new Error("index.html does not reference the relative PWA manifest.");
-  }
-  if (!index.includes('href="./icon.svg"')) {
-    throw new Error("index.html does not reference the relative application icon.");
-  }
-  if (!index.includes("./assets/")) {
-    throw new Error("index.html does not reference a built application asset.");
-  }
-  if (/\b(?:src|href)="\/(?!\/)/.test(index)) {
-    throw new Error("index.html contains a root-absolute asset path.");
+  verifyIndex(resources["/"].text, "/");
+  verifyIndex(resources["index.html"].text, "index.html");
+  if (resources["/"].evidence.sha256 !== resources["index.html"].evidence.sha256) {
+    throw new Error("/ and index.html do not serve identical application shell bytes.");
   }
 
   const manifest = parseObject(resources["manifest.webmanifest"].text, "manifest.webmanifest");
@@ -181,7 +197,7 @@ export const verifyPagesEndpoint = async (
     variantCount: catalogV4.in_stock_variant_count,
     healthySources: status.healthy_sources,
     zeroDegraded: true,
-    endpoints: Object.fromEntries(paths.map((path) => [path, resources[path].evidence])),
+    endpoints: Object.fromEntries(endpoints.map(({ key }) => [key, resources[key].evidence])),
   };
 };
 
