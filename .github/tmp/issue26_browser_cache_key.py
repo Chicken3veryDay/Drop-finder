@@ -19,12 +19,7 @@ replace_once(
 replace_once(
     sw,
     "function isHashedAsset(path) { return /\\/assets\\/(?:[^/]+\\/)*[^/]+-[a-z0-9_-]{8}\\.[a-z0-9]+$/i.test(path); }",
-    "function isDevelopmentModule(path) { return /^(?:\\/@vite(?:\\/|$)|\\/@react-refresh(?:$|\\?)|\\/@fs\\/|\\/src\\/|\\/node_modules\\/)/.test(path); }\nfunction isHashedAsset(path) { return /\\/assets\\/(?:[^/]+\\/)*[^/]+-[a-z0-9_-]{8}\\.[a-z0-9]+$/i.test(path); }",
-)
-replace_once(
-    sw,
-    "async function cacheFirst(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request, { ignoreSearch: true }); if (hit) return hit; const response = await fetch(request); if (response.ok) await safeCachePut(cache, request, response.clone()); return response; }",
-    "async function cacheFirst(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request); if (hit) return hit; const response = await fetch(request); if (response.ok) await safeCachePut(cache, request, response.clone()); return response; }",
+    "function isDevelopmentModule(path) { return /^(?:\\/@|\\/src\\/|\\/node_modules\\/)/.test(path); }\nfunction isHashedAsset(path) { return /\\/assets\\/(?:[^/]+\\/)*[^/]+-[a-z0-9_-]{8}\\.[a-z0-9]+$/i.test(path); }",
 )
 replace_once(
     sw,
@@ -41,6 +36,7 @@ replace_once(
   for (const path of [
     '/@vite/client',
     '/@react-refresh',
+    '/@id/__x00__virtual:module',
     '/@fs/tmp/source.js',
     '/src/main.tsx',
     '/node_modules/example/index.js?v=one',
@@ -52,23 +48,23 @@ replace_once(
   }
 });
 
-test('application cache keeps query-versioned module identities distinct', async () => {
+test('application cache keeps query-versioned mutable module identities distinct', async () => {
   const runtime = await createRuntime();
   const firstUrl = `${BASE}module.js?v=one`;
   const secondUrl = `${BASE}module.js?v=two`;
-  runtime.setResponse(firstUrl, new Response('export default \"one\"', { headers: { 'content-type': 'text/javascript' } }));
-  runtime.setResponse(secondUrl, new Response('export default \"two\"', { headers: { 'content-type': 'text/javascript' } }));
+  runtime.setResponse(firstUrl, new Response('export default "one"', { headers: { 'content-type': 'text/javascript' } }));
+  runtime.setResponse(secondUrl, new Response('export default "two"', { headers: { 'content-type': 'text/javascript' } }));
 
   const first = await runtime.dispatch('fetch', { request: new Request(firstUrl) });
-  assert.equal(await first.text(), 'export default \"one\"');
+  assert.equal(await first.text(), 'export default "one"');
   const second = await runtime.dispatch('fetch', { request: new Request(secondUrl) });
-  assert.equal(await second.text(), 'export default \"two\"');
+  assert.equal(await second.text(), 'export default "two"');
 
   const appCacheName = (await runtime.caches.keys()).find(name => name.startsWith('dropfinder-app-'));
   assert.ok(appCacheName);
   const appCache = await runtime.caches.open(appCacheName);
-  assert.equal(await (await appCache.match(firstUrl)).text(), 'export default \"one\"');
-  assert.equal(await (await appCache.match(secondUrl)).text(), 'export default \"two\"');
+  assert.equal(await (await appCache.match(firstUrl)).text(), 'export default "one"');
+  assert.equal(await (await appCache.match(secondUrl)).text(), 'export default "two"');
 });
 
 function navigationRequest(path) {
