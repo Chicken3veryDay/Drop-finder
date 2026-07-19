@@ -1,19 +1,23 @@
 from pathlib import Path
-import re
 
 path = Path("scripts/cloud_scan.py")
 text = path.read_text(encoding="utf-8")
 
 
-def replace_pattern(pattern: str, replacement: str, label: str) -> None:
+def replace_between(start_marker: str, end_marker: str, replacement: str) -> None:
     global text
-    text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
-    if count != 1:
-        raise SystemExit(f"{label} replacements: {count}")
+    start = text.find(start_marker)
+    if start < 0:
+        raise SystemExit(f"missing start marker: {start_marker}")
+    end = text.find(end_marker, start)
+    if end < 0:
+        raise SystemExit(f"missing end marker: {end_marker}")
+    text = text[:start] + replacement.rstrip() + "\n" + text[end:]
 
 
-replace_pattern(
-    r"def html_products\(payload,sid,vendor,route\):\n.*?\n  return rows\n(?=def meta_values)",
+replace_between(
+    "def html_products(payload,sid,vendor,route):",
+    "def meta_values(payload):",
     '''def product_identity(target):
  try:parsed=urllib.parse.urlsplit(str(target or ''))
  except ValueError:return ''
@@ -53,7 +57,7 @@ def offer_authority(offer,product_target):
  )
 def product_offer_rows(product,sid,vendor,route):
  product_name=text(product.get('name'));product_desc=text(product.get('description'));product_target=product.get('url') or product.get('@id');product_image=structured_image(product.get('image'));product_id=product.get('productID') or product.get('sku') or product.get('@id') or product_target
- raw_offers=product.get('offers');offers=structured_offers(raw_offers)
+ offers=structured_offers(product.get('offers'))
  if not offers:
   row=record_identity(record(sid,vendor,route,product_name,product_target,product_desc,None,'',product_image,''),product_id,'')
   return [row] if row else []
@@ -86,11 +90,11 @@ def html_products(payload,sid,vendor,route):
    rows.extend(product_offer_rows(product,sid,vendor,route))
  return dedupe(rows)
 ''',
-    "html_products",
 )
 
-replace_pattern(
-    r"def html_with_details\(payload,sid,vendor,route\):\n.*?\n  return dedupe\(out\)\n(?=def dedupe)",
+replace_between(
+    "def html_with_details(payload,sid,vendor,route):",
+    "def dedupe(rows):",
     '''def html_with_details(payload,sid,vendor,route,diagnostics=None):
  diagnostics=diagnostics if isinstance(diagnostics,dict) else {}
  structured=html_products(payload,sid,vendor,route);links=product_links(payload,route);covered={product_identity(row.get('url')) for row in structured if product_identity(row.get('url'))};out=list(structured)
@@ -112,12 +116,14 @@ replace_pattern(
   out.extend(detail_rows);covered.update(product_identity(row.get('url')) for row in detail_rows if product_identity(row.get('url')))
  return dedupe(out)
 ''',
-    "html_with_details",
 )
 
-replace_pattern(
-    r"    if route\[0\]=='shopify':rows=shopify\(payload,sid,vendor,route\);route_diagnostics=\{\}\n    elif route\[0\]=='woo':rows,route_diagnostics=woo\(payload,sid,vendor,route\)\n    else:rows=html_with_details\(payload,sid,vendor,route\);route_diagnostics=\{\}\n    rr.update\(route_diagnostics\);route_status='degraded' if rr.get\('variation_failures'\) else 'healthy' if rows else 'empty';rr.update\(status=route_status,products=len\(rows\),duration_seconds=round\(time.monotonic\(\)-t,3\)\);attempts.append\(rr\)\n    if rows:return dedupe\(rows\),\{'source_id':sid,'name':vendor,'enabled':True,'status':route_status,'health_reason_codes':\['woocommerce_variation_incomplete'\] if route_status=='degraded' else \[\],'products':len\(rows\),'routes_attempted':len\(attempts\),'active_route':route\[1\],'route_results':attempts,'duration_seconds':round\(time.monotonic\(\)-started,3\)\}",
-    '''    if route[0]=='shopify':rows=shopify(payload,sid,vendor,route);route_diagnostics={}
+old = """    if route[0]=='shopify':rows=shopify(payload,sid,vendor,route);route_diagnostics={}
+    elif route[0]=='woo':rows,route_diagnostics=woo(payload,sid,vendor,route)
+    else:rows=html_with_details(payload,sid,vendor,route);route_diagnostics={}
+    rr.update(route_diagnostics);route_status='degraded' if rr.get('variation_failures') else 'healthy' if rows else 'empty';rr.update(status=route_status,products=len(rows),duration_seconds=round(time.monotonic()-t,3));attempts.append(rr)
+    if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':route_status,'health_reason_codes':['woocommerce_variation_incomplete'] if route_status=='degraded' else [],'products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}"""
+new = """    if route[0]=='shopify':rows=shopify(payload,sid,vendor,route);route_diagnostics={}
     elif route[0]=='woo':rows,route_diagnostics=woo(payload,sid,vendor,route)
     else:
      route_diagnostics={};rows=html_with_details(payload,sid,vendor,route,route_diagnostics)
@@ -125,8 +131,9 @@ replace_pattern(
     if rr.get('variation_failures'):health_reason_codes.append('woocommerce_variation_incomplete')
     if rr.get('detail_failures'):health_reason_codes.append('html_detail_discovery_incomplete')
     route_status='degraded' if health_reason_codes else 'healthy' if rows else 'empty';rr.update(status=route_status,health_reason_codes=health_reason_codes,products=len(rows),duration_seconds=round(time.monotonic()-t,3));attempts.append(rr)
-    if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':route_status,'health_reason_codes':health_reason_codes,'products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}''',
-    "scan routing",
-)
+    if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':route_status,'health_reason_codes':health_reason_codes,'products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}"""
+if text.count(old) != 1:
+    raise SystemExit(f"scan routing replacements: {text.count(old)}")
+text = text.replace(old, new, 1)
 
 path.write_text(text, encoding="utf-8")
