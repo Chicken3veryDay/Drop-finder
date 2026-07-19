@@ -1,0 +1,70 @@
+name: Temporary Issue 55 Active Offer Filters
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-55-active-offer-filter-order
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue55-active-offer'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-55-active-offer-filter-order
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply worker active-offer filter ordering
+        run: python .github/tmp/issue55_active_offer_filters.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            web/src/platform/workers/marketplace-query-engine.js \
+            web/src/features/marketplace/marketplace-query-parity.test.ts \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Validate query parity and complete frontend contracts
+        working-directory: web
+        run: |
+          npx vitest run src/features/marketplace/marketplace-query-parity.test.ts src/features/marketplace/test/marketplace-core.test.ts
+          node --test test/query-engine.test.mjs test/query-null-bounds.test.mjs test/query-engine-scheduling.test.mjs
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run benchmark
+          npm run build
+          npm run build:platform
+          npm run analyze:chunks
+          npm run pwa:check
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue55-active-offer.yml \
+            .github/tmp/issue55_active_offer_filters.py
+          git add \
+            web/src/platform/workers/marketplace-query-engine.js \
+            web/src/features/marketplace/marketplace-query-parity.test.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: apply price filters to the active offer"
+          git push origin HEAD:fix/issue-55-active-offer-filter-order
