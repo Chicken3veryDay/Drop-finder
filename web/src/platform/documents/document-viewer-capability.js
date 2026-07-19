@@ -1,4 +1,5 @@
 import { PlatformError, abortError } from '../contracts.js';
+import { readBoundedBytes } from '../network/read-bounded-bytes.js';
 import { loadPdfJsRuntime } from './pdfjs-loader.js';
 
 const DEFAULTS = Object.freeze({
@@ -9,6 +10,7 @@ const DEFAULTS = Object.freeze({
   initialScale: 1,
   maxRetainedCanvases: 2,
   workerStartupTimeoutMs: 15_000,
+  cleanupTimeoutMs: 1_000,
 });
 
 /** Headless, cancellable document capability consumed by issue #8's overlay. */
@@ -69,10 +71,11 @@ export class DocumentViewerCapability {
     if (!this.fetchImpl) throw new PlatformError('fetch_unavailable', 'Document fetch is unavailable');
     const response = await this.fetchImpl(documentRef.url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
     if (!response.ok) throw new PlatformError('document_unavailable', `Document request failed with ${response.status}`);
-    const length = Number(response.headers.get('content-length'));
-    if (Number.isFinite(length) && length > this.options.maxBytes) throw new PlatformError('document_oversized', 'Document is too large');
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > this.options.maxBytes) throw new PlatformError('document_oversized', 'Document is too large');
+    const bytes = await readBoundedBytes(response, {
+      maxBytes: this.options.maxBytes,
+      signal,
+      oversizedError: () => new PlatformError('document_oversized', 'Document is too large'),
+    });
     const session = this.session;
     let loadingTask = null;
     let destroyPromise = null;
@@ -152,17 +155,14 @@ export class DocumentViewerCapability {
         credentials: 'omit',
         referrerPolicy: 'no-referrer',
       });
-      const length = Number(response.headers.get('content-length'));
-      if (Number.isFinite(length) && length > this.options.maxBytes) {
-        throw new PlatformError('document_oversized', 'Image is too large');
-      }
       if (!response.ok) {
         throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
       }
-      const bytes = await response.arrayBuffer();
-      if (bytes.byteLength > this.options.maxBytes) {
-        throw new PlatformError('document_oversized', 'Image is too large');
-      }
+      const bytes = await readBoundedBytes(response, {
+        maxBytes: this.options.maxBytes,
+        signal,
+        oversizedError: () => new PlatformError('document_oversized', 'Image is too large'),
+      });
       if (sessionId !== this.session?.id || signal.aborted) return;
       const blob = new Blob([bytes], {
         type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream',
@@ -263,9 +263,15 @@ export class DocumentViewerCapability {
       session.renderRevision += 1;
       try { session.renderTask?.cancel?.(); } catch {}
       cleanup = this.cleanupSequence.then(async () => {
-        try { await session.renderSequence; } catch {}
-        try { await session.loadingTask?.destroy?.(); } catch {}
-        try { await session.pdf?.cleanup?.(); } catch {}
+        await settleCleanupWithin(Promise.allSettled([
+          Promise.resolve().then(() => session.loadingTask?.destroy?.()),
+          Promise.resolve().then(() => session.pdf?.destroy?.()),
+        ]), this.options.cleanupTimeoutMs);
+        await settleCleanupWithin(session.renderSequence, this.options.cleanupTimeoutMs);
+        await settleCleanupWithin(
+          Promise.resolve().then(() => session.pdf?.cleanup?.()),
+          this.options.cleanupTimeoutMs,
+        );
         if (session.objectUrl) URL.revokeObjectURL(session.objectUrl);
       });
       this.cleanupSequence = cleanup.catch(() => undefined);
@@ -369,6 +375,18 @@ function conciseDocumentError(error) {
     image_decode_unavailable: 'This image could not be displayed.',
   };
   return { code, message: messages[code] ?? 'This document could not be opened.', action: 'open-original' };
+}
+
+async function settleCleanupWithin(promise, timeoutMs) {
+  let timer = null;
+  try {
+    await Promise.race([
+      Promise.resolve(promise).catch(() => undefined),
+      new Promise(resolve => { timer = setTimeout(resolve, Math.max(0, timeoutMs)); }),
+    ]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
 }
 
 function settleWithin(promise, timeoutMs, signal, code, onTimeout = null) {

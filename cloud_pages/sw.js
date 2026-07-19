@@ -264,19 +264,71 @@ async function generationDetail(request) {
   }
 }
 
+async function readBoundedCacheResponse(response, maxBytes) {
+  const contentLength = response.headers.get('content-length');
+  const declared = contentLength === null ? null : Number(contentLength);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    try { await response.body?.cancel('Document exceeds its cache limit'); } catch {}
+    return null;
+  }
+  if (!response.body) {
+    return new Response(null, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      if (totalBytes + chunk.byteLength > maxBytes) {
+        try { await reader.cancel('Document exceeds its cache limit'); } catch {}
+        return null;
+      }
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+  } finally {
+    try { reader.releaseLock(); } catch {}
+  }
+
+  let chunkIndex = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (chunkIndex >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunks[chunkIndex]);
+      chunks[chunkIndex] = null;
+      chunkIndex += 1;
+    },
+    cancel() { chunks.length = 0; },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 async function cacheOpenedDocument(document, source) {
   if (!document?.url) return;
   try {
     const request = new Request(document.url, { credentials: 'omit', referrerPolicy: 'no-referrer' });
     const response = await fetch(request);
-    const length = Number(response.headers.get('content-length'));
     const cacheControl = response.headers.get('cache-control') || '';
-    if (!response.ok || response.type === 'opaque' || /private|no-store/i.test(cacheControl)
-      || (Number.isFinite(length) && length > MAX_DOCUMENT_BYTES)) return;
-    const bytes = await response.clone().arrayBuffer();
-    if (bytes.byteLength > MAX_DOCUMENT_BYTES) return;
+    if (!response.ok || response.type === 'opaque' || /private|no-store/i.test(cacheControl)) return;
+    const bounded = await readBoundedCacheResponse(response, MAX_DOCUMENT_BYTES);
+    if (!bounded) return;
     const cache = await caches.open(DOCUMENT_CACHE);
-    await safeCachePut(cache, request, response);
+    await safeCachePut(cache, request, bounded);
     await trimCache(cache, MAX_DOCUMENT_ENTRIES, () => true);
   } catch (error) {
     if (error?.name === 'QuotaExceededError') source?.postMessage({ type: 'cache-quota', resource: 'document' });
