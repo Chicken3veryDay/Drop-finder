@@ -108,18 +108,15 @@ cache_method = '''  async getLastComplete() {
 client.write_text(client_text[:cache_method_start] + cache_method + client_text[cache_method_end:], encoding="utf-8")
 
 canonical_test = Path("web/src/features/platform/canonical-catalog-generation-client.test.ts")
-replace_if_present(
-    canonical_test,
-    '''      manifest: { generation_id: "g1", generated_at: new Date(cachedAt).toISOString() },
-''',
-    '''      manifest: {
-        schema_version: 4,
-        generation_id: "g1",
-        generated_at: new Date(cachedAt).toISOString(),
-        index: { url: "https://example.test/index.json" },
-      },
-''',
+canonical_text = canonical_test.read_text(encoding="utf-8")
+required_canonical_markers = (
+    'schema_version: 4',
+    'generation_id: "g1"',
+    'compact_index:',
+    'index: cachedIndex',
 )
+if not all(marker in canonical_text for marker in required_canonical_markers):
+    raise SystemExit("canonical cached fallback fixture is not in the current-schema state")
 
 bounds_test = Path("web/test/catalog-bounds.test.mjs")
 replace_if_present(
