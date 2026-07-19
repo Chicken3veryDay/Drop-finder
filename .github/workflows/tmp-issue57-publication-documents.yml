@@ -6,7 +6,7 @@ on:
       - fix/issue-57-publication-documents
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -23,6 +23,12 @@ jobs:
           python-version: '3.12'
       - name: Wire scheduled publication workflow
         run: python .github/tmp/issue57_wire_publication.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue57-transformed-workflow
+          path: .github/workflows/dropfinder-cloud.yml
+          if-no-files-found: error
+          retention-days: 7
       - name: Verify exact implementation boundary
         shell: bash
         run: |
@@ -49,6 +55,7 @@ jobs:
         run: |
           set +e
           {
+            set -e
             python -m compileall -q scripts/vendor_adapters scripts/catalog_v4 tests
             python -m unittest -v \
               tests.test_vendor_document_publication \
@@ -119,20 +126,3 @@ jobs:
             /tmp/issue57-live-receipt.json
           if-no-files-found: warn
           retention-days: 14
-      - name: Push validated implementation
-        shell: bash
-        run: |
-          git add \
-            .github/workflows/catalog-v4.yml \
-            .github/workflows/dropfinder-cloud.yml \
-            scripts/vendor_adapters/publication.py \
-            scripts/vendor_adapters/publication_artifact.py \
-            scripts/vendor_adapters/publication_common.py \
-            scripts/vendor_adapters/publication_discovery.py \
-            scripts/vendor_adapters/publication_mapping.py \
-            tests/test_vendor_document_publication.py \
-            tests/test_vendor_document_publication_workflows.py
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix: compose vendor documents into publication'
-          git push origin HEAD:fix/issue-57-publication-documents
