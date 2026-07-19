@@ -1,0 +1,37 @@
+name: Temporary Issue 59 Apply Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-59-detail-failure-state
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'trigger/issue59-detail-failure'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-59-detail-failure-state
+      - name: Capture transformation output
+        shell: bash
+        run: |
+          set +e
+          {
+            python .github/tmp/issue59_detail_failure_state.py
+            python .github/tmp/issue59_detail_failure_css.py
+          } > /tmp/issue59-apply.log 2>&1
+          printf '%s\n' "$?" > /tmp/issue59-apply.status
+          cat /tmp/issue59-apply.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue59-apply-diagnostic
+          path: |
+            /tmp/issue59-apply.log
+            /tmp/issue59-apply.status
+          if-no-files-found: error
+          retention-days: 7
