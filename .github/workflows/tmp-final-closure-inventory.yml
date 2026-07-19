@@ -1,0 +1,120 @@
+name: Temporary Final Closure Inventory
+
+on:
+  pull_request:
+    branches:
+      - verification/final-closure-inventory
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  deployments: read
+  issues: read
+  pages: read
+  pull-requests: read
+
+jobs:
+  inventory:
+    if: github.head_ref == 'trigger/final-closure-inventory'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verification/final-closure-inventory
+          fetch-depth: 0
+      - name: Fetch complete refs
+        run: |
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+      - name: Capture repository API inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -u
+          mkdir -p /tmp/final-closure-inventory
+          repo="repos/${GITHUB_REPOSITORY}"
+          capture() {
+            name="$1"
+            endpoint="$2"
+            if gh api --paginate --slurp "$endpoint" > "/tmp/final-closure-inventory/${name}.json" 2> "/tmp/final-closure-inventory/${name}.error"; then
+              rm -f "/tmp/final-closure-inventory/${name}.error"
+            else
+              printf '{"endpoint":"%s","error_file":"%s.error"}\n' "$endpoint" "$name" > "/tmp/final-closure-inventory/${name}.json"
+            fi
+          }
+          gh api "$repo" > /tmp/final-closure-inventory/repository.json
+          capture branches "$repo/branches?per_page=100"
+          capture tags "$repo/tags?per_page=100"
+          capture releases "$repo/releases?per_page=100"
+          capture environments "$repo/environments?per_page=100"
+          capture deployments "$repo/deployments?per_page=100"
+          capture workflows "$repo/actions/workflows?per_page=100"
+          capture workflow_runs "$repo/actions/runs?per_page=100"
+          capture open_pull_requests "$repo/pulls?state=open&per_page=100"
+          capture open_issues "$repo/issues?state=open&per_page=100"
+          capture rulesets "$repo/rulesets?includes_parents=true&per_page=100"
+          capture main_protection "$repo/branches/main/protection"
+          capture pages "$repo/pages"
+      - name: Build ref reachability ledger
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          output = Path('/tmp/final-closure-inventory')
+
+          def git(*args: str, check: bool = True) -> str:
+              completed = subprocess.run(['git', *args], text=True, capture_output=True)
+              if check and completed.returncode:
+                  raise SystemExit(completed.stderr)
+              return completed.stdout.strip()
+
+          refs = git('for-each-ref', '--format=%(refname:short)\t%(objectname)\t%(committerdate:iso-strict)', 'refs/remotes/origin').splitlines()
+          branches = []
+          base_refs = ['origin/main']
+          if git('show-ref', '--verify', '--quiet', 'refs/remotes/origin/gh-pages', check=False) == '':
+              base_refs.append('origin/gh-pages')
+          for row in refs:
+              name, sha, date = row.split('\t', 2)
+              if name == 'origin/HEAD':
+                  continue
+              unique = int(git('rev-list', '--count', name, '--not', *base_refs))
+              ahead = int(git('rev-list', '--count', 'origin/main..' + name))
+              behind = int(git('rev-list', '--count', name + '..origin/main'))
+              merge_base = git('merge-base', 'origin/main', name, check=False)
+              branches.append({
+                  'name': name.removeprefix('origin/'),
+                  'sha': sha,
+                  'committer_date': date,
+                  'unique_not_in_main_or_gh_pages': unique,
+                  'ahead_of_main': ahead,
+                  'behind_main': behind,
+                  'merge_base_with_main': merge_base,
+              })
+          branches.sort(key=lambda item: item['name'])
+          (output / 'branch_reachability.json').write_text(json.dumps(branches, indent=2) + '\n', encoding='utf-8')
+
+          tags = []
+          for row in git('for-each-ref', '--format=%(refname:short)\t%(objectname)\t%(creatordate:iso-strict)', 'refs/tags').splitlines():
+              if not row:
+                  continue
+              name, sha, date = row.split('\t', 2)
+              tags.append({'name': name, 'sha': sha, 'date': date})
+          (output / 'local_tags.json').write_text(json.dumps(tags, indent=2) + '\n', encoding='utf-8')
+
+          summary = {
+              'main_sha': git('rev-parse', 'origin/main'),
+              'gh_pages_sha': git('rev-parse', 'origin/gh-pages', check=False),
+              'branch_count': len(branches),
+              'tag_count': len(tags),
+              'branches_with_unique_commits': [item for item in branches if item['unique_not_in_main_or_gh_pages'] > 0],
+          }
+          (output / 'ref_summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-closure-inventory
+          path: /tmp/final-closure-inventory
