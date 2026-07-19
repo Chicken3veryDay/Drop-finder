@@ -1,0 +1,86 @@
+name: Verify Issue 119 Final Artifacts
+
+on:
+  pull_request:
+    branches:
+      - verification/issue-119-vape-artifacts-final
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.head_ref == 'trigger/issue-119-vape-artifacts-final'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify generated artifacts on authoritative main
+        shell: bash
+        run: |
+          mkdir -p /tmp/issue119
+          source_commit=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          print(json.loads(Path('deployment/release.json').read_text())['source_commit'])
+          PY
+          )
+          public_url=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          print(json.loads(Path('deployment/release.json').read_text())['public_url'].rstrip('/'))
+          PY
+          )
+          printf '%s\n' "$source_commit" > /tmp/issue119/source-commit.txt
+          printf '%s\n' "$public_url" > /tmp/issue119/public-url.txt
+          python -m scripts.multi_product.verify_vape_quantity \
+            --catalog cloud_pages/data/catalog.json \
+            --status cloud_pages/data/status.json \
+            --source-commit "$source_commit" \
+            --artifact-label generated-main \
+            --receipt /tmp/issue119/generated-receipt.json
+      - name: Download and verify public production artifacts
+        shell: bash
+        run: |
+          public_url=$(cat /tmp/issue119/public-url.txt)
+          source_commit=$(cat /tmp/issue119/source-commit.txt)
+          curl --fail --location --retry 8 --retry-all-errors \
+            --output /tmp/issue119/public-catalog.json \
+            "$public_url/data/catalog.json?verification=$GITHUB_RUN_ID"
+          curl --fail --location --retry 8 --retry-all-errors \
+            --output /tmp/issue119/public-status.json \
+            "$public_url/data/status.json?verification=$GITHUB_RUN_ID"
+          python -m scripts.multi_product.verify_vape_quantity \
+            --catalog /tmp/issue119/public-catalog.json \
+            --status /tmp/issue119/public-status.json \
+            --source-commit "$source_commit" \
+            --artifact-label public-production \
+            --receipt /tmp/issue119/public-receipt.json
+      - name: Require generated and public parity
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          generated = json.loads(Path('/tmp/issue119/generated-receipt.json').read_text())
+          public = json.loads(Path('/tmp/issue119/public-receipt.json').read_text())
+          for key in ('generation', 'product_count', 'vape_count', 'active_source_count', 'degraded_source_count', 'rejection_counts', 'hashes', 'artifact_digest'):
+              if generated.get(key) != public.get(key):
+                  raise SystemExit(f'generated/public mismatch for {key}: {generated.get(key)!r} != {public.get(key)!r}')
+          if not generated.get('verified') or not public.get('verified'):
+              raise SystemExit('one or both vape quantity receipts are not verified')
+          print(json.dumps({'verified': True, 'generated': generated, 'public': public}, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue-119-final-artifact-receipts
+          path: |
+            /tmp/issue119/generated-receipt.json
+            /tmp/issue119/public-receipt.json
+            /tmp/issue119/source-commit.txt
+            /tmp/issue119/public-url.txt
