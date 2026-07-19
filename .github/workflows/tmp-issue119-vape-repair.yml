@@ -22,10 +22,27 @@ jobs:
       - name: Apply anchored production edits
         run: python .github/tmp/issue119_vape_quantity_repair.py
       - name: Validate complete multi-product contracts
+        shell: bash
         run: |
-          python -m compileall -q scripts/multi_product tests/multi_product
-          python -m unittest discover -s tests/multi_product -v
-          python -m scripts.multi_product.verify_vape_quantity --help
+          set +e
+          {
+            python -m compileall -q scripts/multi_product tests/multi_product
+            python -m unittest discover -s tests/multi_product -v
+            python -m scripts.multi_product.verify_vape_quantity --help
+          } > /tmp/issue119-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue119-validation.status
+          tail -n 360 /tmp/issue119-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue119-validation
+          path: |
+            /tmp/issue119-validation.log
+            /tmp/issue119-validation.status
+      - name: Stop on validation failure
+        run: test "$(cat /tmp/issue119-validation.status)" = "0"
       - name: Verify unrelated source remains intact
         shell: bash
         run: |
