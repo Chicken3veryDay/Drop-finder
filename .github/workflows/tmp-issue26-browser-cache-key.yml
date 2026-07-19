@@ -1,0 +1,68 @@
+name: Temporary Issue 26 Browser Cache Key Repair
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-26-offline-document-cache
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue26-browser-cache-key'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-26-offline-document-cache
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply query-sensitive application cache repair
+        run: python .github/tmp/issue26_browser_cache_key.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            cloud_pages/sw.js \
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/integration/register-marketplace-props.document-cache.test.ts \
+            web/test/service-worker.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Validate focused cache contracts
+        working-directory: web
+        run: |
+          node --test test/service-worker.test.mjs test/service-worker-document-bound.test.mjs
+          npx vitest run src/features/integration/register-marketplace-props.document-cache.test.ts
+          npm run typecheck
+      - name: Validate integrated browser matrix
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium firefox webkit
+          npx playwright test tests/e2e/integrated-app.spec.mjs
+      - name: Commit clean browser repair
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue26-browser-cache-key.yml \
+            .github/tmp/issue26_browser_cache_key.py
+          git add cloud_pages/sw.js web/test/service-worker.test.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: keep query-versioned application assets distinct"
+          git push origin HEAD:fix/issue-26-offline-document-cache
