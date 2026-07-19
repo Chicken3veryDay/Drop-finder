@@ -1,0 +1,66 @@
+name: Temporary Issue 128 Vite Upgrade
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-128-vite-security-patch
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    if: github.head_ref == 'trigger/issue128-vite-upgrade'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-128-vite-security-patch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Upgrade locked Vite security patch
+        working-directory: web
+        run: npm install --save-dev --save-exact vite@6.4.2
+      - name: Verify dependency and loopback boundary
+        working-directory: web
+        run: |
+          npm ls vite --depth=0
+          node --test test/e2e-vite-server-security.test.mjs test/e2e-vite-patched-version.test.mjs
+      - name: Validate complete frontend and publication contracts
+        working-directory: web
+        run: |
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run benchmark
+          npm run build
+          npm run build:platform
+          npm run analyze:chunks
+      - name: Validate E2E server on loopback
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test tests/e2e/integrated-app.spec.mjs --project=chromium
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git diff --name-only HEAD | grep -v '^\.github/' | sort > /tmp/actual-files
+          printf '%s\n' \
+            web/package-lock.json \
+            web/package.json \
+            web/test/e2e-vite-patched-version.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Commit clean security repair
+        shell: bash
+        run: |
+          git rm .github/workflows/tmp-issue128-vite-upgrade.yml
+          git add web/package.json web/package-lock.json web/test/e2e-vite-patched-version.test.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: upgrade Vite to patched 6.4.2"
+          git push origin HEAD:fix/issue-128-vite-security-patch
