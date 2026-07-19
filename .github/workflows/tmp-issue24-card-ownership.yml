@@ -1,0 +1,57 @@
+name: Temporary Issue 24 Card Ownership
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-24-card-field-ownership
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue24-card-ownership'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-24-card-field-ownership
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply product-card ownership repair
+        run: python .github/tmp/issue24_card_ownership.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/autonomous_worker_v2.py \
+            tests/test_card_candidate_ownership.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Validate focused and complete retrieval contracts
+        run: |
+          python -m compileall -q scripts tests
+          python -m unittest -v tests.test_card_candidate_ownership
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python scripts/autonomous_worker_v4.py --self-test
+          python scripts/autonomous_worker_v2.py --self-test
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue24-card-ownership.yml \
+            .github/tmp/issue24_card_ownership.py
+          git add scripts/autonomous_worker_v2.py tests/test_card_candidate_ownership.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: bind card fields to product detail metadata"
+          git push origin HEAD:fix/issue-24-card-field-ownership
