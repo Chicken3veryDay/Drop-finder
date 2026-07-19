@@ -1,0 +1,87 @@
+name: Temporary Issue 87 Consumer Contract
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-87-consumer-compatible-publication
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue87-consumer-contract'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-87-consumer-compatible-publication
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply verifier and browser consumer contract
+        run: python .github/tmp/issue87_consumer_contract.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/catalog_v4/verify.py \
+            tests/catalog_v4/test_consumer_contract_verification.py \
+            web/src/features/integration/marketplace-index-integrity.test.ts \
+            web/src/features/integration/register-marketplace-props.tsx \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Validate Python publication contracts
+        run: |
+          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+          python -m unittest -v \
+            tests.catalog_v4.test_consumer_contract_verification \
+            tests.catalog_v4.test_verification
+          python -m scripts.catalog_v4.selftest
+          python -m unittest discover -s tests/catalog_v4 -v
+          python -m scripts.catalog_v4.verify --output-root cloud_pages/data
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Validate browser mapping and complete frontend contracts
+        working-directory: web
+        run: |
+          npx vitest run \
+            src/features/integration/marketplace-index-integrity.test.ts \
+            src/features/integration/marketplace-integration.test.ts
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run benchmark
+          npm run build
+          npm run build:platform
+          npm run analyze:chunks
+          npm run pwa:check
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue87-consumer-contract.yml \
+            .github/tmp/issue87_consumer_contract.py
+          git add \
+            scripts/catalog_v4/verify.py \
+            tests/catalog_v4/test_consumer_contract_verification.py \
+            web/src/features/integration/marketplace-index-integrity.test.ts \
+            web/src/features/integration/register-marketplace-props.tsx
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: enforce shopper-compatible catalog publications"
+          git push origin HEAD:fix/issue-87-consumer-compatible-publication
