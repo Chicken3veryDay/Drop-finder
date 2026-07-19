@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   repair:
-    if: github.head_ref == 'trigger/issues98-99-virtual-policy-r2'
+    if: github.head_ref == 'trigger/issues98-99-virtual-policy-r3'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -27,7 +27,7 @@ jobs:
         run: |
           python .github/tmp/issues98_99_virtual_policy.py
           python .github/tmp/issues98_99_tests.py
-      - name: Verify bounded source boundary
+      - name: Verify exact source boundary including new tests
         shell: bash
         run: |
           git fetch origin main
@@ -35,16 +35,15 @@ jobs:
           {
             git diff --name-only "$merge_base" HEAD
             git diff --name-only HEAD
+            git ls-files --others --exclude-standard
           } | grep -v '^\.github/' | sort -u > /tmp/actual-files
           printf '%s\n' \
             web/src/features/integration/register-marketplace-props.tsx \
             web/src/features/integration/virtual-marketplace-focus.test.tsx \
             web/src/platform/virtualization/virtual-marketplace-adapter.js \
             web/test/virtual-query-focus-policy.test.mjs \
-            | sort > /tmp/allowed-files
-          comm -23 /tmp/actual-files /tmp/allowed-files > /tmp/unexpected-files
-          test ! -s /tmp/unexpected-files || { cat /tmp/unexpected-files; exit 1; }
-          while read -r required; do grep -qx "$required" /tmp/actual-files; done < /tmp/allowed-files
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
