@@ -17,6 +17,7 @@ export class DocumentViewerCapability {
     this.options = { ...DEFAULTS, ...options };
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
     this.loadPdfJs = options.loadPdfJs ?? (() => loadPdfJsRuntime({ workerSrc: options.pdfWorkerUrl }));
+    this.decodeImage = options.decodeImage ?? decodeImageUrl;
     this.state = closedState();
     this.listeners = new Set();
     this.session = null;
@@ -136,23 +137,54 @@ export class DocumentViewerCapability {
     this.setState({ ...this.state, status: 'ready', pages: pdf.numPages, page: 1 });
   }
 
-  async openImage(documentRef, sessionId, signal) {
+async openImage(documentRef, sessionId, signal) {
+  let objectUrl = null;
+  try {
+    const sourceUrl = documentRef.url;
     if (!this.fetchImpl) {
-      this.setState({ ...this.state, status: 'ready', displayUrl: documentRef.url });
+      await this.decodeImage(sourceUrl, signal);
+      if (sessionId !== this.session?.id || signal.aborted) return;
+      this.setState({ ...this.state, status: 'ready', displayUrl: sourceUrl });
       return;
     }
-    const response = await this.fetchImpl(documentRef.url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });
+    const response = await this.fetchImpl(sourceUrl, {
+      signal,
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    });
     const length = Number(response.headers.get('content-length'));
-    if (Number.isFinite(length) && length > this.options.maxBytes) throw new PlatformError('document_oversized', 'Image is too large');
-    if (!response.ok) throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
+    if (Number.isFinite(length) && length > this.options.maxBytes) {
+      throw new PlatformError('document_oversized', 'Image is too large');
+    }
+    if (!response.ok) {
+      throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
+    }
     const bytes = await response.arrayBuffer();
-    if (bytes.byteLength > this.options.maxBytes) throw new PlatformError('document_oversized', 'Image is too large');
+    if (bytes.byteLength > this.options.maxBytes) {
+      throw new PlatformError('document_oversized', 'Image is too large');
+    }
     if (sessionId !== this.session?.id || signal.aborted) return;
-    const blob = new Blob([bytes], { type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream' });
-    const objectUrl = URL.createObjectURL(blob);
+    const blob = new Blob([bytes], {
+      type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream',
+    });
+    objectUrl = URL.createObjectURL(blob);
+    await this.decodeImage(objectUrl, signal);
+    if (sessionId !== this.session?.id || signal.aborted) return;
     this.session.objectUrl = objectUrl;
     this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
+    objectUrl = null;
+  } catch (error) {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    }
+    if (signal.aborted || error?.name === 'AbortError') throw abortError();
+    if (error instanceof PlatformError) throw error;
+    throw new PlatformError('image_decode_failed', 'This image could not be displayed.', error);
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
   }
+}
 
   renderPage(canvas, { page = this.state.page, fitWidth = this.state.fitWidth, scale = this.state.scale } = {}) {
     const session = this.session;
@@ -279,6 +311,42 @@ export class DocumentViewerCapability {
   setState(next) { this.state = Object.freeze(next); for (const listener of this.listeners) listener(this.state); }
 }
 
+
+function decodeImageUrl(url, signal) {
+  if (signal?.aborted) return Promise.reject(abortError());
+  if (typeof Image === 'undefined') {
+    return Promise.reject(new PlatformError('image_decode_unavailable', 'Image decoding is unavailable'));
+  }
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    let settled = false;
+    const cleanup = () => {
+      image.onload = null;
+      image.onerror = null;
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = handler => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      handler();
+    };
+    const onAbort = () => finish(() => {
+      image.src = '';
+      reject(abortError());
+    });
+    image.onload = () => finish(resolve);
+    image.onerror = () => finish(() => reject(new PlatformError(
+      'image_decode_failed',
+      'This image could not be displayed.',
+    )));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    image.decoding = 'async';
+    image.src = url;
+    if (signal?.aborted) onAbort();
+  });
+}
+
 export function classifyDocument(documentRef) {
   const declared = String(documentRef?.mimeType ?? '').toLowerCase();
   const url = String(documentRef?.url ?? '');
@@ -298,6 +366,8 @@ function conciseDocumentError(error) {
     document_unavailable: 'This document could not be loaded.',
     document_worker_timeout: 'This document worker could not start.',
     malformed: 'This document could not be read.',
+    image_decode_failed: 'This image could not be displayed.',
+    image_decode_unavailable: 'This image could not be displayed.',
   };
   return { code, message: messages[code] ?? 'This document could not be opened.', action: 'open-original' };
 }
