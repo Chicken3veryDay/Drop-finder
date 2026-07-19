@@ -1,0 +1,39 @@
+name: Temporary PR 345 Typecheck Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'fix/issue-55-active-offer-filter-order'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - working-directory: web
+        run: npm ci
+      - name: Capture typecheck
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck > /tmp/pr345-typecheck.log 2>&1
+          printf '%s\n' "$?" > /tmp/pr345-typecheck.status
+          cat /tmp/pr345-typecheck.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr345-typecheck
+          path: |
+            /tmp/pr345-typecheck.log
+            /tmp/pr345-typecheck.status
+          if-no-files-found: error
+          retention-days: 7
