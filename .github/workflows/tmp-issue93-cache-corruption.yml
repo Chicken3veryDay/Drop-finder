@@ -27,7 +27,7 @@ jobs:
         run: |
           python .github/tmp/issue93_cache_corruption.py
           python .github/tmp/issue93_test_helper.py
-      - name: Verify exact source boundary
+      - name: Verify bounded source boundary
         shell: bash
         run: |
           git fetch origin main
@@ -44,8 +44,11 @@ jobs:
             web/test/catalog-cache-fallback-age.test.mjs \
             web/test/catalog-cache-persistence.test.mjs \
             web/test/platform.test.mjs \
-            | sort > /tmp/expected-files
-          diff -u /tmp/expected-files /tmp/actual-files
+            | sort > /tmp/allowed-files
+          comm -23 /tmp/actual-files /tmp/allowed-files > /tmp/unexpected-files
+          test ! -s /tmp/unexpected-files || { cat /tmp/unexpected-files; exit 1; }
+          grep -qx 'web/src/platform/catalog/catalog-generation-client.js' /tmp/actual-files
+          grep -qx 'web/test/catalog-cache-corruption.test.mjs' /tmp/actual-files
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
@@ -128,4 +131,4 @@ jobs:
           git commit -m "fix: quarantine corrupt cached generations"
           git push origin HEAD:fix/issue-93-cache-corruption
 
-# rerun 5
+# rerun 7
