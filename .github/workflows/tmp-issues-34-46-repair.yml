@@ -24,10 +24,27 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Apply query and pagination lifecycle repair
+        shell: bash
         run: |
-          python .github/tmp/issues_34_46_query_pagination_repair.py
-          python .github/tmp/issues_34_46_legacy_test_repair.py
-          python .github/tmp/issues_34_46_compatibility_repair.py
+          set +e
+          {
+            python .github/tmp/issues_34_46_query_pagination_repair.py
+            python .github/tmp/issues_34_46_legacy_test_repair.py
+            python .github/tmp/issues_34_46_compatibility_repair.py
+          } > /tmp/issues-34-46-apply.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issues-34-46-apply.status
+          cat /tmp/issues-34-46-apply.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issues-34-46-apply
+          path: |
+            /tmp/issues-34-46-apply.log
+            /tmp/issues-34-46-apply.status
+      - name: Stop on transformation failure
+        run: test "$(cat /tmp/issues-34-46-apply.status)" = 0
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
