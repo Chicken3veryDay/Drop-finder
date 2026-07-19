@@ -42,6 +42,7 @@ class VerificationTests(unittest.TestCase):
         mutate(payload)
         detail_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         entry["sha256"] = hashlib.sha256(detail_path.read_bytes()).hexdigest()
+        entry["bytes"] = detail_path.stat().st_size
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def test_valid_builder_output_verifies(self) -> None:

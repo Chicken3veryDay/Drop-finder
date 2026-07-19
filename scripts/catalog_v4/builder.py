@@ -41,6 +41,10 @@ from .normalization import (
 )
 
 TOTAL_THC_FACTOR = Decimal("0.877")
+MAX_MANIFEST_BYTES=512*1024
+MAX_INDEX_BYTES=24*1024*1024
+MAX_DETAIL_BYTES=2*1024*1024
+MAX_PHYSICAL_DETAIL_SHARDS=4096
 
 
 @dataclass(frozen=True)
@@ -402,6 +406,29 @@ def _resolve_duplicate_product_urls(products: list[dict[str, Any]]) -> list[dict
     return resolved
 
 
+def _detail_record(p):
+ return {k:p[k] for k in ("product_id","vendor_id","strain_name","source_title","canonical_product_url","image_url","effects","grow_environment","total_thc","lineage_provenance","effects_provenance","environment_provenance","rating_provenance","variants","provenance")}
+
+def _detail_payload(shard,rows,generation_id,stamp):
+ rows=sorted(rows,key=lambda r:r["product_id"])
+ return {"schema_version":DETAIL_SCHEMA_VERSION,"generation_id":generation_id,"generated_at":stamp,"shard":shard,"product_count":len(rows),"products":rows}
+
+def _partition_details(rows,minimum,generation_id,stamp):
+ buckets=[[] for _ in range(minimum)];segments={i:[i] for i in range(minimum)};assignment={}
+ for row in sorted(rows,key=lambda r:r["product_id"]):
+  preferred=int(row["product_id"][:8],16)%minimum;shard=segments[preferred][-1];candidate=[*buckets[shard],row]
+  if len(_json_bytes(_detail_payload(shard,candidate,generation_id,stamp)))<=MAX_DETAIL_BYTES:
+   buckets[shard]=candidate;assignment[row["product_id"]]=shard;continue
+  shard=len(buckets)
+  if shard>=MAX_PHYSICAL_DETAIL_SHARDS:raise ValueError("detail shard count exceeds deterministic publication limit")
+  encoded=_json_bytes(_detail_payload(shard,[row],generation_id,stamp))
+  if len(encoded)>MAX_DETAIL_BYTES:raise ValueError(f"single detail product {row['product_id']} exceeds {MAX_DETAIL_BYTES} byte browser limit ({len(encoded)} bytes)")
+  buckets.append([row]);segments[preferred].append(shard);assignment[row["product_id"]]=shard
+ encoded={i:_json_bytes(_detail_payload(i,b,generation_id,stamp)) for i,b in enumerate(buckets)}
+ if any(len(v)>MAX_DETAIL_BYTES for v in encoded.values()):raise ValueError("detail shard byte budget exceeded after partitioning")
+ return buckets,encoded,assignment
+
+
 class CatalogBuilder:
     def __init__(self, *, detail_shards: int = 16):
         if not 1 <= detail_shards <= 256:
@@ -694,69 +721,19 @@ class CatalogBuilder:
         products = _resolve_duplicate_product_urls(products)
         products.sort(key=lambda row: (row["vendor_name"].casefold(), row["strain_name"].casefold(), row["product_id"]))
         vendor_payload = self._vendors(products, vendor_profiles)
-        generation_basis = {
-            "schema_version": SCHEMA_VERSION,
-            "products": products,
-            "vendors": vendor_payload["vendors"],
-            "detail_shards": self.detail_shards,
-        }
-        generation_id = _sha(_canonical_bytes(generation_basis))[:32]
         stamp = _timestamp(generated_at)
-
-        index_products: list[dict[str, Any]] = []
-        detail_shards: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        detail_products = [_detail_record(product) for product in products]
+        preview, _, _ = _partition_details(detail_products, self.detail_shards, "0" * 32, stamp)
+        effective_detail_shards = len(preview)
+        generation_basis = {"schema_version": SCHEMA_VERSION, "products": products, "vendors": vendor_payload["vendors"], "detail_shards": effective_detail_shards, "detail_byte_limit": MAX_DETAIL_BYTES}
+        generation_id = _sha(_canonical_bytes(generation_basis))[:32]
+        detail_buckets, detail_bytes, detail_assignment = _partition_details(detail_products, self.detail_shards, generation_id, stamp)
+        if len(detail_buckets) != effective_detail_shards: raise ValueError("detail shard partition changed after generation identity binding")
+        index_products = []
         for product in products:
-            shard = int(product["product_id"][:8], 16) % self.detail_shards
+            shard = detail_assignment[product["product_id"]]
             default_variant = select_active_variant(product["variants"])
-            index_products.append(
-                {
-                    "product_id": product["product_id"],
-                    "default_variant_id": default_variant["variant_id"] if default_variant else None,
-                    "detail_shard": shard,
-                    "vendor_id": product["vendor_id"],
-                    "vendor_name": product["vendor_name"],
-                    "vendor_favicon_url": product["vendor_favicon_url"],
-                    "strain_name": product["strain_name"],
-                    "lineage": product["lineage"],
-                    "total_thc_display_percent": product["total_thc"]["display_percent"],
-                    "rating": product["rating"],
-                    "review_count": product["review_count"],
-                    "search": product["search"],
-                    "variants": [
-                        {
-                            "variant_id": variant["variant_id"],
-                            "grams": variant["grams"],
-                            "source_weight_label": variant["source_weight_label"],
-                            "current_price": variant["current_price"],
-                            "original_price": variant["original_price"],
-                            "discount_percent": variant["discount_percent"],
-                            "price_per_gram": variant["price_per_gram"],
-                            "product_url": variant["variant_url"],
-                            "in_stock": True,
-                        }
-                        for variant in product["variants"]
-                    ],
-                }
-            )
-            detail_shards[shard].append(
-                {
-                    "product_id": product["product_id"],
-                    "vendor_id": product["vendor_id"],
-                    "strain_name": product["strain_name"],
-                    "source_title": product["source_title"],
-                    "canonical_product_url": product["canonical_product_url"],
-                    "image_url": product["image_url"],
-                    "effects": product["effects"],
-                    "grow_environment": product["grow_environment"],
-                    "total_thc": product["total_thc"],
-                    "lineage_provenance": product["lineage_provenance"],
-                    "effects_provenance": product["effects_provenance"],
-                    "environment_provenance": product["environment_provenance"],
-                    "rating_provenance": product["rating_provenance"],
-                    "variants": product["variants"],
-                    "provenance": product["provenance"],
-                }
-            )
+            index_products.append({"product_id":product["product_id"],"default_variant_id":default_variant["variant_id"] if default_variant else None,"detail_shard":shard,"vendor_id":product["vendor_id"],"vendor_name":product["vendor_name"],"vendor_favicon_url":product["vendor_favicon_url"],"strain_name":product["strain_name"],"lineage":product["lineage"],"total_thc_display_percent":product["total_thc"]["display_percent"],"rating":product["rating"],"review_count":product["review_count"],"search":product["search"],"variants":[{"variant_id":v["variant_id"],"grams":v["grams"],"source_weight_label":v["source_weight_label"],"current_price":v["current_price"],"original_price":v["original_price"],"discount_percent":v["discount_percent"],"price_per_gram":v["price_per_gram"],"product_url":v["variant_url"],"in_stock":True} for v in product["variants"]]})
 
         index = {
             "schema_version": INDEX_SCHEMA_VERSION,
@@ -794,19 +771,10 @@ class CatalogBuilder:
             "catalog-v4/vendors.json": _json_bytes(vendors),
             "catalog-v4/rejections.json": _json_bytes(rejection_payload),
         }
-        detail_entries: list[dict[str, Any]] = []
-        for shard in range(self.detail_shards):
-            payload = {
-                "schema_version": DETAIL_SCHEMA_VERSION,
-                "generation_id": generation_id,
-                "generated_at": stamp,
-                "shard": shard,
-                "product_count": len(detail_shards.get(shard, [])),
-                "products": sorted(detail_shards.get(shard, []), key=lambda row: row["product_id"]),
-            }
-            path = f"catalog-v4/details/{shard:03d}.json"
-            files[path] = _json_bytes(payload)
-            detail_entries.append({"path": f"data/{path}", "sha256": _sha(files[path]), "product_count": payload["product_count"]})
+        detail_entries = []
+        for shard, payload_bytes in sorted(detail_bytes.items()):
+            path=f"catalog-v4/details/{shard:03d}.json";files[path]=payload_bytes
+            detail_entries.append({"path":f"data/{path}","sha256":_sha(payload_bytes),"bytes":len(payload_bytes),"product_count":len(detail_buckets[shard])})
 
         manifest = {
             "schema_version": MANIFEST_SCHEMA_VERSION,
@@ -819,24 +787,30 @@ class CatalogBuilder:
             "compact_index": {
                 "path": "data/catalog-v4/index.json",
                 "sha256": _sha(files["catalog-v4/index.json"]),
+                "bytes": len(files["catalog-v4/index.json"]),
             },
             "product_detail_shards": detail_entries,
             "vendor_profiles": {
                 "path": "data/catalog-v4/vendors.json",
                 "sha256": _sha(files["catalog-v4/vendors.json"]),
+                "bytes": len(files["catalog-v4/vendors.json"]),
             },
             "rejections": {
                 "path": "data/catalog-v4/rejections.json",
                 "sha256": _sha(files["catalog-v4/rejections.json"]),
+                "bytes": len(files["catalog-v4/rejections.json"]),
                 "count": len(rejections),
             },
+            "asset_limits":{"schema_version":"dropfinder-asset-limits-v1","manifest_bytes":MAX_MANIFEST_BYTES,"compact_index_bytes":MAX_INDEX_BYTES,"detail_shard_bytes":MAX_DETAIL_BYTES},
             "compatibility": {
                 "legacy_catalog_path": "data/catalog.json",
                 "legacy_schema": "dropfinder-cloud-catalog-v3",
                 "status": "read_only_rollback_input",
             },
         }
+        if len(files["catalog-v4/index.json"])>MAX_INDEX_BYTES:raise ValueError("compact index exceeds browser byte limit")
         files["catalog-v4/manifest.json"] = _json_bytes(manifest)
+        if len(files["catalog-v4/manifest.json"])>MAX_MANIFEST_BYTES:raise ValueError("manifest exceeds browser byte limit")
         return BuildResult(
             generation_id=generation_id,
             product_count=len(products),
