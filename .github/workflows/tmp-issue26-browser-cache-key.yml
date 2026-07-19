@@ -44,12 +44,32 @@ jobs:
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
-      - name: Validate focused cache contracts
+      - name: Capture focused cache contracts
         working-directory: web
+        shell: bash
         run: |
-          node --test test/service-worker.test.mjs test/service-worker-document-bound.test.mjs
-          npx vitest run src/features/integration/register-marketplace-props.document-cache.test.ts
-          npm run typecheck
+          set +e
+          {
+            node --test test/service-worker.test.mjs test/service-worker-document-bound.test.mjs
+            npx vitest run src/features/integration/register-marketplace-props.document-cache.test.ts
+            npm run typecheck
+          } > /tmp/issue26-cache-key.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue26-cache-key.status
+          cat /tmp/issue26-cache-key.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue26-cache-key
+          path: |
+            /tmp/issue26-cache-key.log
+            /tmp/issue26-cache-key.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on focused cache failure
+        shell: bash
+        run: test "$(cat /tmp/issue26-cache-key.status)" -eq 0
       - name: Validate integrated browser matrix
         working-directory: web
         run: |
