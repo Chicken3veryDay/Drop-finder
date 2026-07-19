@@ -108,6 +108,9 @@ class MappingDecision:
     score: int
     reasons: tuple[str, ...]
     ambiguous: bool = False
+    vendor_id: str = ""
+    variant_id: str = ""
+    document_kind: DocumentKind = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
