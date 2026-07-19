@@ -423,7 +423,12 @@ def self_test(root: Path) -> int:
         product_id="vape", primary_type=CANNABIS_VAPE,
         name="THCA Disposable Vape 1mL", url="https://example.test/products/vape",
         evidence={"explicit_cannabis": True, "explicit_vape": True},
-        volume_ml=1, price_per_ml=20,
+        volume_ml=1,
+        quantity_value=1,
+        quantity_unit="ml",
+        comparison_metric="price_per_ml",
+        comparison_price=20,
+        price_per_ml=20,
     )
     mushroom = _fixture(
         product_id="mushroom", primary_type=PSILOCYBIN_MUSHROOM,
