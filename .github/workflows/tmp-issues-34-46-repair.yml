@@ -27,6 +27,7 @@ jobs:
         run: |
           python .github/tmp/issues_34_46_query_pagination_repair.py
           python .github/tmp/issues_34_46_legacy_test_repair.py
+          python .github/tmp/issues_34_46_compatibility_repair.py
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
@@ -95,7 +96,9 @@ jobs:
             git diff --name-only HEAD
           } | grep -v '^\.github/' | sort -u > /tmp/actual-files
           printf '%s\n' \
+            web/src/features/integration/marketplace-integration.test.ts \
             web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.query-path.test.tsx \
             web/src/features/marketplace/MarketplaceFeature.tsx \
             web/src/features/marketplace/marketplace-core.ts \
             web/src/features/marketplace/marketplace-pagination.ts \
@@ -114,9 +117,12 @@ jobs:
           git rm \
             .github/workflows/tmp-issues-34-46-repair.yml \
             .github/tmp/issues_34_46_query_pagination_repair.py \
-            .github/tmp/issues_34_46_legacy_test_repair.py
+            .github/tmp/issues_34_46_legacy_test_repair.py \
+            .github/tmp/issues_34_46_compatibility_repair.py
           git add \
+            web/src/features/integration/marketplace-integration.test.ts \
             web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.query-path.test.tsx \
             web/src/features/marketplace/MarketplaceFeature.tsx \
             web/src/features/marketplace/marketplace-core.ts \
             web/src/features/marketplace/marketplace-pagination.ts \
