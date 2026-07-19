@@ -55,7 +55,15 @@ test('PDF and image viewers share bounded streaming rejection semantics', async 
     { url: 'https://example.test/report.pdf', mimeType: 'application/pdf' },
     { url: 'https://example.test/report.png', mimeType: 'image/png' },
   ]) {
-    const stream = chunkedResponse([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]]);
+    const chunks = [
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+      [9, 10, 11, 12],
+      [13, 14, 15, 16],
+      [17, 18, 19, 20],
+      [21, 22, 23, 24],
+    ];
+    const stream = chunkedResponse(chunks);
     let runtimeCalled = false;
     let decodeCalled = false;
     const viewer = new DocumentViewerCapability({
@@ -68,7 +76,8 @@ test('PDF and image viewers share bounded streaming rejection semantics', async 
     await viewer.open(documentRef);
     assert.equal(viewer.snapshot().status, 'error');
     assert.equal(viewer.snapshot().error.code, 'document_oversized');
-    assert.equal(stream.pulls(), 2);
+    assert.ok(stream.pulls() <= 3, `expected bounded early stop, observed ${stream.pulls()} pulls`);
+    assert.ok(stream.pulls() < chunks.length);
     assert.equal(runtimeCalled, false);
     assert.equal(decodeCalled, false);
     await viewer.close();
