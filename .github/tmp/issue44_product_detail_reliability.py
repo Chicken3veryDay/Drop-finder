@@ -140,3 +140,12 @@ replace_once(
         "status": public_status,
 ''',
 )
+replace_once(
+    merge,
+    '''        assert source["status"] == "healthy"
+        assert source["routes_attempted"] == 2
+''',
+    '''        assert source["status"] == "degraded"
+        assert source["routes_attempted"] == 2
+''',
+)
