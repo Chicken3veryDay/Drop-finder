@@ -25,7 +25,54 @@ jobs:
         shell: bash
         run: |
           set +e
-          python .github/tmp/issue61_71_jsonld_completeness.py > /tmp/issue61-71-transform.log 2>&1
+          python - <<'PY' > /tmp/issue61-71-transform.log 2>&1
+          from pathlib import Path
+
+          helper = Path('.github/tmp/issue61_71_jsonld_completeness.py')
+          helper_text = helper.read_text(encoding='utf-8')
+          scan_edit = helper_text.find('old = """')
+          write_call = helper_text.find('path.write_text(text, encoding="utf-8")', scan_edit)
+          if scan_edit < 0 or write_call < 0:
+              raise SystemExit('transformation helper scan markers are missing')
+          helper.write_text(
+              helper_text[:scan_edit]
+              + 'path.write_text(text, encoding="utf-8")\n',
+              encoding='utf-8',
+          )
+
+          namespace = {'__name__': '__main__'}
+          exec(compile(helper.read_text(encoding='utf-8'), str(helper), 'exec'), namespace)
+
+          source = Path('scripts/cloud_scan.py')
+          source_text = source.read_text(encoding='utf-8')
+          start = source_text.find('def scan(source):')
+          end = source_text.find('def write(path,payload):', start)
+          if start < 0 or end < 0:
+              raise SystemExit(f'scan function markers missing: start={start}, end={end}')
+          replacement = '''def scan(source):
+           sid,vendor,routes=source;started=time.monotonic();attempts=[]
+           for idx,route in enumerate(routes,1):
+            rr={'route_id':f'{sid}-{idx}','url':route[1],'source_type':route[0]};t=time.monotonic()
+            try:
+             payload,ctype,status=fetch(route[1]);rr.update(http_status=status,content_type=ctype)
+             if route[0]=='shopify':rows=shopify(payload,sid,vendor,route);route_diagnostics={}
+             elif route[0]=='woo':rows,route_diagnostics=woo(payload,sid,vendor,route)
+             else:
+              route_diagnostics={};rows=html_with_details(payload,sid,vendor,route,route_diagnostics)
+             rr.update(route_diagnostics);health_reason_codes=[]
+             if rr.get('variation_failures'):health_reason_codes.append('woocommerce_variation_incomplete')
+             if rr.get('detail_failures'):health_reason_codes.append('html_detail_discovery_incomplete')
+             route_status='degraded' if health_reason_codes else 'healthy' if rows else 'empty';rr.update(status=route_status,health_reason_codes=health_reason_codes,products=len(rows),duration_seconds=round(time.monotonic()-t,3));attempts.append(rr)
+             if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':route_status,'health_reason_codes':health_reason_codes,'products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}
+            except urllib.error.HTTPError as e:rr.update(status='http_error',http_status=e.code,error=f'HTTP {e.code}')
+            except Exception as e:rr.update(status='error',error=f'{type(e).__name__}: {text(e)[:220]}')
+            if not attempts or attempts[-1] is not rr:
+             rr['duration_seconds']=round(time.monotonic()-t,3);attempts.append(rr)
+           return [],{'source_id':sid,'name':vendor,'enabled':True,'status':'degraded','products':0,'routes_attempted':len(attempts),'active_route':'','route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}
+          '''
+          normalized = '\n'.join(line[10:] if line.startswith('          ') else line for line in replacement.splitlines()) + '\n'
+          source.write_text(source_text[:start] + normalized + source_text[end:], encoding='utf-8')
+          PY
           printf '%s\n' "$?" > /tmp/issue61-71-transform.status
           cat /tmp/issue61-71-transform.log
           exit 0
