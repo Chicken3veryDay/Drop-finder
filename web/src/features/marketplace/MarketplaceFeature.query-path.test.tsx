@@ -75,6 +75,47 @@ describe("MarketplaceFeature query execution", () => {
     expect(synchronousQuery).not.toHaveBeenCalled();
   });
 
+  it("does not present stale rows after a replacement query fails and recovers on retry", async () => {
+    let invocation = 0;
+    const asynchronousQuery = vi.fn<MarketplaceAsyncQueryCapability["query"]>(async (
+      _products,
+      _filters,
+      _sort,
+      options,
+    ) => {
+      invocation += 1;
+      if (invocation === 2) throw new Error("Marketplace worker crashed");
+      return {
+        queryKey: options.queryKey,
+        offset: options.offset,
+        rows: [row],
+        total: 1,
+        nextOffset: null,
+      };
+    });
+    const user = userEvent.setup();
+
+    render(
+      <MarketplaceFeature
+        products={[product]}
+        asyncQueryEngine={{ query: asynchronousQuery }}
+      />,
+    );
+
+    expect(await screen.findByRole("list", { name: "1 marketplace results" })).toBeInTheDocument();
+    await user.type(screen.getByRole("searchbox", { name: "Search vendor or strain" }), "x");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Marketplace worker crashed");
+    expect(screen.queryByRole("list", { name: "1 marketplace results" })).not.toBeInTheDocument();
+    expect(screen.getByText("0 results")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("list", { name: "1 marketplace results" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(asynchronousQuery).toHaveBeenCalledTimes(3);
+  });
+
   it("does not restart page zero when only detail-enrichment fields change", async () => {
     const asynchronousQuery = vi.fn<MarketplaceAsyncQueryCapability["query"]>(async (
       products,
