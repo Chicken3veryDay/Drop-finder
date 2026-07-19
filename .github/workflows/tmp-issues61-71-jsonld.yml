@@ -1,0 +1,104 @@
+name: Temporary Issues 61 71 JSON-LD Coverage
+
+on:
+  pull_request:
+    branches:
+      - fix/issues-61-71-jsonld-coverage
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issues61-71-jsonld'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issues-61-71-jsonld-coverage
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply package offers and complementary discovery
+        run: |
+          python .github/tmp/issue61_jsonld_offers.py
+          python .github/tmp/issue71_complementary_discovery.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/cloud_scan.py \
+            tests/test_jsonld_offer_and_discovery.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Capture focused and complete retrieval validation
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts tests
+            python -m unittest -v tests.test_jsonld_offer_and_discovery
+            python scripts/cloud_scan.py --self-test
+            python scripts/autonomous_worker.py --self-test
+            python scripts/autonomous_worker_v2.py --self-test
+            python scripts/autonomous_worker_v4.py --self-test
+            python -m unittest discover -s tests -p 'test_*.py' -v
+            python -m scripts.catalog_v4.selftest
+            python -m unittest discover -s tests/catalog_v4 -v
+          } > /tmp/jsonld-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/jsonld-validation.status
+          tail -300 /tmp/jsonld-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jsonld-validation
+          path: |
+            /tmp/jsonld-validation.log
+            /tmp/jsonld-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        run: test "$(cat /tmp/jsonld-validation.status)" -eq 0
+      - name: Validate degraded route status for failed complementary discovery
+        run: |
+          python - <<'PY'
+          import json
+          from scripts import cloud_scan
+          route=('html','https://example.test/collections/thca-flower','thca_flower')
+          page="<script type='application/ld+json'>"+json.dumps({'@type':'Product','sku':'blue','name':'Blue THCA Flower 3.5g','url':'https://example.test/products/blue','offers':{'@type':'Offer','price':'25','availability':'https://schema.org/InStock'}})+"</script><a href='/products/missing-thca-flower'>Missing THCA Flower</a>"
+          original_sources,original_fetch=cloud_scan.SOURCES,cloud_scan.fetch
+          def fetch(target):
+              if target==route[1]:return page,'text/html',200
+              raise TimeoutError('timeout')
+          cloud_scan.SOURCES=[('fixture','Fixture',[route])];cloud_scan.fetch=fetch
+          try:
+              rows,status=cloud_scan.scan(cloud_scan.SOURCES[0])
+              assert len(rows)==1,rows
+              assert status['status']=='degraded',status
+              assert status['health_reason_codes']==['html_complementary_discovery_incomplete'],status
+              assert status['route_results'][0]['detail_failures']==1,status
+          finally:
+              cloud_scan.SOURCES=original_sources;cloud_scan.fetch=original_fetch
+          PY
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issues61-71-jsonld.yml \
+            .github/tmp/issue61_jsonld_offers.py \
+            .github/tmp/issue71_complementary_discovery.py
+          git add scripts/cloud_scan.py tests/test_jsonld_offer_and_discovery.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: preserve JSON-LD offers and complementary discovery"
+          git push origin HEAD:fix/issues-61-71-jsonld-coverage
