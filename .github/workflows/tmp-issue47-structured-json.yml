@@ -1,0 +1,90 @@
+name: Temporary Issue 47 Structured JSON Repair
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-47-structured-json-precedence
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue47-structured-json'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-47-structured-json-precedence
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply structured JSON precedence repair
+        run: python .github/tmp/issue47_structured_json_precedence.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/vendor_adapters/parsers.py \
+            tests/test_vendor_structured_json_precedence.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Validate focused and complete Python contracts
+        run: |
+          python -m compileall -q scripts/vendor_adapters tests
+          python -m unittest -v tests.test_vendor_structured_json_precedence tests.test_vendor_adapters
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python -m scripts.vendor_adapters.cli verify
+          python -m scripts.catalog_v4.selftest
+          python -m unittest discover -s tests/catalog_v4 -v
+      - name: Exercise JSON parse CLI path
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = {
+              'title': 'Blue Dream THCA Flower 30%',
+              'results': [{'analyte': 'THCA', 'result': 27.45, 'unit': '%'}],
+          }
+          Path('/tmp/issue47.json').write_text(json.dumps(payload))
+          candidate = {
+              'vendor_id': 'example',
+              'url': 'https://cdn.example.com/blue-dream.json',
+              'document_kind': 'coa',
+              'product_id': 'p1',
+              'variant_id': 'v-7g',
+          }
+          Path('/tmp/issue47-candidate.json').write_text(json.dumps(candidate))
+          PY
+          python -m scripts.vendor_adapters.cli parse \
+            --candidate /tmp/issue47-candidate.json \
+            --document /tmp/issue47.json \
+            --content-type application/json \
+            --output /tmp/issue47-result.json
+          python - <<'PY'
+          import json
+          row=json.load(open('/tmp/issue47-result.json'))
+          assert row['cannabinoids']['thca']==27.45, row
+          assert row['confidence']=='high', row
+          assert row['parser_id']=='structured_json_v2', row
+          assert row['field_provenance']['cannabinoids.thca']['source_location']=='json_path:$.results[0].result', row
+          PY
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue47-structured-json.yml \
+            .github/tmp/issue47_structured_json_precedence.py
+          git add scripts/vendor_adapters/parsers.py tests/test_vendor_structured_json_precedence.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: prioritize structured JSON lab result rows"
+          git push origin HEAD:fix/issue-47-structured-json-precedence
