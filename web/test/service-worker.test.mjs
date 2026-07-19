@@ -73,7 +73,7 @@ async function createRuntime() {
     clients: { claim: async () => {}, matchAll: async () => [{ postMessage: message => messages.push(message) }] },
     addEventListener: (name, listener) => listeners.set(name, listener),
   };
-  const context = vm.createContext({ self, caches, fetch: fetcher, Request, Response, Headers, URL, DOMException, console, setTimeout, clearTimeout });
+  const context = vm.createContext({ self, caches, fetch: fetcher, Request, Response, Headers, ReadableStream, URL, DOMException, console, setTimeout, clearTimeout });
   const source = await readFile(new URL('../../cloud_pages/sw.js', import.meta.url), 'utf8');
   vm.runInContext(source, context, { filename: 'cloud_pages/sw.js' });
 
@@ -261,6 +261,95 @@ test('navigation returns concise offline response when network and cache are una
   const response = await runtime.dispatch('fetch', { request: navigationRequest('offline') });
   assert.equal(response.status, 503);
   assert.equal(await response.text(), 'Offline');
+});
+
+test('explicitly opened same-origin and cross-origin documents reopen offline from the dedicated cache', async () => {
+  const runtime = await createRuntime();
+  const urls = [
+    `${BASE}opened-report.pdf`,
+    'https://documents.example/opened-report.pdf',
+  ];
+
+  for (const url of urls) {
+    runtime.setResponse(url, new Response('bounded-document-body', {
+      headers: { 'content-type': 'application/pdf', 'cache-control': 'public, max-age=60' },
+    }));
+    await runtime.dispatch('message', {
+      data: { type: 'cache-document', document: { url, mimeType: 'application/pdf' } },
+      source: { postMessage() {} },
+    });
+
+    const documentCacheName = (await runtime.caches.keys())
+      .find(name => name.startsWith('dropfinder-opened-documents-v2-'));
+    assert.ok(documentCacheName);
+    const documentCache = await runtime.caches.open(documentCacheName);
+    assert.ok(await documentCache.match(url));
+
+    runtime.setOffline(true);
+    const response = await runtime.dispatch('fetch', { request: new Request(url) });
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'bounded-document-body');
+    runtime.setOffline(false);
+  }
+});
+
+test('ineligible opened documents do not become readable offline', async () => {
+  const runtime = await createRuntime();
+  const url = 'https://documents.example/private-report.pdf';
+  runtime.setResponse(url, new Response('private-document', {
+    headers: { 'content-type': 'application/pdf', 'cache-control': 'private, no-store' },
+  }));
+  await runtime.dispatch('message', {
+    data: { type: 'cache-document', document: { url, mimeType: 'application/pdf' } },
+    source: { postMessage() {} },
+  });
+
+  const documentCacheName = (await runtime.caches.keys())
+    .find(name => name.startsWith('dropfinder-opened-documents-v2-'));
+  if (documentCacheName) {
+    const documentCache = await runtime.caches.open(documentCacheName);
+    assert.equal(await documentCache.match(url), undefined);
+  }
+
+  runtime.setOffline(true);
+  const response = await runtime.dispatch('fetch', { request: new Request(url) });
+  assert.equal(response.status, 503);
+});
+
+test('service worker leaves Vite and source modules to the development server', async () => {
+  const runtime = await createRuntime();
+  for (const path of [
+    '/@vite/client',
+    '/@react-refresh',
+    '/@id/__x00__virtual:module',
+    '/@fs/tmp/source.js',
+    '/src/main.tsx',
+    '/node_modules/example/index.js?v=one',
+  ]) {
+    runtime.resetFetches();
+    const handled = await runtime.dispatch('fetch', { request: new Request(`${ORIGIN}${path}`) });
+    assert.equal(handled, undefined, path);
+    assert.deepEqual(runtime.fetches, [], path);
+  }
+});
+
+test('application cache keeps query-versioned mutable module identities distinct', async () => {
+  const runtime = await createRuntime();
+  const firstUrl = `${BASE}module.js?v=one`;
+  const secondUrl = `${BASE}module.js?v=two`;
+  runtime.setResponse(firstUrl, new Response('export default "one"', { headers: { 'content-type': 'text/javascript' } }));
+  runtime.setResponse(secondUrl, new Response('export default "two"', { headers: { 'content-type': 'text/javascript' } }));
+
+  const first = await runtime.dispatch('fetch', { request: new Request(firstUrl) });
+  assert.equal(await first.text(), 'export default "one"');
+  const second = await runtime.dispatch('fetch', { request: new Request(secondUrl) });
+  assert.equal(await second.text(), 'export default "two"');
+
+  const appCacheName = (await runtime.caches.keys()).find(name => name.startsWith('dropfinder-app-'));
+  assert.ok(appCacheName);
+  const appCache = await runtime.caches.open(appCacheName);
+  assert.equal(await (await appCache.match(firstUrl)).text(), 'export default "one"');
+  assert.equal(await (await appCache.match(secondUrl)).text(), 'export default "two"');
 });
 
 function navigationRequest(path) {
