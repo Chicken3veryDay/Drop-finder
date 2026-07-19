@@ -20,19 +20,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Apply staged reconciliation
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          workflow = Path('.github/workflows/tmp-variant-reconciliation-current-main.yml').read_text(encoding='utf-8')
-          marker = "          python - <<'PY'\n"
-          start = workflow.index(marker) + len(marker)
-          end = workflow.index("\n          PY\n", start)
-          raw = workflow[start:end]
-          code = "\n".join(line[10:] if line.startswith("          ") else line for line in raw.splitlines())
-          exec(compile(code, 'variant-reconciliation-current-main', 'exec'))
-          PY
+        run: python .github/tmp/variant_reconciliation_current_main.py
       - name: Validate exact branch
         run: |
           python -m compileall -q scripts/catalog_v4 tests/catalog_v4
@@ -40,7 +28,7 @@ jobs:
       - name: Commit clean implementation
         shell: bash
         run: |
-          rm -f .github/workflows/tmp-variant-reconciliation-current-main.yml .github/workflows/tmp-variant-reconciliation-push.yml .github/.variant-reconciliation-current-main-trigger
+          rm -f .github/workflows/tmp-variant-reconciliation-current-main.yml .github/workflows/tmp-variant-reconciliation-push.yml .github/.variant-reconciliation-current-main-trigger .github/tmp/variant_reconciliation_current_main.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
