@@ -13,6 +13,7 @@ function generationFixture(generationId = 'g1') {
   const manifest = {
     schema_version: 4,
     generation_id: generationId,
+    generated_at: new Date().toISOString(),
     index: {
       url: 'https://example.test/index.json',
       bytes: index.length,

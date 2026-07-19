@@ -5,13 +5,15 @@ const DEFAULTS = Object.freeze({
   manifestUrl: './data/catalog-v4/manifest.json',
   schemaVersion: null,
   staleMs: 5 * 60_000,
+  maxFallbackAgeMs: 30 * 60_000,
   maxRetries: 2,
   maxDetailShards: 64,
   maxIndexBytes: 24 * 1024 * 1024,
   maxDetailBytes: 2 * 1024 * 1024,
 });
 
-const CACHE_RECORD_SCHEMA = 'dropfinder-generation-cache-v2';
+const CACHE_RECORD_SCHEMA = 'dropfinder-generation-cache-v3';
+const MAX_FUTURE_CACHE_SKEW_MS = 60_000;
 
 /**
  * Atomic static-generation loader. It never publishes a generation until the
@@ -94,7 +96,15 @@ export class CatalogGenerationClient {
         if (!allowCachedFallback || error?.name === 'AbortError') throw error;
         const cached = await this.cache.getLastComplete();
         if (!cached) throw error;
-        return Object.freeze({ ...cached, source: 'cache-fallback' });
+        const accepted = acceptCachedGeneration(cached, this.options.maxFallbackAgeMs);
+        if (!accepted) {
+          throw new PlatformError(
+            'cache_fallback_stale',
+            'Cached catalog is too old or has invalid freshness metadata',
+            error,
+          );
+        }
+        return Object.freeze({ ...accepted, source: 'cache-fallback' });
       }
     };
     this.pending = run().finally(() => {
@@ -299,10 +309,10 @@ export class CatalogGenerationClient {
 export class BrowserGenerationCache {
   constructor(options = {}) {
     this.cacheStorage = options.cacheStorage ?? globalThis.caches;
-    this.cacheName = options.cacheName ?? 'dropfinder-client-generation-v2';
+    this.cacheName = options.cacheName ?? 'dropfinder-client-generation-v3';
     this.deploymentUrl = canonicalDeploymentUrl(options.deploymentUrl ?? locationHref());
     this.deploymentKey = this.deploymentUrl;
-    this.key = new URL('./__dropfinder__/last-complete-v2.json', this.deploymentUrl).href;
+    this.key = new URL('./__dropfinder__/last-complete-v3.json', this.deploymentUrl).href;
   }
 
   owns(value) {
@@ -321,7 +331,8 @@ export class BrowserGenerationCache {
       if (record?.schemaVersion !== CACHE_RECORD_SCHEMA) return null;
       if (record.deploymentKey !== this.deploymentKey) return null;
       if (!this.owns(record.generation)) return null;
-      return Object.freeze(record.generation);
+      if (!Number.isFinite(record.cachedAt)) return null;
+      return Object.freeze({ ...record.generation, cachedAt: record.cachedAt });
     } catch { return null; }
   }
 
@@ -331,6 +342,7 @@ export class BrowserGenerationCache {
     const record = {
       schemaVersion: CACHE_RECORD_SCHEMA,
       deploymentKey: this.deploymentKey,
+      cachedAt: Date.now(),
       generation: value,
     };
     await cache.put(
@@ -349,7 +361,29 @@ export function createDefaultGenerationCache(options = {}) {
 export class MemoryGenerationCache {
   constructor() { this.complete = null; }
   async getLastComplete() { return this.complete; }
-  async putComplete(value) { this.complete = value; }
+  async putComplete(value) {
+    this.complete = Object.freeze({ ...value, cachedAt: Date.now() });
+  }
+}
+
+function acceptCachedGeneration(value, maxFallbackAgeMs, now = Date.now()) {
+  const maxAge = Number(maxFallbackAgeMs);
+  if (!Number.isFinite(maxAge) || maxAge < 0) {
+    throw new PlatformError(
+      'invalid_fallback_age',
+      'Maximum cached catalog fallback age must be a nonnegative finite number',
+    );
+  }
+  const cachedAt = Number(value?.cachedAt);
+  const generatedAt = Date.parse(String(
+    value?.manifest?.generated_at ?? value?.manifest?.generatedAt ?? '',
+  ));
+  if (!Number.isFinite(cachedAt) || !Number.isFinite(generatedAt)) return null;
+  if (cachedAt > now + MAX_FUTURE_CACHE_SKEW_MS) return null;
+  if (generatedAt > now + MAX_FUTURE_CACHE_SKEW_MS) return null;
+  const age = now - Math.min(cachedAt, generatedAt);
+  if (!Number.isFinite(age) || age < 0 || age > maxAge) return null;
+  return value;
 }
 
 function createSharedOperation(start, onSettled) {
