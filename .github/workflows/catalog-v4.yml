@@ -6,16 +6,26 @@ on:
     branches: [main]
     paths:
       - "scripts/catalog_v4/**"
+      - "scripts/vendor_adapters/**"
       - "tests/catalog_v4/**"
+      - "tests/test_vendor_document_publication.py"
+      - "tests/test_vendor_document_publication_workflows.py"
       - "tests/test_catalog_v4_workflow_permissions.py"
+      - "data/vendor_profiles.json"
+      - "data/vendor_expansion.json"
       - "docs/catalog/**"
       - ".github/workflows/catalog-v4.yml"
   push:
     branches: [main]
     paths:
       - "scripts/catalog_v4/**"
+      - "scripts/vendor_adapters/**"
       - "tests/catalog_v4/**"
+      - "tests/test_vendor_document_publication.py"
+      - "tests/test_vendor_document_publication_workflows.py"
       - "tests/test_catalog_v4_workflow_permissions.py"
+      - "data/vendor_profiles.json"
+      - "data/vendor_expansion.json"
       - "docs/catalog/**"
       - ".github/workflows/catalog-v4.yml"
 
@@ -29,19 +39,22 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Compile and test catalog v4
+      - name: Compile and test catalog v4 and document composition
         run: |
           set -euo pipefail
-          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+          python -m compileall -q scripts/catalog_v4 scripts/vendor_adapters tests/catalog_v4
           python -m scripts.catalog_v4.selftest
           python -m unittest discover -s tests/catalog_v4 -v
           python -m unittest -v tests.test_catalog_v4_workflow_permissions
+          python -m unittest -v \
+            tests.test_vendor_document_publication \
+            tests.test_vendor_document_publication_workflows
       - name: Re-run affected retrieval and merge self-tests
         run: |
           set -euo pipefail
@@ -49,6 +62,18 @@ jobs:
           python scripts/autonomous_worker_v4.py --self-test
           rm -rf /tmp/dropfinder-autonomous-merge-test
           python scripts/autonomous_merge.py --self-test
+      - name: Generate and verify offline document artifact
+        run: |
+          set -euo pipefail
+          python -m scripts.vendor_adapters.publication generate \
+            --catalog cloud_pages/data/catalog.json \
+            --profiles data/vendor_profiles.json \
+            --output /tmp/dropfinder-vendor-documents.json \
+            --offline
+          python -m scripts.vendor_adapters.publication verify \
+            --artifact /tmp/dropfinder-vendor-documents.json \
+            --catalog cloud_pages/data/catalog.json \
+            --profiles data/vendor_profiles.json
       - name: Build and verify current admitted catalog
         run: |
           set -euo pipefail
@@ -56,6 +81,9 @@ jobs:
           python -m scripts.catalog_v4 \
             --input cloud_pages/data/catalog.json \
             --output /tmp/dropfinder-catalog-v4 \
+            --vendor-profiles data/vendor_profiles.json \
+            --vendor-expansion data/vendor_expansion.json \
+            --documents /tmp/dropfinder-vendor-documents.json \
             --detail-shards 16 \
             --minimum-products 1 \
             --minimum-variants 1
@@ -66,6 +94,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: catalog-v4-${{ github.run_id }}
-          path: /tmp/dropfinder-catalog-v4/catalog-v4
+          path: |
+            /tmp/dropfinder-catalog-v4/catalog-v4
+            /tmp/dropfinder-vendor-documents.json
           if-no-files-found: error
           retention-days: 7

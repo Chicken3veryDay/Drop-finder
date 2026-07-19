@@ -19,11 +19,15 @@ on:
       - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
       - "scripts/catalog_v4/**"
+      - "scripts/vendor_adapters/**"
+      - "data/vendor_profiles.json"
+      - "data/vendor_expansion.json"
       - "scripts/multi_product/**"
       - "scripts/publication_release.py"
       - "web/**"
       - "tests/test_dropfinder_cloud_workflow_permissions.py"
       - "tests/test_publication_release.py"
+      - "tests/test_vendor_document_publication.py"
       - ".github/workflows/dropfinder-cloud.yml"
   pull_request:
     branches: [main]
@@ -35,11 +39,15 @@ on:
       - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
       - "scripts/catalog_v4/**"
+      - "scripts/vendor_adapters/**"
+      - "data/vendor_profiles.json"
+      - "data/vendor_expansion.json"
       - "scripts/multi_product/**"
       - "scripts/publication_release.py"
       - "web/**"
       - "tests/test_dropfinder_cloud_workflow_permissions.py"
       - "tests/test_publication_release.py"
+      - "tests/test_vendor_document_publication.py"
       - ".github/workflows/dropfinder-cloud.yml"
 
 permissions:
@@ -67,12 +75,14 @@ jobs:
             scripts/autonomous_worker.py scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \
             scripts/publication_release.py web/scripts/publication_gate.py
+          python -m compileall -q scripts/vendor_adapters
           python scripts/cloud_scan_v2.py --self-test
           python scripts/autonomous_worker_v4.py --self-test
           rm -rf /tmp/dropfinder-autonomous-merge-test
           python scripts/autonomous_merge.py --self-test
           python -m unittest -v \
             tests.test_publication_release \
+            tests.test_vendor_document_publication \
             tests.test_dropfinder_cloud_workflow_permissions
 
   frontend:
@@ -185,9 +195,22 @@ jobs:
           python scripts/autonomous_merge.py \
             --input scan-results --output /tmp/dropfinder-generated-data \
             --min-active 5 --min-products 25
+          python -m scripts.vendor_adapters.publication generate \
+            --catalog /tmp/dropfinder-generated-data/catalog.json \
+            --profiles data/vendor_profiles.json \
+            --output /tmp/dropfinder-generated-data/vendor-document-artifact.json \
+            --timeout 8 \
+            --max-product-pages-per-vendor 4
+          python -m scripts.vendor_adapters.publication verify \
+            --artifact /tmp/dropfinder-generated-data/vendor-document-artifact.json \
+            --catalog /tmp/dropfinder-generated-data/catalog.json \
+            --profiles data/vendor_profiles.json
           python -m scripts.catalog_v4 \
             --input /tmp/dropfinder-generated-data/catalog.json \
             --output /tmp/dropfinder-generated-data \
+            --vendor-profiles data/vendor_profiles.json \
+            --vendor-expansion data/vendor_expansion.json \
+            --documents /tmp/dropfinder-generated-data/vendor-document-artifact.json \
             --detail-shards 16 \
             --minimum-products 1 \
             --minimum-variants 1
@@ -208,6 +231,10 @@ jobs:
           git worktree add --detach /tmp/dropfinder-previous origin/gh-pages
           node web/scripts/verify-publication.mjs /tmp/dropfinder-candidate
           python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-candidate
+          python -m scripts.vendor_adapters.publication verify \
+            --artifact /tmp/dropfinder-candidate/data/vendor-document-artifact.json \
+            --catalog /tmp/dropfinder-candidate/data/catalog.json \
+            --profiles data/vendor_profiles.json
           python -m scripts.catalog_v4 \
             --input /tmp/dropfinder-candidate/data/catalog.json \
             --output /tmp/dropfinder-candidate/data \
@@ -310,6 +337,7 @@ jobs:
             /tmp/shard-provenance.json
             /tmp/publication-continuity.json
             /tmp/pages-verification.json
+            /tmp/dropfinder-pages/data/vendor-document-artifact.json
             deployment/release.json
           if-no-files-found: warn
           retention-days: 90
