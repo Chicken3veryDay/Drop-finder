@@ -22,26 +22,45 @@ jobs:
           python-version: '3.12'
       - name: Defer declared-byte parity until semantic verification completes
         run: python .github/tmp/pr356_defer_byte_parity.py
-      - name: Validate affected and complete Catalog V4 contracts
+      - name: Capture affected and complete Catalog V4 contracts
+        shell: bash
         run: |
-          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
-          python -m unittest -v \
-            tests.catalog_v4.test_detail_shard_size_contract \
-            tests.catalog_v4.test_consumer_contract_verification \
-            tests.catalog_v4.test_verification
-          python -m unittest discover -s tests/catalog_v4 -v
-          python -m scripts.catalog_v4.selftest
-          rm -rf /tmp/catalog-v4-pr356
-          python -m scripts.catalog_v4 \
-            --input cloud_pages/data/catalog.json \
-            --output /tmp/catalog-v4-pr356 \
-            --detail-shards 16 \
-            --minimum-products 1 \
-            --minimum-variants 1
-          python -m scripts.catalog_v4 \
-            --input cloud_pages/data/catalog.json \
-            --output /tmp/catalog-v4-pr356 \
-            --verify-only
+          set +e
+          {
+            python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+            python -m unittest -v \
+              tests.catalog_v4.test_detail_shard_size_contract \
+              tests.catalog_v4.test_consumer_contract_verification \
+              tests.catalog_v4.test_verification
+            python -m unittest discover -s tests/catalog_v4 -v
+            python -m scripts.catalog_v4.selftest
+            rm -rf /tmp/catalog-v4-pr356
+            python -m scripts.catalog_v4 \
+              --input cloud_pages/data/catalog.json \
+              --output /tmp/catalog-v4-pr356 \
+              --detail-shards 16 \
+              --minimum-products 1 \
+              --minimum-variants 1
+            python -m scripts.catalog_v4 \
+              --input cloud_pages/data/catalog.json \
+              --output /tmp/catalog-v4-pr356 \
+              --verify-only
+          } > /tmp/pr356-repair.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/pr356-repair.status
+          tail -350 /tmp/pr356-repair.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr356-repair
+          path: |
+            /tmp/pr356-repair.log
+            /tmp/pr356-repair.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        run: test "$(cat /tmp/pr356-repair.status)" -eq 0
       - name: Commit clean repair
         shell: bash
         run: |
