@@ -1,0 +1,88 @@
+name: Temporary Issue 90 Bounded Detail Shards
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-90-bounded-detail-shards
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue90-bounded-detail-shards'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-90-bounded-detail-shards
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply byte-bounded builder and verifier
+        run: |
+          python .github/tmp/issue90_builder.py
+          python .github/tmp/issue90_verify.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/catalog_v4/builder.py \
+            scripts/catalog_v4/verify.py \
+            tests/catalog_v4/test_detail_shard_size_contract.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Capture size-contract and complete Catalog V4 validation
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+            python -m unittest -v \
+              tests.catalog_v4.test_detail_shard_size_contract \
+              tests.catalog_v4.test_consumer_contract_verification \
+              tests.catalog_v4.test_verification
+            python -m scripts.catalog_v4.selftest
+            python -m unittest discover -s tests/catalog_v4 -v
+            rm -rf /tmp/catalog-v4-issue90
+            python -m scripts.catalog_v4 --input cloud_pages/data/catalog.json --output-root /tmp/catalog-v4-issue90 --detail-shards 16
+            python -m scripts.catalog_v4.verify --output-root /tmp/catalog-v4-issue90
+          } > /tmp/issue90-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue90-validation.status
+          tail -300 /tmp/issue90-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue90-validation
+          path: |
+            /tmp/issue90-validation.log
+            /tmp/issue90-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        run: test "$(cat /tmp/issue90-validation.status)" -eq 0
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue90-bounded-detail-shards.yml \
+            .github/tmp/issue90_builder.py \
+            .github/tmp/issue90_verify.py
+          git add \
+            scripts/catalog_v4/builder.py \
+            scripts/catalog_v4/verify.py \
+            tests/catalog_v4/test_detail_shard_size_contract.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: bound detail shards by serialized bytes"
+          git push origin HEAD:fix/issue-90-bounded-detail-shards
