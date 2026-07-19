@@ -24,9 +24,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Apply cached generation validation and quarantine
-        run: |
-          python .github/tmp/issue93_cache_corruption.py
-          python .github/tmp/issue93_test_helper.py
+        run: python .github/tmp/issue93_cache_corruption.py
       - name: Verify exact source boundary
         shell: bash
         run: |
