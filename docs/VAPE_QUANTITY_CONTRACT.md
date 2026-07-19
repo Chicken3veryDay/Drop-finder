@@ -9,8 +9,10 @@ A publishable vape row requires:
 - explicit product-level vape classification evidence;
 - `quantity_unit` equal to `ml`;
 - a finite positive `volume_ml`;
+- `quantity_value`, when present, equal to `volume_ml`;
 - `comparison_metric` equal to `price_per_ml`;
-- a finite positive `comparison_price` derived from the published price and volume.
+- finite positive `comparison_price` and `price_per_ml` values;
+- `comparison_price` and `price_per_ml` equal to the published current price divided by `volume_ml` within the documented numeric tolerance.
 
 When both mass and volume appear in source evidence, explicit volume is the publication quantity. The original source text and provenance remain available for diagnostics.
 
@@ -25,11 +27,14 @@ Mass-only rows preserve their explicit gram evidence during normalization and ar
 Other stable rejection reasons include:
 
 - `missing_vape_volume`
+- `inconsistent_vape_quantity`
 - `missing_vape_comparison_price`
 - `inconsistent_vape_comparison_price`
 
 ## Release acceptance
 
 Code-level tests are necessary but not sufficient to close a publication-integrity issue. The generated release artifacts must also demonstrate that unsupported mass-only rows are absent or carry the documented rejection reason, and that every published vape row has a coherent milliliter quantity and price-per-milliliter comparison.
+
+The authoritative verifier is `python -m scripts.multi_product.verify_vape_quantity`. It must pass once against the generated artifacts on `main` and again against the files downloaded from the public production URL. Its receipt records artifact hashes, generation metadata, product and vape counts, active-source count, and rejection counts.
 
 A future mixed-unit representation requires a versioned schema, documented source evidence and density semantics, UI support, migration and rollback rules, and regenerated acceptance evidence.
