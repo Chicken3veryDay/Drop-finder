@@ -68,7 +68,7 @@ describe("MarketplaceFeature detail failure state", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Product details and lab documents could not be loaded.");
     expect(screen.queryByRole("button", { name: "Open COA" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Unknown")).not.toBeInTheDocument();
+    expect(screen.queryByText("Grow")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Retry details" }));
     expect(await screen.findByRole("button", { name: "Open COA" })).toBeInTheDocument();
