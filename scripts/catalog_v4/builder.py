@@ -20,6 +20,7 @@ from . import (
 from .documents import normalize_documents
 from .identity import product_identity, stable_digest, variant_identity
 from .selection import select_active_variant
+from .strict_json import dumps_strict
 from .normalization import (
     canonical_product_url,
     canonical_strain_name,
@@ -55,11 +56,22 @@ class BuildResult:
 
 
 def _json_bytes(payload: Any) -> bytes:
-    return (json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False, separators=(",", ": ")) + "\n").encode("utf-8")
+    return (dumps_strict(
+        payload,
+        indent=2,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ": "),
+    ) + "\n").encode("utf-8")
 
 
 def _canonical_bytes(payload: Any) -> bytes:
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return dumps_strict(
+        payload,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def _sha(data: bytes) -> str:

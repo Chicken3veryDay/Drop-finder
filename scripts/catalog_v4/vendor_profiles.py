@@ -7,11 +7,13 @@ from typing import Any, Iterable
 
 from scripts.vendor_expansion import public_age_index
 
+from .strict_json import dumps_strict, load_path_strict
+
 
 def optional_json(path: Path | None) -> Any:
     if path is None or not path.is_file():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_path_strict(path)
 
 
 def merge_vendor_profiles(payloads: Iterable[Any]) -> dict[str, Any]:
@@ -85,5 +87,5 @@ def write_public_age_index(
     payload = public_age_index(source_payloads)
     path = output_root / "catalog-v4" / "vendor-age-verification.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(dumps_strict(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path

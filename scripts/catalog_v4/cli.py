@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 from .builder import build_catalog, write_result
 from .normalization import clean_text, normalize_weight, safe_decimal
+from .strict_json import StrictJsonError, load_path_strict
 from .vendor_profiles import merge_vendor_profiles, optional_json, write_public_age_index
 from .verify import verify_publication
 
@@ -118,7 +119,10 @@ def main() -> int:
         print(json.dumps(verify_publication(args.output), indent=2, sort_keys=True))
         return 0
 
-    payload = json.loads(args.input.read_text(encoding="utf-8"))
+    try:
+        payload = load_path_strict(args.input)
+    except StrictJsonError as exc:
+        raise SystemExit(str(exc)) from exc
     products = payload.get("products") if isinstance(payload, dict) else None
     if not isinstance(products, list):
         raise SystemExit("input must be a JSON object with a products array")
