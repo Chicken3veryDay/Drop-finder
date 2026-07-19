@@ -1,5 +1,5 @@
 /* DropFinder generated-snapshot service worker. Relative-path safe for gh-pages/raw.githack. */
-const SW_VERSION = 'platform-v3';
+const SW_VERSION = 'platform-v4';
 const DEPLOYMENT_URL = canonicalDeploymentUrl(
   self.registration?.scope ?? self.location?.href ?? `${self.location.origin}/`,
 );
@@ -55,7 +55,10 @@ self.addEventListener('message', event => {
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) {
+    event.respondWith(withOpenedDocumentFallback(event.request));
+    return;
+  }
   if (event.request.mode === 'navigate') {
     event.respondWith(networkFirst(event.request, APP_CACHE, './index.html'));
     return;
@@ -72,8 +75,20 @@ self.addEventListener('fetch', event => {
     event.respondWith(generationDetail(event.request));
     return;
   }
-  event.respondWith(staleWhileRevalidate(event.request, APP_CACHE));
+  event.respondWith(withOpenedDocumentFallback(
+    event.request,
+    () => staleWhileRevalidate(event.request, APP_CACHE),
+  ));
 });
+
+async function withOpenedDocumentFallback(request, load = () => fetch(request)) {
+  let response = null;
+  try { response = await load(); } catch {}
+  if (response && (response.ok || !NAVIGATION_FALLBACK_STATUS.has(response.status))) return response;
+  const cache = await caches.open(DOCUMENT_CACHE);
+  const cached = await cache.match(request);
+  return cached || response || new Response('', { status: 503 });
+}
 
 async function cacheApplicationShell() {
   const cache = await caches.open(APP_CACHE);

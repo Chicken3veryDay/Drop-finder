@@ -104,7 +104,25 @@ type PlatformDocumentViewer = {
 
 type PwaCoordinator = {
   register(scriptUrl?: string, options?: { scope: string }): Promise<unknown>;
+  cacheOpenedDocument(document: MarketplaceDocument): Promise<boolean>;
 };
+
+export async function openMarketplaceDocument(
+  viewer: PlatformDocumentViewer,
+  pwa: PwaCoordinator | undefined,
+  request: DocumentViewerRequest,
+): Promise<void> {
+  await viewer.open(request.document, {
+    productId: request.productId,
+    variantId: request.variantId,
+    invoker: request.invokingElement,
+  });
+  const state = viewer.snapshot();
+  if (state.status !== "ready" || (state.type !== "pdf" && state.type !== "image")) return;
+  void Promise.resolve()
+    .then(() => pwa?.cacheOpenedDocument(request.document))
+    .catch(() => undefined);
+}
 
 type GenerationAwareMarketplaceFeatureProps = MarketplaceFeatureProps & {
   catalogGenerationId?: string | null;
@@ -655,13 +673,9 @@ export function IntegratedMarketplaceProvider({
   const documentViewer = useMemo(() => viewer ? {
     async open(request: DocumentViewerRequest) {
       setDocumentRequest(request);
-      await viewer.open(request.document, {
-        productId: request.productId,
-        variantId: request.variantId,
-        invoker: request.invokingElement,
-      });
+      await openMarketplaceDocument(viewer, pwa, request);
     },
-  } : undefined, [viewer]);
+  } : undefined, [viewer, pwa]);
 
   return (
     <Fragment>
