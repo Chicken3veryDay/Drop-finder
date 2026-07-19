@@ -316,6 +316,42 @@ test('ineligible opened documents do not become readable offline', async () => {
   assert.equal(response.status, 503);
 });
 
+test('service worker leaves Vite and source modules to the development server', async () => {
+  const runtime = await createRuntime();
+  for (const path of [
+    '/@vite/client',
+    '/@react-refresh',
+    '/@id/__x00__virtual:module',
+    '/@fs/tmp/source.js',
+    '/src/main.tsx',
+    '/node_modules/example/index.js?v=one',
+  ]) {
+    runtime.resetFetches();
+    const handled = await runtime.dispatch('fetch', { request: new Request(`${ORIGIN}${path}`) });
+    assert.equal(handled, undefined, path);
+    assert.deepEqual(runtime.fetches, [], path);
+  }
+});
+
+test('application cache keeps query-versioned mutable module identities distinct', async () => {
+  const runtime = await createRuntime();
+  const firstUrl = `${BASE}module.js?v=one`;
+  const secondUrl = `${BASE}module.js?v=two`;
+  runtime.setResponse(firstUrl, new Response('export default "one"', { headers: { 'content-type': 'text/javascript' } }));
+  runtime.setResponse(secondUrl, new Response('export default "two"', { headers: { 'content-type': 'text/javascript' } }));
+
+  const first = await runtime.dispatch('fetch', { request: new Request(firstUrl) });
+  assert.equal(await first.text(), 'export default "one"');
+  const second = await runtime.dispatch('fetch', { request: new Request(secondUrl) });
+  assert.equal(await second.text(), 'export default "two"');
+
+  const appCacheName = (await runtime.caches.keys()).find(name => name.startsWith('dropfinder-app-'));
+  assert.ok(appCacheName);
+  const appCache = await runtime.caches.open(appCacheName);
+  assert.equal(await (await appCache.match(firstUrl)).text(), 'export default "one"');
+  assert.equal(await (await appCache.match(secondUrl)).text(), 'export default "two"');
+});
+
 function navigationRequest(path) {
   return { method: 'GET', mode: 'navigate', url: new URL(path, BASE).href };
 }

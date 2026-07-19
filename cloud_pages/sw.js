@@ -55,6 +55,7 @@ self.addEventListener('message', event => {
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
+  if (isDevelopmentModule(url.pathname)) return;
   if (url.origin !== self.location.origin) {
     event.respondWith(withOpenedDocumentFallback(event.request));
     return;
@@ -411,12 +412,13 @@ function isOwnedGenerationCache(cacheName) {
     function generationCacheName(id) {
       return `${GENERATION_CACHE_PREFIX}${String(id).replace(/[^a-z0-9._-]/gi, '_')}`;
     }
+function isDevelopmentModule(path) { return /^(?:\/@|\/src\/|\/node_modules\/)/.test(path); }
 function isHashedAsset(path) { return /\/assets\/(?:[^/]+\/)*[^/]+-[a-z0-9_-]{8}\.[a-z0-9]+$/i.test(path); }
 function isManifestOrIndex(path) { return /(?:catalog-manifest-v4|catalog-index|vendor-profiles|catalog|status)\.json$/i.test(path) || /\/catalog-v4\/(?:manifest|index)\.json$/i.test(path); }
 function isLegacyCatalogMember(path) { return /\/(?:catalog|status)\.json$/i.test(path) && !path.includes('catalog-manifest-v4'); }
 function isDetailShard(path) { return /(?:details?|shards?)\/.*\.json$/i.test(path); }
 async function cacheFirst(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request, { ignoreSearch: true }); if (hit) return hit; const response = await fetch(request); if (response.ok) await safeCachePut(cache, request, response.clone()); return response; }
-async function staleWhileRevalidate(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request, { ignoreSearch: true }); const network = fetch(request).then(response => { if (response.ok) safeCachePut(cache, request, response.clone()); return response; }).catch(() => null); if (hit) { void network; return hit; } return (await network) || new Response('', { status: 503 }); }
+async function staleWhileRevalidate(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request); const network = fetch(request).then(response => { if (response.ok) safeCachePut(cache, request, response.clone()); return response; }).catch(() => null); if (hit) { void network; return hit; } return (await network) || new Response('', { status: 503 }); }
 async function navigationFallback(cache, request, fallback, terminal) {
   return (await cache.match(request, { ignoreSearch: true }))
     || (await cache.match(fallback, { ignoreSearch: true }))
