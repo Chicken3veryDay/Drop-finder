@@ -48,6 +48,7 @@ class DocumentCandidate:
     weight_grams: float | None = None
     batch_id: str = ""
     content_type_hint: str = ""
+    source_path: str = ""
     provenance: Provenance | None = None
     document_id: str = ""
 
@@ -108,6 +109,8 @@ class MappingDecision:
     score: int
     reasons: tuple[str, ...]
     ambiguous: bool = False
+    vendor_id: str = ""
+    document_kind: DocumentKind = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
