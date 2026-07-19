@@ -23,7 +23,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Apply query-sensitive application cache repair
+      - name: Apply development-module cache repair
         run: python .github/tmp/issue26_browser_cache_key.py
       - name: Verify exact source boundary
         shell: bash
@@ -115,10 +115,28 @@ jobs:
             console.log(JSON.stringify(payload, null, 2));
           });
           EOF
+          cat > tests/e2e/issue26-diagnostic.config.mjs <<'EOF'
+          import { defineConfig, devices } from '@playwright/test';
+          export default defineConfig({
+            testDir: '.',
+            testMatch: 'issue26-diagnostic.spec.mjs',
+            timeout: 60_000,
+            workers: 1,
+            reporter: 'line',
+            use: { baseURL: 'http://localhost:4173', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
+            webServer: {
+              command: 'npm run dev:e2e',
+              url: 'http://127.0.0.1:4173/tests/e2e/fixtures/harness.html',
+              reuseExistingServer: false,
+              timeout: 120_000,
+            },
+            projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+          });
+          EOF
           set +e
-          npx playwright test tests/e2e/issue26-diagnostic.spec.mjs --project=chromium > /tmp/issue26-diagnostic.log 2>&1
+          npx playwright test --config=tests/e2e/issue26-diagnostic.config.mjs > /tmp/issue26-diagnostic.log 2>&1
           printf '%s\n' "$?" > /tmp/issue26-diagnostic.status
-          rm -f tests/e2e/issue26-diagnostic.spec.mjs
+          rm -f tests/e2e/issue26-diagnostic.spec.mjs tests/e2e/issue26-diagnostic.config.mjs
           cat /tmp/issue26-diagnostic.log
           exit 0
       - uses: actions/upload-artifact@v4
@@ -149,5 +167,5 @@ jobs:
           git add cloud_pages/sw.js web/test/service-worker.test.mjs
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "fix: keep query-versioned application assets distinct"
+          git commit -m "fix: bypass Vite development modules in the service worker"
           git push origin HEAD:fix/issue-26-offline-document-cache
