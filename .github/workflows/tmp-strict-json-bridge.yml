@@ -25,13 +25,13 @@ jobs:
           set +e
           python - <<'PY' > /tmp/strict-json-reconstruction.log 2>&1
           from pathlib import Path
-          import textwrap
 
           workflow = Path('.github/workflows/tmp-strict-json-pr-runner.yml').read_text(encoding='utf-8')
           marker = "          python - <<'PY'\n"
           start = workflow.index(marker) + len(marker)
           end = workflow.index("\n          PY\n", start)
-          code = textwrap.dedent(workflow[start:end])
+          raw = workflow[start:end]
+          code = "\n".join(line[10:] if line.startswith("          ") else line for line in raw.splitlines())
           exec(compile(code, 'strict-json-reconstruction', 'exec'))
           PY
           status=$?
