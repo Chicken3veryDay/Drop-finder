@@ -1,0 +1,34 @@
+name: Temporary Atomic Production Run Locator
+
+on:
+  pull_request:
+    branches:
+      - verification/atomic-production-run
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  locate:
+    if: github.head_ref == 'trigger/atomic-production-run'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Capture production run and current refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: bf5e7fe2e70b53bd057a76d0d5ba7d3a26830523
+        shell: bash
+        run: |
+          mkdir -p /tmp/atomic-production-run
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SOURCE_SHA}&per_page=100" \
+            > /tmp/atomic-production-run/runs.json
+          gh api "repos/${GITHUB_REPOSITORY}/commits/main" \
+            > /tmp/atomic-production-run/main.json
+          gh api "repos/${GITHUB_REPOSITORY}/commits/gh-pages" \
+            > /tmp/atomic-production-run/gh-pages.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atomic-production-run-locator
+          path: /tmp/atomic-production-run
