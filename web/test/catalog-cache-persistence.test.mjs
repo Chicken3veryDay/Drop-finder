@@ -13,6 +13,7 @@ function generationFetch(generationId = 'network-current') {
   const manifest = {
     schema_version: 4,
     generation_id: generationId,
+    generated_at: new Date().toISOString(),
     index: {
       url: 'https://example.test/index.json',
       bytes: index.length,
@@ -39,9 +40,10 @@ function generationFetch(generationId = 'network-current') {
 function cachedGeneration(generationId = 'cached-old') {
   return Object.freeze({
     generationId,
-    manifest: { generation_id: generationId },
+    manifest: { generation_id: generationId, generated_at: new Date().toISOString() },
     index: { generation_id: generationId, products: [] },
-    activatedAt: 1,
+    activatedAt: Date.now(),
+    cachedAt: Date.now(),
     source: 'cache',
   });
 }

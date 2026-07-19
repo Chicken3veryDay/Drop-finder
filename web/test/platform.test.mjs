@@ -54,7 +54,13 @@ test('catalog client atomically validates generation and deduplicates detail req
 
 test('catalog client rejects mixed generations and preserves cached complete generation', async () => {
   const cache = new MemoryGenerationCache();
-  await cache.putComplete({ generationId: 'cached', manifest: {}, index: { products: [] }, activatedAt: 1, source: 'cache' });
+  await cache.putComplete({
+    generationId: 'cached',
+    manifest: { generated_at: new Date().toISOString() },
+    index: { products: [] },
+    activatedAt: 1,
+    source: 'cache',
+  });
   const fetchImpl = async input => {
     if (String(input).includes('manifest')) return new Response(JSON.stringify({ schema_version: 4, generation_id: 'new', index: { url: 'https://x/index' } }));
     return new Response(JSON.stringify({ generation_id: 'wrong', products: [] }));
