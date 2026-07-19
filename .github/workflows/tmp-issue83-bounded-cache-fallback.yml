@@ -1,0 +1,92 @@
+name: Temporary Issue 83 Bounded Cache Fallback
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-83-bounded-cache-fallback
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue83-bounded-cache-fallback'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-83-bounded-cache-fallback
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply bounded cached catalog fallback
+        run: python .github/tmp/issue83_bounded_cache_fallback.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-cache-fallback-age.test.mjs \
+            web/test/catalog-cache-persistence.test.mjs \
+            web/test/platform.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Capture fallback-age and complete frontend contracts
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          {
+            node --test test/catalog-cache-fallback-age.test.mjs test/catalog-cache-persistence.test.mjs test/platform.test.mjs
+            npm run lint
+            npm run typecheck
+            npm test
+            npm run benchmark
+            npm run build
+            npm run build:platform
+            npm run analyze:chunks
+            npm run pwa:check
+          } > /tmp/issue83-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue83-validation.status
+          tail -250 /tmp/issue83-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue83-validation
+          path: |
+            /tmp/issue83-validation.log
+            /tmp/issue83-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        run: test "$(cat /tmp/issue83-validation.status)" -eq 0
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue83-bounded-cache-fallback.yml \
+            .github/tmp/issue83_bounded_cache_fallback.py
+          git add \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-cache-fallback-age.test.mjs \
+            web/test/catalog-cache-persistence.test.mjs \
+            web/test/platform.test.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: bound persistent catalog fallback age"
+          git push origin HEAD:fix/issue-83-bounded-cache-fallback
