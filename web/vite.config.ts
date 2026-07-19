@@ -16,6 +16,7 @@ export default defineConfig({
       "react-dom",
       "react-dom/client",
       "pdfjs-dist/legacy/build/pdf.mjs",
+      "strip-literal",
     ],
     ...(isE2eServer ? { noDiscovery: true } : {}),
   },
