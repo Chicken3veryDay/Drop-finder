@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 import unittest
@@ -79,6 +80,60 @@ class VendorDocumentPublicationTests(unittest.TestCase):
         self.assertEqual(len(documents), 1)
         self.assertEqual(documents[0]["kind"], "coa")
         self.assertEqual(documents[0]["scope"], "weight")
+
+    def test_verifier_rejects_a_stale_catalog_binding(self) -> None:
+        artifact = build_artifact(CATALOG, PROFILES, fetcher=fetcher)
+        changed = copy.deepcopy(CATALOG)
+        changed["products"][0]["price"] = 26.0
+        with self.assertRaisesRegex(ValueError, "catalog binding mismatch"):
+            verify_artifact(artifact, changed, PROFILES)
+
+    def test_offline_artifact_is_hash_bound_and_explicit(self) -> None:
+        artifact = build_artifact(
+            CATALOG,
+            PROFILES,
+            observed_at="2026-07-19T12:00:00Z",
+            offline=True,
+        )
+        receipt = verify_artifact(artifact, CATALOG, PROFILES)
+        self.assertEqual(artifact["candidate_count"], 0)
+        self.assertEqual(artifact["mapped_document_count"], 0)
+        self.assertEqual(artifact["unmatched_count"], 0)
+        self.assertEqual(receipt["failed_check_count"], 1)
+        self.assertEqual(artifact["checks"][0]["error"], "offline_not_run")
+
+    def test_equal_cross_product_scores_remain_unmatched(self) -> None:
+        ambiguous_catalog = copy.deepcopy(CATALOG)
+        second = copy.deepcopy(ambiguous_catalog["products"][0])
+        second.update(
+            id="p-blue-other",
+            source_product_id="blue-dream-other",
+            source_variant_id="other-35",
+            url="https://luckyelk.com/products/blue-dream-other?variant=35",
+        )
+        ambiguous_catalog["products"].append(second)
+        one_report = (
+            '<a href="https://cdn.shopify.com/s/files/blue-dream-coa.pdf">'
+            "Blue Dream THCA Flower 3.5g COA</a>"
+        )
+
+        def ambiguous_fetcher(url: str, **_options) -> FetchResult:
+            body = one_report if url.endswith("/coa-tests") else "<html></html>"
+            return FetchResult(url, url, 200, "text/html", body.encode("utf-8"))
+
+        artifact = build_artifact(
+            ambiguous_catalog,
+            PROFILES,
+            fetcher=ambiguous_fetcher,
+        )
+        self.assertEqual(artifact["candidate_count"], 1)
+        self.assertEqual(artifact["mapped_document_count"], 0)
+        self.assertEqual(artifact["unmatched_count"], 1)
+        self.assertEqual(artifact["ambiguous_count"], 1)
+        self.assertEqual(
+            artifact["unmatched_documents"][0]["reason"],
+            "ambiguous_product_match",
+        )
 
 
 if __name__ == "__main__":
