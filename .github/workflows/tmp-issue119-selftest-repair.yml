@@ -25,7 +25,7 @@ jobs:
         run: |
           python -m compileall -q scripts/multi_product tests/multi_product
           python -m unittest discover -s tests/multi_product -v
-          python scripts/multi_product/publication.py --self-test
+          python -m scripts.multi_product.publication --self-test
       - name: Commit clean repair
         shell: bash
         run: |
