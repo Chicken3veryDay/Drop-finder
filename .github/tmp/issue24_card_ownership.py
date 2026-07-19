@@ -51,4 +51,15 @@ new = '''    price = meta.get("product:price:amount") or meta.get("og:price:amou
 if text.count(old) != 1:
     raise SystemExit(f"detail fallback anchor count: {text.count(old)}")
 text = text.replace(old, new, 1)
+
+old = '''    assert rows[0]["name"] == "Blue Dream THCA Flower"
+    assert rows[0]["price"] == 24.99
+'''
+new = '''    assert rows[0]["name"] == "Blue Dream THCA Flower"
+    assert rows[0]["price"] is None
+    assert rows[0]["stock"] == ""
+'''
+if text.count(old) != 1:
+    raise SystemExit(f"self-test card ownership anchor count: {text.count(old)}")
+text = text.replace(old, new, 1)
 path.write_text(text, encoding="utf-8")
