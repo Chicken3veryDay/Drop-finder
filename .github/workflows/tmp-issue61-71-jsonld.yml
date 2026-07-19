@@ -133,12 +133,9 @@ jobs:
       - name: Stop on validation failure
         shell: bash
         run: test "$(cat /tmp/issue61-71-validation.status)" -eq 0
-      - name: Commit clean implementation
+      - name: Push validated implementation
         shell: bash
         run: |
-          git rm \
-            .github/workflows/tmp-issue61-71-jsonld.yml \
-            .github/tmp/issue61_71_jsonld_completeness.py
           git add scripts/cloud_scan.py tests/test_jsonld_offer_and_discovery.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
