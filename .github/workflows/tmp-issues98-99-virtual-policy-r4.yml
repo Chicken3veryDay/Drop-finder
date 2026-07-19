@@ -1,4 +1,4 @@
-name: Temporary Issues 98 99 Virtual Policy R6
+name: Temporary Issues 98 99 Virtual Policy R7
 
 on:
   pull_request:
@@ -47,41 +47,42 @@ jobs:
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
-      - name: Capture focused virtual policies
+      - name: Validate focused virtual policies
+        working-directory: web
+        run: |
+          node --test test/virtual-query-focus-policy.test.mjs test/virtual-page-retention.test.mjs
+          npx vitest run src/features/integration/virtual-marketplace-focus.test.tsx src/features/integration/marketplace-integration.test.ts
+      - name: Capture complete frontend and build contracts
         working-directory: web
         shell: bash
         run: |
           set +e
           {
-            node --test test/virtual-query-focus-policy.test.mjs test/virtual-page-retention.test.mjs
-            npx vitest run src/features/integration/virtual-marketplace-focus.test.tsx src/features/integration/marketplace-integration.test.ts
-          } > /tmp/issues98-99-focused-r6.log 2>&1
+            set -e
+            npm run lint
+            npm run typecheck
+            npm test
+            npm run benchmark
+            npm run build
+            npm run build:platform
+            npm run analyze:chunks
+            npm run pwa:check
+          } > /tmp/issues98-99-complete-r7.log 2>&1
           status=$?
-          printf '%s\n' "$status" > /tmp/issues98-99-focused-r6.status
-          cat /tmp/issues98-99-focused-r6.log
+          printf '%s\n' "$status" > /tmp/issues98-99-complete-r7.status
+          tail -400 /tmp/issues98-99-complete-r7.log
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: issues98-99-focused-r6
+          name: issues98-99-complete-r7
           path: |
-            /tmp/issues98-99-focused-r6.log
-            /tmp/issues98-99-focused-r6.status
+            /tmp/issues98-99-complete-r7.log
+            /tmp/issues98-99-complete-r7.status
           if-no-files-found: error
           retention-days: 7
-      - name: Stop on focused failure
-        run: test "$(cat /tmp/issues98-99-focused-r6.status)" -eq 0
-      - name: Validate complete frontend and build contracts
-        working-directory: web
-        run: |
-          npm run lint
-          npm run typecheck
-          npm test
-          npm run benchmark
-          npm run build
-          npm run build:platform
-          npm run analyze:chunks
-          npm run pwa:check
+      - name: Stop on complete validation failure
+        run: test "$(cat /tmp/issues98-99-complete-r7.status)" -eq 0
       - name: Install Chromium
         working-directory: web
         run: npx playwright install --with-deps chromium
