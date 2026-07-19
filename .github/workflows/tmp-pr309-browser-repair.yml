@@ -26,6 +26,17 @@ jobs:
         run: |
           python .github/tmp/pr309_browser_repair.py
           python .github/tmp/pr309_browser_test_repair.py
+      - name: Verify exact repair boundary
+        shell: bash
+        run: |
+          git diff --name-only HEAD | grep -v '^\.github/' | sort > /tmp/actual-files
+          printf '%s\n' \
+            web/src/features/marketplace/MarketplaceFeature.query-path.test.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx \
+            web/tests/e2e/fixtures/harness.js \
+            web/tests/e2e/platform.spec.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
@@ -52,17 +63,6 @@ jobs:
             tests/e2e/integrated-app.spec.mjs \
             tests/e2e/platform.spec.mjs \
             --project=chromium
-      - name: Verify exact repair boundary
-        shell: bash
-        run: |
-          git diff --name-only HEAD | grep -v '^\.github/' | sort > /tmp/actual-files
-          printf '%s\n' \
-            web/src/features/marketplace/MarketplaceFeature.query-path.test.tsx \
-            web/src/features/marketplace/MarketplaceFeature.tsx \
-            web/tests/e2e/fixtures/harness.js \
-            web/tests/e2e/platform.spec.mjs \
-            | sort > /tmp/expected-files
-          diff -u /tmp/expected-files /tmp/actual-files
       - name: Commit clean repair
         shell: bash
         run: |
