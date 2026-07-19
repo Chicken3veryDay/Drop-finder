@@ -1,0 +1,58 @@
+name: Temporary Image Decode Full Suite Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - verification/image-decode-full-suite
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'trigger/image-decode-full-suite'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verification/image-decode-full-suite
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run concurrent platform suite
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          timeout 8m node --test test/*.test.mjs > /tmp/platform-concurrent.log 2>&1
+          printf '%s\n' "$?" > /tmp/platform-concurrent.status
+          tail -n 300 /tmp/platform-concurrent.log
+          exit 0
+      - name: Run serial platform suite
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          timeout 8m node --test --test-concurrency=1 test/*.test.mjs > /tmp/platform-serial.log 2>&1
+          printf '%s\n' "$?" > /tmp/platform-serial.status
+          tail -n 300 /tmp/platform-serial.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-decode-full-suite-diagnostic
+          path: |
+            /tmp/platform-concurrent.log
+            /tmp/platform-concurrent.status
+            /tmp/platform-serial.log
+            /tmp/platform-serial.status
+      - name: Preserve outcomes
+        run: |
+          test "$(cat /tmp/platform-concurrent.status)" = "0"
+          test "$(cat /tmp/platform-serial.status)" = "0"
