@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "node ./scripts/build.mjs",
     "build:platform": "vite build --config vite.config.platform.mjs",
-    "verify:publication": "node ./scripts/verify-publication.mjs",
+    "verify:publication": "node ./scripts/verify-publication.mjs && node ./scripts/verify-catalog-v4-publication.mjs ../cloud_pages",
     "typecheck": "tsc -b --pretty false && node scripts/typecheck.mjs",
     "lint": "eslint . --max-warnings 0",
     "test": "npm run test:unit && npm run test:platform",
