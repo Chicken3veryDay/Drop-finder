@@ -22,7 +22,8 @@ jobs:
       - name: Apply strict JSON reconstruction
         shell: bash
         run: |
-          python - <<'PY'
+          set +e
+          python - <<'PY' > /tmp/strict-json-reconstruction.log 2>&1
           from pathlib import Path
           import textwrap
 
@@ -33,6 +34,19 @@ jobs:
           code = textwrap.dedent(workflow[start:end])
           exec(compile(code, 'strict-json-reconstruction', 'exec'))
           PY
+          status=$?
+          printf '%s\n' "$status" > /tmp/strict-json-reconstruction.status
+          cat /tmp/strict-json-reconstruction.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: strict-json-reconstruction-log
+          path: |
+            /tmp/strict-json-reconstruction.log
+            /tmp/strict-json-reconstruction.status
+      - name: Stop on reconstruction failure
+        run: test "$(cat /tmp/strict-json-reconstruction.status)" = "0"
       - name: Validate strict JSON boundary
         run: |
           python -m compileall -q scripts/catalog_v4 tests/catalog_v4
