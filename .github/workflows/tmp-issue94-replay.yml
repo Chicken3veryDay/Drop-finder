@@ -1,0 +1,70 @@
+name: Temporary Issue 94 Current-Main Replay
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-94-generation-safe-details-post-vape
+
+permissions:
+  contents: write
+
+jobs:
+  replay:
+    if: github.head_ref == 'trigger/issue94-generation-safe-details-post-vape'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-94-generation-safe-details-post-vape
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Replay exact clean five-file implementation
+        shell: bash
+        run: |
+          git fetch origin fix/issue-94-generation-safe-details-current-main
+          source_ref=origin/fix/issue-94-generation-safe-details-current-main
+          merge_base=$(git merge-base origin/main "$source_ref")
+          git diff --binary "$merge_base" "$source_ref" -- \
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx \
+            web/src/features/marketplace/TypeAwareMarketplaceFeature.tsx \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-generation-stale-detail.test.mjs \
+            > /tmp/issue94.patch
+          test -s /tmp/issue94.patch
+          git apply --3way /tmp/issue94.patch
+      - name: Validate generation-safe detail lifecycle
+        working-directory: web
+        run: |
+          npm ci
+          node --test test/catalog-generation-stale-detail.test.mjs test/catalog-shared-cancellation.test.mjs test/catalog-generation-freshness.test.mjs
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Verify exact file boundary
+        shell: bash
+        run: |
+          changed=$(git diff --name-only)
+          expected=$(printf '%s\n' \
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx \
+            web/src/features/marketplace/TypeAwareMarketplaceFeature.tsx \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-generation-stale-detail.test.mjs | sort)
+          actual=$(printf '%s\n' "$changed" | grep -v '^.github/' | sort)
+          test "$actual" = "$expected"
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          rm -f .github/workflows/tmp-issue94-replay.yml .github/.issue94-replay-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: reject stale detail work after catalog activation"
+          git push origin HEAD:fix/issue-94-generation-safe-details-post-vape
