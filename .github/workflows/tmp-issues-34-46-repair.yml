@@ -1,0 +1,74 @@
+name: Temporary Query Pagination Retention Repair
+
+on:
+  pull_request:
+    branches:
+      - fix/issues-34-46-query-pagination-retention-current-main
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issues-34-46-query-pagination-retention'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issues-34-46-query-pagination-retention-current-main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply query and pagination lifecycle repair
+        run: python .github/tmp/issues_34_46_query_pagination_repair.py
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run focused page-window and virtualization regressions
+        working-directory: web
+        run: |
+          npx vitest run src/features/marketplace/test/marketplace-pagination.test.ts
+          node --test test/virtual-page-retention.test.mjs test/platform.test.mjs
+      - name: Validate complete frontend contracts
+        working-directory: web
+        run: |
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run perf
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git diff --name-only HEAD | grep -v '^\.github/' | sort > /tmp/actual-files
+          printf '%s\n' \
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx \
+            web/src/features/marketplace/marketplace-core.ts \
+            web/src/features/marketplace/marketplace-pagination.ts \
+            web/src/features/marketplace/test/marketplace-pagination.test.ts \
+            web/src/platform/virtualization/virtual-marketplace-adapter.js \
+            web/test/virtual-page-retention.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Validate production build
+        working-directory: web
+        run: npm run build
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm .github/workflows/tmp-issues-34-46-repair.yml .github/tmp/issues_34_46_query_pagination_repair.py
+          git add \
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx \
+            web/src/features/marketplace/marketplace-core.ts \
+            web/src/features/marketplace/marketplace-pagination.ts \
+            web/src/features/marketplace/test/marketplace-pagination.test.ts \
+            web/src/platform/virtualization/virtual-marketplace-adapter.js \
+            web/test/virtual-page-retention.test.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: serialize marketplace pagination with bounded retention"
+          git push origin HEAD:fix/issues-34-46-query-pagination-retention-current-main
