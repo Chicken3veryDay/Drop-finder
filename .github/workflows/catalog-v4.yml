@@ -9,6 +9,7 @@ on:
       - "scripts/vendor_adapters/**"
       - "tests/catalog_v4/**"
       - "tests/test_vendor_document_publication.py"
+      - "tests/test_vendor_document_publication_workflows.py"
       - "tests/test_catalog_v4_workflow_permissions.py"
       - "data/vendor_profiles.json"
       - "data/vendor_expansion.json"
@@ -21,6 +22,7 @@ on:
       - "scripts/vendor_adapters/**"
       - "tests/catalog_v4/**"
       - "tests/test_vendor_document_publication.py"
+      - "tests/test_vendor_document_publication_workflows.py"
       - "tests/test_catalog_v4_workflow_permissions.py"
       - "data/vendor_profiles.json"
       - "data/vendor_expansion.json"
@@ -49,9 +51,10 @@ jobs:
           python -m compileall -q scripts/catalog_v4 scripts/vendor_adapters tests/catalog_v4
           python -m scripts.catalog_v4.selftest
           python -m unittest discover -s tests/catalog_v4 -v
+          python -m unittest -v tests.test_catalog_v4_workflow_permissions
           python -m unittest -v \
             tests.test_vendor_document_publication \
-            tests.test_catalog_v4_workflow_permissions
+            tests.test_vendor_document_publication_workflows
       - name: Re-run affected retrieval and merge self-tests
         run: |
           set -euo pipefail
