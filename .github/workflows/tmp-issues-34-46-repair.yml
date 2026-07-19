@@ -29,9 +29,29 @@ jobs:
         run: npm ci
       - name: Run focused page-window and virtualization regressions
         working-directory: web
+        shell: bash
         run: |
-          npx vitest run src/features/marketplace/test/marketplace-pagination.test.ts
-          node --test test/virtual-page-retention.test.mjs test/platform.test.mjs
+          set +e
+          {
+            npx vitest run src/features/marketplace/test/marketplace-pagination.test.ts
+            first=$?
+            node --test test/virtual-page-retention.test.mjs test/platform.test.mjs
+            second=$?
+            test "$first" = 0 -a "$second" = 0
+          } > /tmp/issues-34-46-focused.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issues-34-46-focused.status
+          cat /tmp/issues-34-46-focused.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issues-34-46-focused
+          path: |
+            /tmp/issues-34-46-focused.log
+            /tmp/issues-34-46-focused.status
+      - name: Stop on focused regression failure
+        run: test "$(cat /tmp/issues-34-46-focused.status)" = 0
       - name: Validate complete frontend contracts
         working-directory: web
         run: |
