@@ -1,0 +1,55 @@
+name: Temporary Generation-Safe Details Push Runner
+
+on:
+  push:
+    branches:
+      - fix/issue-94-generation-safe-details-current-main
+
+permissions:
+  contents: write
+
+jobs:
+  reconstruct:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-94-generation-safe-details-current-main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply staged lifecycle repair
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/tmp-generation-safe-details-current-main.yml').read_text(encoding='utf-8')
+          marker = "          python - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY\n", start)
+          raw = workflow[start:end]
+          code = "\n".join(line[10:] if line.startswith("          ") else line for line in raw.splitlines())
+          exec(compile(code, 'generation-safe-details-current-main', 'exec'))
+          PY
+      - name: Validate exact branch
+        working-directory: web
+        run: |
+          npm ci
+          node --test test/catalog-generation-stale-detail.test.mjs test/catalog-shared-cancellation.test.mjs test/catalog-generation-freshness.test.mjs
+          npm run lint
+          npm run typecheck
+          npm test
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          rm -f .github/workflows/tmp-generation-safe-details-current-main.yml .github/workflows/tmp-generation-safe-details-push.yml .github/.generation-safe-details-current-main-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: reject stale detail work after catalog activation"
+          git push origin HEAD:fix/issue-94-generation-safe-details-current-main
