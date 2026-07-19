@@ -1,0 +1,58 @@
+name: Temporary Issue 66 Lab Result Limits
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-66-lab-result-limit-semantics
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue66-lab-result-limits'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-66-lab-result-limit-semantics
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply role-aware lab result parser
+        run: python .github/tmp/issue66_lab_result_limits.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/vendor_adapters/parsers.py \
+            tests/test_vendor_lab_result_limits.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Validate focused and complete Python contracts
+        run: |
+          python -m compileall -q scripts/vendor_adapters tests
+          python -m unittest -v tests.test_vendor_lab_result_limits tests.test_vendor_adapters tests.test_vendor_structured_json_precedence
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          python -m scripts.vendor_adapters.cli verify
+          python -m scripts.catalog_v4.selftest
+          python -m unittest discover -s tests/catalog_v4 -v
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue66-lab-result-limits.yml \
+            .github/tmp/issue66_lab_result_limits.py
+          git add scripts/vendor_adapters/parsers.py tests/test_vendor_lab_result_limits.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: distinguish lab results from reporting limits"
+          git push origin HEAD:fix/issue-66-lab-result-limit-semantics
