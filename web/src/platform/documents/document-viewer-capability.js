@@ -137,54 +137,54 @@ export class DocumentViewerCapability {
     this.setState({ ...this.state, status: 'ready', pages: pdf.numPages, page: 1 });
   }
 
-async openImage(documentRef, sessionId, signal) {
-  let objectUrl = null;
-  try {
-    const sourceUrl = documentRef.url;
-    if (!this.fetchImpl) {
-      await this.decodeImage(sourceUrl, signal);
+  async openImage(documentRef, sessionId, signal) {
+    let objectUrl = null;
+    try {
+      const sourceUrl = documentRef.url;
+      if (!this.fetchImpl) {
+        await this.decodeImage(sourceUrl, signal);
+        if (sessionId !== this.session?.id || signal.aborted) return;
+        this.setState({ ...this.state, status: 'ready', displayUrl: sourceUrl });
+        return;
+      }
+      const response = await this.fetchImpl(sourceUrl, {
+        signal,
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+      });
+      const length = Number(response.headers.get('content-length'));
+      if (Number.isFinite(length) && length > this.options.maxBytes) {
+        throw new PlatformError('document_oversized', 'Image is too large');
+      }
+      if (!response.ok) {
+        throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
+      }
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength > this.options.maxBytes) {
+        throw new PlatformError('document_oversized', 'Image is too large');
+      }
       if (sessionId !== this.session?.id || signal.aborted) return;
-      this.setState({ ...this.state, status: 'ready', displayUrl: sourceUrl });
-      return;
-    }
-    const response = await this.fetchImpl(sourceUrl, {
-      signal,
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
-    });
-    const length = Number(response.headers.get('content-length'));
-    if (Number.isFinite(length) && length > this.options.maxBytes) {
-      throw new PlatformError('document_oversized', 'Image is too large');
-    }
-    if (!response.ok) {
-      throw new PlatformError('document_unavailable', `Image request failed with ${response.status}`);
-    }
-    const bytes = await response.arrayBuffer();
-    if (bytes.byteLength > this.options.maxBytes) {
-      throw new PlatformError('document_oversized', 'Image is too large');
-    }
-    if (sessionId !== this.session?.id || signal.aborted) return;
-    const blob = new Blob([bytes], {
-      type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream',
-    });
-    objectUrl = URL.createObjectURL(blob);
-    await this.decodeImage(objectUrl, signal);
-    if (sessionId !== this.session?.id || signal.aborted) return;
-    this.session.objectUrl = objectUrl;
-    this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
-    objectUrl = null;
-  } catch (error) {
-    if (objectUrl) {
-      URL.revokeObjectURL(objectUrl);
+      const blob = new Blob([bytes], {
+        type: response.headers.get('content-type') || documentRef.mimeType || 'application/octet-stream',
+      });
+      objectUrl = URL.createObjectURL(blob);
+      await this.decodeImage(objectUrl, signal);
+      if (sessionId !== this.session?.id || signal.aborted) return;
+      this.session.objectUrl = objectUrl;
+      this.setState({ ...this.state, status: 'ready', displayUrl: objectUrl });
       objectUrl = null;
+    } catch (error) {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+      }
+      if (signal.aborted || error?.name === 'AbortError') throw abortError();
+      if (error instanceof PlatformError) throw error;
+      throw new PlatformError('image_decode_failed', 'This image could not be displayed.', error);
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     }
-    if (signal.aborted || error?.name === 'AbortError') throw abortError();
-    if (error instanceof PlatformError) throw error;
-    throw new PlatformError('image_decode_failed', 'This image could not be displayed.', error);
-  } finally {
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
   }
-}
 
   renderPage(canvas, { page = this.state.page, fitWidth = this.state.fitWidth, scale = this.state.scale } = {}) {
     const session = this.session;
@@ -310,7 +310,6 @@ async openImage(documentRef, sessionId, signal) {
 
   setState(next) { this.state = Object.freeze(next); for (const listener of this.listeners) listener(this.state); }
 }
-
 
 function decodeImageUrl(url, signal) {
   if (signal?.aborted) return Promise.reject(abortError());
