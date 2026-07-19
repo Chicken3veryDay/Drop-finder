@@ -47,12 +47,28 @@ jobs:
         run: npm ci
       - name: Validate focused document lifecycle contracts
         working-directory: web
+        shell: bash
         run: |
+          set +e
           node --test \
             test/document-bounded-read-and-close.test.mjs \
             test/document-render-queue.test.mjs \
             test/platform.test.mjs \
-            test/service-worker-document-bound.test.mjs
+            test/service-worker-document-bound.test.mjs \
+            > /tmp/issues-29-37-focused.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issues-29-37-focused.status
+          cat /tmp/issues-29-37-focused.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issues-29-37-focused
+          path: |
+            /tmp/issues-29-37-focused.log
+            /tmp/issues-29-37-focused.status
+      - name: Stop on focused document failure
+        run: test "$(cat /tmp/issues-29-37-focused.status)" = 0
       - name: Validate complete frontend and PWA contracts
         working-directory: web
         run: |
