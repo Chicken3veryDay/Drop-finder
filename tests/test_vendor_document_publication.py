@@ -42,4 +42,44 @@ def fetcher(url: str, **_options) -> FetchResult:
 
 
 class VendorDocumentPublicationTests(unittest.TestCase):
-    pass
+    def test_artifact_maps_only_the_unambiguous_report(self) -> None:
+        artifact = build_artifact(
+            CATALOG,
+            PROFILES,
+            observed_at="2026-07-19T12:00:00Z",
+            fetcher=fetcher,
+        )
+        receipt = verify_artifact(artifact, CATALOG, PROFILES)
+
+        self.assertEqual(artifact["candidate_count"], 2)
+        self.assertEqual(artifact["mapped_document_count"], 1)
+        self.assertEqual(artifact["unmatched_count"], 1)
+        self.assertEqual(receipt["mapped_document_count"], 1)
+        document = artifact["documents"][0]
+        self.assertEqual(document["vendor_id"], "lucky_elk")
+        self.assertEqual(document["source_product_id"], "blue-dream")
+        self.assertEqual(document["kind"], "coa")
+        self.assertEqual(document["scope"], "weight")
+        self.assertEqual(document["grams"], 3.5)
+        self.assertIn("blue-dream-3-5g-coa.pdf", document["url"])
+        self.assertEqual(
+            artifact["unmatched_documents"][0]["reason"],
+            "no_unambiguous_product_match",
+        )
+
+        result = build_catalog(
+            CATALOG["products"],
+            generated_at="2026-07-19T12:00:00Z",
+            vendor_profiles=PROFILES,
+            document_records=artifact["documents"],
+            detail_shards=1,
+        )
+        detail = json.loads(result.files["catalog-v4/details/000.json"])
+        documents = detail["products"][0]["variants"][0]["documents"]
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0]["kind"], "coa")
+        self.assertEqual(documents[0]["scope"], "weight")
+
+
+if __name__ == "__main__":
+    unittest.main()
