@@ -26,27 +26,30 @@ def replace_exact_count(path: str, old: str, new: str, expected: int, label: str
 def scope_page_zero_controllers() -> None:
     target = Path("web/src/features/marketplace/MarketplaceFeature.tsx")
     text = target.read_text(encoding="utf-8")
-    marker = "    const controllers = requestControllers.current;\n"
+    marker = "const controllers = requestControllers.current;"
     if marker in text:
         return
-    start_marker = "  useEffect(() => {\n    if (!asyncQueryEngine) return;\n"
-    end_marker = "  }, [asyncQueryEngine, catalogGenerationId, filters, products, queryKey, queryRetryToken, sort]);"
-    start = text.find(start_marker)
-    if start < 0:
-        raise SystemExit("page-zero controller scope: effect start not found")
+    vendor_anchor = text.find("const vendors = useMemo")
+    if vendor_anchor < 0:
+        raise SystemExit("page-zero controller scope: vendor anchor not found")
+    start = text.find("useEffect(() => {", vendor_anchor)
+    end_marker = "}, [asyncQueryEngine, catalogGenerationId, filters, products, queryKey, queryRetryToken, sort]);"
     end = text.find(end_marker, start)
-    if end < 0:
-        raise SystemExit("page-zero controller scope: effect end not found")
+    if start < 0 or end < 0:
+        raise SystemExit("page-zero controller scope: effect boundary not found")
     block = text[start:end]
-    if block.count("requestControllers.current") != 5:
-        raise SystemExit(
-            f"page-zero controller scope: expected 5 ref accesses, found {block.count('requestControllers.current')}"
-        )
-    block = block.replace(
-        "    if (!asyncQueryEngine) return;\n",
-        "    if (!asyncQueryEngine) return;\n    const controllers = requestControllers.current;\n",
-        1,
-    ).replace("requestControllers.current", "controllers")
+    access_count = block.count("requestControllers.current")
+    if access_count != 7:
+        raise SystemExit(f"page-zero controller scope: expected 7 ref accesses, found {access_count}")
+    if_line = "if (!asyncQueryEngine) return;"
+    if_index = block.find(if_line)
+    if if_index < 0:
+        raise SystemExit("page-zero controller scope: async guard not found")
+    line_start = block.rfind("\n", 0, if_index) + 1
+    indent = block[line_start:if_index]
+    insertion = f"{if_line}\n{indent}const controllers = requestControllers.current;"
+    block = block.replace(if_line, insertion, 1).replace("requestControllers.current", "controllers")
+    block = block.replace("const controllers = controllers;", "const controllers = requestControllers.current;", 1)
     target.write_text(text[:start] + block + text[end:], encoding="utf-8")
 
 
