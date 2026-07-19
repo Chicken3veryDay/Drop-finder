@@ -71,7 +71,37 @@ replacement = '''  if (index.product_count != null
   }
   return Object.freeze({ valid: true, generation: value });
 '''
-client.write_text(client_text[:start] + replacement + client_text[end:], encoding="utf-8")
+client_text = client_text[:start] + replacement + client_text[end:]
+
+cache_method_start = client_text.index("  async getLastComplete() {\n", client_text.index("export class BrowserGenerationCache"))
+cache_method_end = client_text.index("\n  async deleteLastComplete() {", cache_method_start)
+cache_method = '''  async getLastComplete() {
+    if (!this.cacheStorage?.open) return null;
+    let cache;
+    try { cache = await this.cacheStorage.open(this.cacheName); }
+    catch { return null; }
+    let response;
+    try { response = await cache.match(this.key); }
+    catch { return null; }
+    if (!response) return null;
+    let record;
+    try { record = await response.json(); }
+    catch {
+      try { if (typeof cache.delete === 'function') await cache.delete(this.key); } catch {}
+      return null;
+    }
+    if (!record || typeof record !== 'object' || Array.isArray(record)
+        || record.schemaVersion !== CACHE_RECORD_SCHEMA
+        || record.deploymentKey !== this.deploymentKey
+        || !Number.isFinite(record.cachedAt)
+        || !this.owns(record.generation)) {
+      try { if (typeof cache.delete === 'function') await cache.delete(this.key); } catch {}
+      return null;
+    }
+    return Object.freeze({ ...record.generation, cachedAt: record.cachedAt });
+  }
+'''
+client.write_text(client_text[:cache_method_start] + cache_method + client_text[cache_method_end:], encoding="utf-8")
 
 canonical_test = Path("web/src/features/platform/canonical-catalog-generation-client.test.ts")
 replace_once(
@@ -84,5 +114,37 @@ replace_once(
         generated_at: new Date(cachedAt).toISOString(),
         index: { url: "https://example.test/index.json" },
       },
+''',
+)
+
+bounds_test = Path("web/test/catalog-bounds.test.mjs")
+replace_once(
+    bounds_test,
+    '''    manifest: { generated_at: new Date(cachedAt).toISOString() },
+    index: { products: [] },
+''',
+    '''    manifest: {
+      schema_version: 4,
+      generation_id: 'cached',
+      generated_at: new Date(cachedAt).toISOString(),
+      index: { url: 'https://x/index.json' },
+    },
+    index: { generation_id: 'cached', products: [] },
+''',
+)
+
+platform_test = Path("web/test/platform.test.mjs")
+replace_once(
+    platform_test,
+    '''    manifest: { generated_at: new Date().toISOString() },
+    index: { products: [] },
+''',
+    '''    manifest: {
+      schema_version: 4,
+      generation_id: 'cached',
+      generated_at: new Date().toISOString(),
+      index: { url: 'https://x/index' },
+    },
+    index: { generation_id: 'cached', products: [] },
 ''',
 )
