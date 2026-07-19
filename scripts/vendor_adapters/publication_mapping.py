@@ -70,33 +70,52 @@ def map_publication_documents(
     decisions = map_documents(products, candidates)
     candidate_by_id = {candidate.document_id: candidate for candidate in candidates}
     targets = _target_index(products)
-    selected: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
-    mapped_ids: set[str] = set()
+    grouped: dict[str, list[tuple[MappingDecision, dict[str, Any]]]] = {}
     ambiguous_ids = {decision.document_id for decision in decisions if decision.ambiguous}
-
     for decision in decisions:
         if decision.ambiguous:
             continue
-        candidate = candidate_by_id.get(decision.document_id)
         target = targets.get((decision.vendor_id, decision.product_id, decision.variant_id))
-        if candidate is None or target is None:
+        if target is not None:
+            grouped.setdefault(decision.document_id, []).append((decision, target))
+
+    selected: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    mapped_ids: set[str] = set()
+    for document_id, pairs in grouped.items():
+        by_product: dict[str, list[tuple[MappingDecision, dict[str, Any]]]] = {}
+        for decision, target in pairs:
+            by_product.setdefault(source_product_id(target), []).append((decision, target))
+        product_scores = {
+            target_id: max(decision.score for decision, _ in product_pairs)
+            for target_id, product_pairs in by_product.items()
+        }
+        top_score = max(product_scores.values())
+        winners = [target_id for target_id, score in product_scores.items() if score == top_score]
+        if len(winners) != 1:
+            ambiguous_ids.add(document_id)
             continue
-        record = _record(decision, candidate, target)
-        identity = str(
-            record.get("source_variant_id")
-            or record.get("grams")
-            or record.get("batch")
-            or ""
-        )
-        key = (
-            record["vendor_id"],
-            record["source_product_id"],
-            identity,
-            record["kind"],
-            record["url"],
-        )
-        selected[key] = record
-        mapped_ids.add(decision.document_id)
+        candidate = candidate_by_id.get(document_id)
+        if candidate is None:
+            continue
+        for decision, target in by_product[winners[0]]:
+            if decision.score != top_score:
+                continue
+            record = _record(decision, candidate, target)
+            identity = str(
+                record.get("source_variant_id")
+                or record.get("grams")
+                or record.get("batch")
+                or ""
+            )
+            key = (
+                record["vendor_id"],
+                record["source_product_id"],
+                identity,
+                record["kind"],
+                record["url"],
+            )
+            selected[key] = record
+            mapped_ids.add(document_id)
 
     documents = sorted(
         selected.values(),
