@@ -1,0 +1,92 @@
+name: Temporary Issue 92 Detail Cache Integrity
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-92-detail-cache-integrity
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue92-detail-cache-integrity'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-92-detail-cache-integrity
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply detail cache integrity enforcement
+        run: python .github/tmp/issue92_detail_cache_integrity.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            cloud_pages/sw.js \
+            web/test/service-worker.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Capture service-worker and complete frontend contracts
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          {
+            node --test test/service-worker.test.mjs test/service-worker-document-bound.test.mjs test/virtual-page-retention.test.mjs
+            npm run lint
+            npm run typecheck
+            npm test
+            npm run benchmark
+            npm run build
+            npm run build:platform
+            npm run analyze:chunks
+            npm run pwa:check
+          } > /tmp/issue92-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue92-validation.status
+          tail -300 /tmp/issue92-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue92-validation
+          path: |
+            /tmp/issue92-validation.log
+            /tmp/issue92-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        run: test "$(cat /tmp/issue92-validation.status)" -eq 0
+      - name: Install Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Validate integrated PWA behavior
+        working-directory: web
+        run: npx playwright test tests/e2e/integrated-app.spec.mjs --project=chromium
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue92-detail-cache-integrity.yml \
+            .github/tmp/issue92_detail_cache_integrity.py
+          git add cloud_pages/sw.js web/test/service-worker.test.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: validate detail shards before cache admission"
+          git push origin HEAD:fix/issue-92-detail-cache-integrity
