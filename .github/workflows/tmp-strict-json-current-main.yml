@@ -1,0 +1,362 @@
+name: Temporary Strict JSON Current-Main Reconstruction
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-89-strict-json-current-main
+
+permissions:
+  contents: write
+
+jobs:
+  reconstruct:
+    if: github.head_ref == 'trigger/strict-json-current-main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-89-strict-json-current-main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply strict JSON boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding='utf-8')
+              if new in text:
+                  return
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              target.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          Path('scripts/catalog_v4/strict_json.py').write_text('''"""Strict, browser-compatible JSON parsing and serialization helpers."""
+          from __future__ import annotations
+
+          import json
+          import math
+          from pathlib import Path
+          from typing import Any
+
+
+          class StrictJsonError(ValueError):
+              """Raised when a value cannot be represented as interoperable JSON."""
+
+
+          def reject_non_finite_constant(token: str) -> None:
+              raise StrictJsonError(f"non-finite JSON constant is not allowed: {token}")
+
+
+          def loads_strict(value: str | bytes | bytearray, *, source: str = "JSON input") -> Any:
+              try:
+                  return json.loads(value, parse_constant=reject_non_finite_constant)
+              except (json.JSONDecodeError, StrictJsonError) as exc:
+                  raise StrictJsonError(f"invalid strict JSON in {source}: {exc}") from exc
+
+
+          def load_path_strict(path: Path) -> Any:
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except OSError as exc:
+                  raise StrictJsonError(f"unable to read {path}: {exc}") from exc
+              return loads_strict(text, source=str(path))
+
+
+          def assert_json_compatible(value: Any, *, path: str = "$") -> None:
+              if value is None or isinstance(value, (str, bool, int)):
+                  return
+              if isinstance(value, float):
+                  if not math.isfinite(value):
+                      raise StrictJsonError(f"non-finite numeric value at {path}")
+                  return
+              if isinstance(value, dict):
+                  for key, item in value.items():
+                      if not isinstance(key, str):
+                          raise StrictJsonError(f"non-string object key at {path}: {key!r}")
+                      assert_json_compatible(item, path=f"{path}.{key}")
+                  return
+              if isinstance(value, (list, tuple)):
+                  for index, item in enumerate(value):
+                      assert_json_compatible(item, path=f"{path}[{index}]")
+                  return
+              raise StrictJsonError(f"unsupported JSON value at {path}: {type(value).__name__}")
+
+
+          def dumps_strict(value: Any, **options: Any) -> str:
+              assert_json_compatible(value)
+              try:
+                  return json.dumps(value, allow_nan=False, **options)
+              except (TypeError, ValueError) as exc:
+                  raise StrictJsonError(f"value is not strict JSON: {exc}") from exc
+
+
+          def json_safe_raw(value: Any) -> Any:
+              """Retain ordinary source evidence while replacing invalid optional numbers explicitly."""
+              if isinstance(value, float) and not math.isfinite(value):
+                  return None
+              if value is None or isinstance(value, (str, bool, int, float)):
+                  return value
+              if isinstance(value, dict):
+                  return {str(key): json_safe_raw(item) for key, item in value.items()}
+              if isinstance(value, (list, tuple)):
+                  return [json_safe_raw(item) for item in value]
+              return str(value)
+          '''.replace('          ', ''), encoding='utf-8')
+
+          replace_once(
+              'scripts/catalog_v4/cli.py',
+              'from .normalization import clean_text, normalize_weight, safe_decimal\n',
+              'from .normalization import clean_text, normalize_weight, safe_decimal\nfrom .strict_json import StrictJsonError, dumps_strict, load_path_strict\n',
+              'CLI strict import',
+          )
+          replace_once(
+              'scripts/catalog_v4/cli.py',
+              '        print(json.dumps(verify_publication(args.output), indent=2, sort_keys=True))\n',
+              '        print(dumps_strict(verify_publication(args.output), indent=2, sort_keys=True))\n',
+              'CLI verify output',
+          )
+          replace_once(
+              'scripts/catalog_v4/cli.py',
+              '    payload = json.loads(args.input.read_text(encoding="utf-8"))\n',
+              '    try:\n        payload = load_path_strict(args.input)\n    except StrictJsonError as exc:\n        raise SystemExit(str(exc)) from exc\n',
+              'CLI strict input',
+          )
+          replace_once(
+              'scripts/catalog_v4/cli.py',
+              '    print(json.dumps(summary, indent=2, sort_keys=True))\n',
+              '    print(dumps_strict(summary, indent=2, sort_keys=True))\n',
+              'CLI strict summary',
+          )
+
+          replace_once(
+              'scripts/catalog_v4/vendor_profiles.py',
+              'from scripts.vendor_expansion import public_age_index\n',
+              'from scripts.vendor_expansion import public_age_index\n\nfrom .strict_json import dumps_strict, load_path_strict\n',
+              'vendor strict import',
+          )
+          replace_once(
+              'scripts/catalog_v4/vendor_profiles.py',
+              '    return json.loads(path.read_text(encoding="utf-8"))\n',
+              '    return load_path_strict(path)\n',
+              'vendor strict parse',
+          )
+          replace_once(
+              'scripts/catalog_v4/vendor_profiles.py',
+              '    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\\n", encoding="utf-8")\n',
+              '    path.write_text(dumps_strict(payload, indent=2, sort_keys=True) + "\\n", encoding="utf-8")\n',
+              'vendor strict serialization',
+          )
+
+          replace_once(
+              'scripts/catalog_v4/normalization.py',
+              'from typing import Any, Iterable\n',
+              'from typing import Any, Iterable\n\nfrom .strict_json import json_safe_raw\n',
+              'normalization strict import',
+          )
+          replace_once(
+              'scripts/catalog_v4/normalization.py',
+              '''    if parsed_score is None or parsed_count is None or parsed_count != parsed_count.to_integral_value():
+                  return None, None, {"source": "unavailable", "raw_score": score, "raw_count": count}
+              return (
+                  float(parsed_score.quantize(Decimal("0.01"))),
+                  int(parsed_count),
+                  {"source": "source_exposed", "raw_score": score, "raw_count": count},
+              )
+          ''',
+              '''    if parsed_score is None or parsed_count is None or parsed_count != parsed_count.to_integral_value():
+                  return None, None, {
+                      "source": "unavailable",
+                      "raw_score": json_safe_raw(score),
+                      "raw_count": json_safe_raw(count),
+                  }
+              return (
+                  float(parsed_score.quantize(Decimal("0.01"))),
+                  int(parsed_count),
+                  {
+                      "source": "source_exposed",
+                      "raw_score": json_safe_raw(score),
+                      "raw_count": json_safe_raw(count),
+                  },
+              )
+          ''',
+              'rating provenance sanitization',
+          )
+
+          replace_once(
+              'scripts/catalog_v4/builder.py',
+              'from .selection import select_active_variant\n',
+              'from .selection import select_active_variant\nfrom .strict_json import dumps_strict, json_safe_raw\n',
+              'builder strict import',
+          )
+          replace_once(
+              'scripts/catalog_v4/builder.py',
+              '''def _json_bytes(payload: Any) -> bytes:
+                  return (json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False, separators=(",", ": ")) + "\\n").encode("utf-8")
+
+
+              def _canonical_bytes(payload: Any) -> bytes:
+                  return json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+          ''',
+              '''def _json_bytes(payload: Any) -> bytes:
+                  return (dumps_strict(
+                      payload,
+                      indent=2,
+                      sort_keys=True,
+                      ensure_ascii=False,
+                      separators=(",", ": "),
+                  ) + "\\n").encode("utf-8")
+
+
+              def _canonical_bytes(payload: Any) -> bytes:
+                  return dumps_strict(
+                      payload,
+                      sort_keys=True,
+                      ensure_ascii=False,
+                      separators=(",", ":"),
+                  ).encode("utf-8")
+          ''',
+              'builder strict serialization',
+          )
+          replace_once(
+              'scripts/catalog_v4/builder.py',
+              '        "raw_value": value,\n',
+              '        "raw_value": json_safe_raw(value),\n',
+              'builder provenance sanitization',
+          )
+
+          replace_once(
+              'scripts/catalog_v4/verify.py',
+              'from .selection import select_active_variant\n',
+              'from .selection import select_active_variant\nfrom .strict_json import StrictJsonError, load_path_strict\n',
+              'verifier strict import',
+          )
+          replace_once(
+              'scripts/catalog_v4/verify.py',
+              '''def _load(path: Path) -> dict[str, Any]:
+                  try:
+                      value = json.loads(path.read_text(encoding="utf-8"))
+                  except (OSError, json.JSONDecodeError) as exc:
+                      raise VerificationError(f"unable to load {path}: {exc}") from exc
+          ''',
+              '''def _load(path: Path) -> dict[str, Any]:
+                  try:
+                      value = load_path_strict(path)
+                  except StrictJsonError as exc:
+                      raise VerificationError(f"unable to load {path}: {exc}") from exc
+          ''',
+              'verifier strict parse',
+          )
+
+          Path('tests/catalog_v4/test_strict_json.py').write_text('''from __future__ import annotations
+
+          import hashlib
+          import json
+          import math
+          import sys
+          import tempfile
+          import unittest
+          from pathlib import Path
+          from unittest.mock import patch
+
+          from scripts.catalog_v4.builder import _canonical_bytes, _json_bytes, build_catalog, write_result
+          from scripts.catalog_v4.cli import main as cli_main
+          from scripts.catalog_v4.normalization import rating
+          from scripts.catalog_v4.strict_json import StrictJsonError, load_path_strict, loads_strict
+          from scripts.catalog_v4.vendor_profiles import optional_json
+          from scripts.catalog_v4.verify import VerificationError, verify_publication
+
+
+          class StrictJsonTests(unittest.TestCase):
+              def test_parser_rejects_every_non_standard_numeric_constant(self) -> None:
+                  for token in ("NaN", "Infinity", "-Infinity"):
+                      with self.subTest(token=token), self.assertRaises(StrictJsonError):
+                          loads_strict('{"value":' + token + '}', source="test")
+
+              def test_strict_serializers_reject_non_finite_values_recursively(self) -> None:
+                  for value in (math.nan, math.inf, -math.inf):
+                      for payload in (
+                          {"classification_evidence": {"score": value}},
+                          {"documents": [{"provenance": {"raw": value}}]},
+                          {"vendor": {"provenance": [value]}},
+                      ):
+                          with self.subTest(value=value, payload=payload):
+                              with self.assertRaises(StrictJsonError):
+                                  _json_bytes(payload)
+                              with self.assertRaises(StrictJsonError):
+                                  _canonical_bytes(payload)
+
+              def test_invalid_rating_provenance_is_json_safe(self) -> None:
+                  for value in (math.nan, math.inf, -math.inf):
+                      score, count, provenance = rating(value, 10)
+                      self.assertIsNone(score)
+                      self.assertIsNone(count)
+                      self.assertIsNone(provenance["raw_score"])
+                      loads_strict(json.dumps(provenance, allow_nan=False))
+
+              def test_cli_and_optional_files_reject_non_standard_constants(self) -> None:
+                  with tempfile.TemporaryDirectory() as root:
+                      root_path = Path(root)
+                      input_path = root_path / "input.json"
+                      output_path = root_path / "output"
+                      input_path.write_text('{"products":[{"rating":NaN}]}', encoding="utf-8")
+                      with patch.object(sys, "argv", ["catalog-v4", "--input", str(input_path), "--output", str(output_path)]):
+                          with self.assertRaises(SystemExit) as raised:
+                              cli_main()
+                      self.assertIn("non-finite JSON constant", str(raised.exception))
+                      self.assertFalse(output_path.exists())
+                      with self.assertRaises(StrictJsonError):
+                          optional_json(input_path)
+                      with self.assertRaises(StrictJsonError):
+                          load_path_strict(input_path)
+
+              def test_verifier_rejects_hash_valid_non_standard_index_json(self) -> None:
+                  rows = [{
+                      "source_id": "vendor",
+                      "vendor": "Vendor",
+                      "name": "Blue Dream THCA Flower 3.5g",
+                      "url": "https://vendor.example/products/blue-dream",
+                      "variant": "3.5g",
+                      "price": 25,
+                      "availability": "in_stock",
+                  }]
+                  result = build_catalog(rows, generated_at="2026-01-01T00:00:00Z", detail_shards=1)
+                  with tempfile.TemporaryDirectory() as root:
+                      output = Path(root)
+                      write_result(result, output)
+                      manifest_path = output / "catalog-v4" / "manifest.json"
+                      manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                      index_meta = manifest["compact_index"]
+                      index_path = output / str(index_meta["path"]).removeprefix("data/")
+                      text = index_path.read_text(encoding="utf-8")
+                      contaminated = text.replace('"products": [', '"contaminated": NaN,\\n  "products": [', 1)
+                      index_path.write_text(contaminated, encoding="utf-8")
+                      index_meta["sha256"] = hashlib.sha256(contaminated.encode("utf-8")).hexdigest()
+                      index_meta["bytes"] = len(contaminated.encode("utf-8"))
+                      manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+                      with self.assertRaises(VerificationError):
+                          verify_publication(output)
+
+
+          if __name__ == "__main__":
+              unittest.main()
+          '''.replace('          ', ''), encoding='utf-8')
+          PY
+      - name: Validate strict JSON boundaries
+        run: |
+          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+          python -m unittest tests.catalog_v4.test_strict_json -v
+          python -m unittest discover -s tests/catalog_v4 -p 'test_*.py' -v
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          rm -f .github/workflows/tmp-strict-json-current-main.yml .github/.strict-json-current-main-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: enforce strict JSON publication boundaries"
+          git push origin HEAD:fix/issue-89-strict-json-current-main
