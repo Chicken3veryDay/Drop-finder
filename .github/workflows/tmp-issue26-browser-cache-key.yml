@@ -44,12 +44,19 @@ jobs:
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
-      - name: Validate focused cache contracts
+      - name: Capture focused cache contracts
         working-directory: web
+        shell: bash
         run: |
-          node --test test/service-worker.test.mjs test/service-worker-document-bound.test.mjs
-          npx vitest run src/features/integration/register-marketplace-props.document-cache.test.ts
-          npm run typecheck
+          set +e
+          {
+            node --test test/service-worker.test.mjs test/service-worker-document-bound.test.mjs
+            npx vitest run src/features/integration/register-marketplace-props.document-cache.test.ts
+            npm run typecheck
+          } > /tmp/issue26-focused.log 2>&1
+          printf '%s\n' "$?" > /tmp/issue26-focused.status
+          cat /tmp/issue26-focused.log
+          exit 0
       - name: Install Chromium
         working-directory: web
         run: npx playwright install --with-deps chromium
@@ -61,7 +68,7 @@ jobs:
           import { test } from '@playwright/test';
           import fs from 'node:fs/promises';
 
-          test('capture integrated app boot diagnostics', async ({ page, context }) => {
+          test('capture integrated app boot diagnostics', async ({ page }) => {
             const events = [];
             page.on('console', message => events.push({ type: 'console', level: message.type(), text: message.text() }));
             page.on('pageerror', error => events.push({ type: 'pageerror', name: error.name, message: error.message, stack: error.stack }));
@@ -110,16 +117,17 @@ jobs:
           EOF
           set +e
           npx playwright test tests/e2e/issue26-diagnostic.spec.mjs --project=chromium > /tmp/issue26-diagnostic.log 2>&1
-          status=$?
+          printf '%s\n' "$?" > /tmp/issue26-diagnostic.status
           rm -f tests/e2e/issue26-diagnostic.spec.mjs
-          printf '%s\n' "$status" > /tmp/issue26-diagnostic.status
           cat /tmp/issue26-diagnostic.log
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: issue26-page-diagnostic
+          name: issue26-combined-diagnostic
           path: |
+            /tmp/issue26-focused.log
+            /tmp/issue26-focused.status
             /tmp/issue26-diagnostic.log
             /tmp/issue26-diagnostic.status
             /tmp/issue26-page-diagnostic.json
@@ -127,9 +135,11 @@ jobs:
             web/playwright-report
           if-no-files-found: warn
           retention-days: 7
-      - name: Stop after diagnostic failure
+      - name: Stop after diagnostics
         shell: bash
-        run: test "$(cat /tmp/issue26-diagnostic.status)" -eq 0
+        run: |
+          test "$(cat /tmp/issue26-focused.status)" -eq 0
+          test "$(cat /tmp/issue26-diagnostic.status)" -eq 0
       - name: Commit clean browser repair
         shell: bash
         run: |
