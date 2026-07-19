@@ -1,39 +1,55 @@
-name: Temporary PR 356 Catalog Diagnostic
+name: Temporary PR 356 Catalog Repair
 
 on:
   pull_request:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  repair:
     if: github.head_ref == 'fix/issue-90-bounded-detail-shards'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-90-bounded-detail-shards
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Capture Catalog V4 tests
+      - name: Defer declared-byte parity until semantic verification completes
+        run: python .github/tmp/pr356_defer_byte_parity.py
+      - name: Validate affected and complete Catalog V4 contracts
+        run: |
+          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+          python -m unittest -v \
+            tests.catalog_v4.test_detail_shard_size_contract \
+            tests.catalog_v4.test_consumer_contract_verification \
+            tests.catalog_v4.test_verification
+          python -m unittest discover -s tests/catalog_v4 -v
+          python -m scripts.catalog_v4.selftest
+          rm -rf /tmp/catalog-v4-pr356
+          python -m scripts.catalog_v4 \
+            --input cloud_pages/data/catalog.json \
+            --output /tmp/catalog-v4-pr356 \
+            --detail-shards 16 \
+            --minimum-products 1 \
+            --minimum-variants 1
+          python -m scripts.catalog_v4 \
+            --input cloud_pages/data/catalog.json \
+            --output /tmp/catalog-v4-pr356 \
+            --verify-only
+      - name: Commit clean repair
         shell: bash
         run: |
-          set +e
-          {
-            python -m compileall -q scripts/catalog_v4 tests/catalog_v4
-            python -m unittest discover -s tests/catalog_v4 -v
-            python -m scripts.catalog_v4.selftest
-          } > /tmp/pr356-catalog.log 2>&1
-          printf '%s\n' "$?" > /tmp/pr356-catalog.status
-          tail -350 /tmp/pr356-catalog.log
-          exit 0
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pr356-catalog
-          path: |
-            /tmp/pr356-catalog.log
-            /tmp/pr356-catalog.status
-          if-no-files-found: error
-          retention-days: 7
+          git rm \
+            .github/workflows/tmp-pr356-catalog-diagnostic.yml \
+            .github/tmp/pr356_defer_byte_parity.py
+          git add scripts/catalog_v4/verify.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: preserve semantic verifier diagnostics"
+          git push origin HEAD:fix/issue-90-bounded-detail-shards
