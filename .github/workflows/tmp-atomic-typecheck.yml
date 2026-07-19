@@ -1,0 +1,42 @@
+name: Temporary Atomic Typecheck Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - verification/atomic-typecheck
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'trigger/atomic-typecheck'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verification/atomic-typecheck
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Capture typecheck output
+        working-directory: web
+        shell: bash
+        run: |
+          npm ci --no-audit --no-fund
+          set +e
+          npm run typecheck > /tmp/atomic-typecheck.log 2>&1
+          printf '%s\n' "$?" > /tmp/atomic-typecheck.status
+          cat /tmp/atomic-typecheck.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: atomic-typecheck-diagnostic
+          path: |
+            /tmp/atomic-typecheck.log
+            /tmp/atomic-typecheck.status
+      - name: Preserve result
+        run: test "$(cat /tmp/atomic-typecheck.status)" = "0"
