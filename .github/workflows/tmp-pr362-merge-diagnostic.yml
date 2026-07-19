@@ -1,0 +1,40 @@
+name: Temporary PR 362 Merge Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'fix/issue-57-vendor-document-artifact'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Capture merge-ref vendor and Catalog V4 validation
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts/catalog_v4 scripts/vendor_adapters tests/catalog_v4 tests/test_vendor_document_publication.py
+            python -m unittest -v tests.test_vendor_document_publication
+            python -m unittest discover -s tests/catalog_v4 -v
+            python -m scripts.catalog_v4.selftest
+          } > /tmp/pr362-merge.log 2>&1
+          printf '%s\n' "$?" > /tmp/pr362-merge.status
+          tail -400 /tmp/pr362-merge.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr362-merge
+          path: |
+            /tmp/pr362-merge.log
+            /tmp/pr362-merge.status
+          if-no-files-found: error
+          retention-days: 7
