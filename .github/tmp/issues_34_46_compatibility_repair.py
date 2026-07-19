@@ -12,6 +12,17 @@ def replace_once(path: str, old: str, new: str, label: str) -> None:
     target.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def replace_exact_count(path: str, old: str, new: str, expected: int, label: str) -> None:
+    target = Path(path)
+    text = target.read_text(encoding="utf-8")
+    if text.count(new) == expected:
+        return
+    count = text.count(old)
+    if count != expected:
+        raise SystemExit(f"{label}: expected {expected} matches, found {count}")
+    target.write_text(text.replace(old, new), encoding="utf-8")
+
+
 replace_once(
     "web/src/features/marketplace/MarketplaceFeature.tsx",
     '''    if (!asyncQueryEngine) return;
@@ -130,19 +141,12 @@ replace_once(
     "async query path identity fixture",
 )
 
-replace_once(
+replace_exact_count(
     "web/src/platform/virtualization/virtual-marketplace-adapter.js",
     '''      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount };
 ''',
     '''      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount, ariaRowCount: this.totalCount, renderedCount: 0 };
 ''',
-    "empty virtual window metrics",
-)
-replace_once(
-    "web/src/platform/virtualization/virtual-marketplace-adapter.js",
-    '''      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount };
-''',
-    '''      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount, ariaRowCount: this.totalCount, renderedCount: 0 };
-''',
-    "offscreen virtual window metrics",
+    2,
+    "empty and offscreen virtual window metrics",
 )
