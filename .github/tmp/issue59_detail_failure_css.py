@@ -2,7 +2,7 @@ from pathlib import Path
 
 path = Path("web/src/features/marketplace/marketplace.css")
 text = path.read_text(encoding="utf-8")
-old = ".df-expanded-actions {\n"
+old = ".df-expanded-actions {\n  display: flex;\n"
 new = '''.df-detail-state {
   display: grid;
   align-content: center;
@@ -31,6 +31,7 @@ new = '''.df-detail-state {
 }
 
 .df-expanded-actions {
+  display: flex;
 '''
 if text.count(old) != 1:
     raise SystemExit(f"expanded-actions anchor count: {text.count(old)}")
