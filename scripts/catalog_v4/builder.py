@@ -507,6 +507,8 @@ class CatalogBuilder:
                 if key and (source_id, key) in external_documents:
                     combined_documents.extend(external_documents[(source_id, key)])
             source_variant_id = clean_text(raw.get("source_variant_id") or raw.get("variant_id"))
+            target_batch = clean_text(raw.get("batch"))
+            target_lot = clean_text(raw.get("lot"))
             documents = normalize_documents(
                 combined_documents,
                 product_id=product_id,
@@ -514,6 +516,9 @@ class CatalogBuilder:
                 variant_id=variant_id,
                 source_variant_id=source_variant_id,
                 grams=float(grams),
+                batch=target_batch,
+                lot=target_lot,
+                rejections=rejections,
             )
             variant = {
                 "variant_id": variant_id,
@@ -526,8 +531,8 @@ class CatalogBuilder:
                 "variant_url": variant_url,
                 "image_url": canonical_url(raw.get("variant_image") or raw.get("image_url") or raw.get("image"), keep_variant=True),
                 "documents": documents,
-                "batch": clean_text(raw.get("batch")),
-                "lot": clean_text(raw.get("lot")),
+                "batch": target_batch,
+                "lot": target_lot,
                 "collected_at": clean_text(raw.get("collected_at")),
                 "identity_provenance": variant_identity_provenance,
                 "raw_variant_label": variant_label,
