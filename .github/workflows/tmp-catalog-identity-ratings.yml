@@ -1,0 +1,89 @@
+name: Temporary Catalog Identity Ratings
+
+on:
+  pull_request:
+    branches:
+      - fix/issues-68-76-catalog-identity-ratings
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issues68-76-catalog-integrity'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/issues-68-76-catalog-identity-ratings
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Apply catalog integrity repair and regressions
+        run: |
+          python .github/tmp/issues68_76_catalog_integrity.py
+          python .github/tmp/issues68_76_tests.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+            git ls-files --others --exclude-standard
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            scripts/catalog_v4/builder.py \
+            scripts/catalog_v4/normalization.py \
+            scripts/catalog_v4/verify.py \
+            tests/catalog_v4/test_identity_rating_integrity.py \
+            tests/catalog_v4/test_normalization.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Capture focused and complete Catalog V4 validation
+        shell: bash
+        run: |
+          set +e
+          {
+            set -e
+            python -m compileall -q scripts tests
+            python -m unittest -v tests.catalog_v4.test_normalization tests.catalog_v4.test_identity_rating_integrity
+            python -m scripts.catalog_v4.selftest
+            python -m unittest discover -s tests/catalog_v4 -p 'test_*.py' -v
+            python -m unittest discover -s tests -p 'test_*.py' -v
+          } > /tmp/catalog-identity-ratings.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/catalog-identity-ratings.status
+          tail -400 /tmp/catalog-identity-ratings.log
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: catalog-identity-ratings-validation
+          path: |
+            /tmp/catalog-identity-ratings.log
+            /tmp/catalog-identity-ratings.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on validation failure
+        run: test "$(cat /tmp/catalog-identity-ratings.status)" -eq 0
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-catalog-identity-ratings.yml \
+            .github/tmp/issues68_76_catalog_integrity.py \
+            .github/tmp/issues68_76_tests.py
+          git add \
+            scripts/catalog_v4/builder.py \
+            scripts/catalog_v4/normalization.py \
+            scripts/catalog_v4/verify.py \
+            tests/catalog_v4/test_identity_rating_integrity.py \
+            tests/catalog_v4/test_normalization.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: normalize shopper identity and preserve review pairs"
+          git push origin HEAD:fix/issues-68-76-catalog-identity-ratings
