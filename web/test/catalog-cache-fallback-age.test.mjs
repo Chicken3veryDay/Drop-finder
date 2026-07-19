@@ -18,8 +18,13 @@ function cachedGeneration({
   return Object.freeze({
     generationId,
     manifest: {
+      schema_version: 4,
       generation_id: generationId,
       generated_at: typeof generatedAt === 'number' ? new Date(generatedAt).toISOString() : generatedAt,
+      compact_index: {
+        path: 'data/catalog-v4/index.json',
+        sha256: 'a'.repeat(64),
+      },
     },
     index: { generation_id: generationId, products: [] },
     publicationBaseUrl: 'https://example.test/data/catalog-v4/',
@@ -106,7 +111,7 @@ test('missing, malformed, and materially future timestamps fail closed', async (
     const base = cachedGeneration();
     const invalid = [
       { ...base, cachedAt: undefined },
-      { ...base, manifest: { generation_id: base.generationId } },
+      { ...base, manifest: { ...base.manifest, generated_at: undefined } },
       { ...base, manifest: { ...base.manifest, generated_at: 'not-a-date' } },
       { ...base, cachedAt: NOW + 60_001 },
       { ...base, manifest: { ...base.manifest, generated_at: new Date(NOW + 60_001).toISOString() } },
