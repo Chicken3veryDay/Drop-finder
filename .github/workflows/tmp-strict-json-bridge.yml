@@ -81,6 +81,18 @@ jobs:
           printf '%s\n' "$status" > /tmp/strict-json-reconstruction.status
           cat /tmp/strict-json-reconstruction.log
           exit 0
+      - name: Validate strict JSON boundary
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+            python -m unittest tests.catalog_v4.test_strict_json tests.catalog_v4.test_builder
+          } > /tmp/strict-json-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/strict-json-validation.status
+          cat /tmp/strict-json-validation.log
+          exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -88,12 +100,12 @@ jobs:
           path: |
             /tmp/strict-json-reconstruction.log
             /tmp/strict-json-reconstruction.status
-      - name: Stop on reconstruction failure
-        run: test "$(cat /tmp/strict-json-reconstruction.status)" = "0"
-      - name: Validate strict JSON boundary
+            /tmp/strict-json-validation.log
+            /tmp/strict-json-validation.status
+      - name: Stop on reconstruction or validation failure
         run: |
-          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
-          python -m unittest tests.catalog_v4.test_strict_json tests.catalog_v4.test_builder
+          test "$(cat /tmp/strict-json-reconstruction.status)" = "0"
+          test "$(cat /tmp/strict-json-validation.status)" = "0"
       - name: Commit final reconstruction
         shell: bash
         run: |
