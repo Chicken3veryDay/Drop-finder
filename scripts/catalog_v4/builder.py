@@ -254,6 +254,85 @@ def _product_preference(product: dict[str, Any]) -> tuple[int, int, int, str, st
     )
 
 
+
+def _variant_for_reconciled_product(
+    variant: dict[str, Any],
+    *,
+    selected_product_id: str,
+    source_product_id: str,
+) -> dict[str, Any]:
+    copied = dict(variant)
+    identity = dict(copied.get("identity_provenance") or {})
+    identity["reconciled_from_product_id"] = source_product_id
+    copied["identity_provenance"] = identity
+    documents: list[dict[str, Any]] = []
+    for raw_document in copied.get("documents") or []:
+        if not isinstance(raw_document, dict):
+            continue
+        document = dict(raw_document)
+        document["product_id"] = selected_product_id
+        if document.get("scope") in {"variant", "weight"}:
+            document["variant_id"] = copied.get("variant_id", "")
+        documents.append(document)
+    copied["documents"] = documents
+    return copied
+
+
+def _reconcile_product_url_variants(
+    candidates: list[dict[str, Any]],
+    *,
+    selected_product_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    variant_by_id: dict[str, dict[str, Any]] = {}
+    resolutions: list[dict[str, Any]] = []
+    for product in sorted(candidates, key=lambda item: str(item.get("product_id") or "")):
+        source_product_id = str(product.get("product_id") or "")
+        for original in product.get("variants") or []:
+            if not isinstance(original, dict):
+                continue
+            candidate = _variant_for_reconciled_product(
+                original,
+                selected_product_id=selected_product_id,
+                source_product_id=source_product_id,
+            )
+            variant_id = str(candidate.get("variant_id") or "")
+            current = variant_by_id.get(variant_id)
+            if current is None:
+                variant_by_id[variant_id] = candidate
+                continue
+            selected = max((current, candidate), key=_variant_completeness)
+            discarded = candidate if selected is current else current
+            variant_by_id[variant_id] = selected
+            resolutions.append({
+                "variant_id": variant_id,
+                "selected_collected_at": selected.get("collected_at", ""),
+                "discarded_collected_at": discarded.get("collected_at", ""),
+                "method": "product_url_duplicate_variant_id_completeness_then_freshness",
+            })
+
+    variant_by_weight: dict[str, dict[str, Any]] = {}
+    for candidate in variant_by_id.values():
+        weight_key = f"{float(candidate['grams']):.4f}"
+        current = variant_by_weight.get(weight_key)
+        if current is None:
+            variant_by_weight[weight_key] = candidate
+            continue
+        selected = max((current, candidate), key=_variant_completeness)
+        discarded = candidate if selected is current else current
+        variant_by_weight[weight_key] = selected
+        resolutions.append({
+            "normalized_grams": float(candidate["grams"]),
+            "selected_variant_id": selected["variant_id"],
+            "discarded_variant_id": discarded["variant_id"],
+            "method": "product_url_duplicate_weight_completeness_then_freshness",
+        })
+
+    variants = sorted(
+        variant_by_weight.values(),
+        key=lambda row: (float(row["grams"]), float(row["current_price"]), row["variant_id"]),
+    )
+    return variants, resolutions
+
 def _resolve_duplicate_product_urls(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for product in products:
@@ -267,13 +346,41 @@ def _resolve_duplicate_product_urls(products: list[dict[str, Any]]) -> list[dict
         selected_original = max(candidates, key=_product_preference)
         selected = dict(selected_original)
         selected["provenance"] = dict(selected.get("provenance") or {})
+        merged_variants, variant_resolutions = _reconcile_product_url_variants(
+            candidates,
+            selected_product_id=str(selected["product_id"]),
+        )
+        selected["variants"] = merged_variants
+        prior_resolutions: list[dict[str, Any]] = []
+        candidate_duplicate_resolutions: dict[str, list[dict[str, Any]]] = {}
+        for candidate in sorted(candidates, key=lambda item: str(item.get("product_id") or "")):
+            candidate_id = str(candidate.get("product_id") or "")
+            candidate_resolutions = candidate.get("provenance", {}).get("duplicate_resolutions", [])
+            if not isinstance(candidate_resolutions, list):
+                continue
+            copied_resolutions = [dict(item) for item in candidate_resolutions if isinstance(item, dict)]
+            if copied_resolutions:
+                candidate_duplicate_resolutions[candidate_id] = copied_resolutions
+            for item in copied_resolutions:
+                prior_resolutions.append({**item, "source_product_id": candidate_id})
+        selected["provenance"]["duplicate_resolutions"] = prior_resolutions + variant_resolutions
+        candidate_variant_count = sum(len(item.get("variants") or []) for item in candidates)
         selected["provenance"]["product_url_conflict_resolution"] = {
             "method": "source_authority_then_variant_coverage_then_completeness_then_freshness",
+            "variant_reconciliation_method": "variant_id_then_normalized_weight_completeness_then_freshness",
             "selected_product_id": selected["product_id"],
             "discarded_product_ids": sorted(
                 str(item.get("product_id") or "") for item in candidates if item is not selected_original
             ),
             "canonical_product_url": key[1],
+            "candidate_variant_count": candidate_variant_count,
+            "retained_variant_count": len(merged_variants),
+            "discarded_variant_count": candidate_variant_count - len(merged_variants),
+            "candidate_variant_counts": {
+                str(item.get("product_id") or ""): len(item.get("variants") or [])
+                for item in sorted(candidates, key=lambda product: str(product.get("product_id") or ""))
+            },
+            "candidate_duplicate_resolutions": candidate_duplicate_resolutions,
         }
         resolved.append(selected)
     return resolved
