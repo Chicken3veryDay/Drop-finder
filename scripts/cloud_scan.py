@@ -199,19 +199,61 @@ def objects(v):
    if isinstance(v.get(k),(dict,list)):yield from objects(v[k])
  elif isinstance(v,list):
   for x in v:yield from objects(x)
+def _structured_offers(value):
+ if isinstance(value,list):
+  out=[]
+  for item in value:out.extend(_structured_offers(item))
+  return out
+ if not isinstance(value,dict):return []
+ types={str(x).lower() for x in (value.get('@type') if isinstance(value.get('@type'),list) else [value.get('@type')])}
+ nested=value.get('offers')
+ if 'aggregateoffer' in types and isinstance(nested,(dict,list)):
+  expanded=_structured_offers(nested)
+  if expanded:return expanded
+ return [value]
+
+def _base_product_target(value,base):
+ target=url(value,base)
+ if not target:return ''
+ parsed=urllib.parse.urlsplit(target)
+ return urllib.parse.urlunsplit((parsed.scheme,parsed.netloc,parsed.path,'',''))
+
+def _offer_identifier(offer):
+ value=offer.get('sku') or offer.get('productID') or offer.get('identifier') or offer.get('@id')
+ if isinstance(value,dict):value=value.get('value') or value.get('@value')
+ return text(value)
+
 def html_products(payload,sid,vendor,route):
  rows=[]
  for raw in LD.findall(payload):
   try:data=json.loads(html.unescape(raw.strip()))
   except json.JSONDecodeError:continue
-  for o in objects(data):
-   t=o.get('@type');types={str(x).lower() for x in (t if isinstance(t,list) else [t])}
+  for product in objects(data):
+   kind=product.get('@type');types={str(x).lower() for x in (kind if isinstance(kind,list) else [kind])}
    if 'product' not in types:continue
-   offers=o.get('offers');offers=offers[0] if isinstance(offers,list) and offers else offers;offers=offers if isinstance(offers,dict) else {}
-   image=o.get('image');image=image[0] if isinstance(image,list) and image else image;image=(image.get('url') or image.get('contentUrl')) if isinstance(image,dict) else image
-   r=record(sid,vendor,route,o.get('name'),o.get('url') or o.get('@id'),o.get('description'),offers.get('price') or offers.get('lowPrice'),offers.get('availability'),image)
-   if r:rows.append(r)
- return rows
+   image=product.get('image');image=image[0] if isinstance(image,list) and image else image;image=(image.get('url') or image.get('contentUrl')) if isinstance(image,dict) else image
+   parent_url=product.get('url') or product.get('@id');parent_id=text(product.get('sku') or product.get('productID') or product.get('@id') or parent_url)
+   offers=_structured_offers(product.get('offers'));package=[]
+   for offer in offers:
+    label=text(offer.get('name') or offer.get('size') or offer.get('sku'));identity=_offer_identifier(offer);target=offer.get('url') or parent_url
+    signal=f"{label} {text(offer.get('description'))} {urllib.parse.unquote(str(target or ''))}";package_grams=grams(signal)
+    if package_grams is None or availability(offer.get('availability'))!='in_stock':continue
+    if not target and identity and parent_url:target=f"{parent_url}{'&' if '?' in str(parent_url) else '?'}variant={urllib.parse.quote(identity)}"
+    offer_host=urllib.parse.urlsplit(url(target,route[1])).netloc;parent_host=urllib.parse.urlsplit(url(parent_url,route[1])).netloc
+    if offer_host and parent_host and offer_host!=parent_host:continue
+    name=f"{text(product.get('name'))} {label}".strip();desc=f"{text(product.get('description'))} {text(offer.get('description'))}".strip()
+    row=record_identity(record(sid,vendor,route,name,target,desc,offer.get('price') or offer.get('lowPrice'),offer.get('availability'),offer.get('image') or image,label),parent_id,identity)
+    if row:row['discovery_method']='json_ld_product_offer';package.append(row)
+   if package:
+    chosen={}
+    for row in sorted(package,key=lambda r:(float(r.get('grams') or 0),str(r.get('source_variant_id') or ''),str(r.get('url') or ''))):chosen.setdefault(round(float(row['grams']),4),row)
+    rows.extend(chosen.values());continue
+   candidates=offers or [{}];selected=min(candidates,key=lambda o:(_offer_identifier(o),str(o.get('url') or '')))
+   target=selected.get('url') or parent_url;identity=_offer_identifier(selected)
+   row=record_identity(record(sid,vendor,route,product.get('name'),target,product.get('description'),selected.get('price') or selected.get('lowPrice'),selected.get('availability'),selected.get('image') or image,''),parent_id,identity)
+   if row:row['discovery_method']='json_ld_product';rows.append(row)
+ return dedupe(rows)
+
 def meta_values(payload):
  values={}
  for raw in META.findall(payload):
@@ -237,15 +279,27 @@ def product_links(payload,route):
   if target not in seen:seen.append(target)
   if len(seen)>=12:break
  return seen
-def html_with_details(payload,sid,vendor,route):
- rows=html_products(payload,sid,vendor,route)
- if rows:return rows
- links=product_links(payload,route);out=[]
- for target in links:
+def html_with_details(payload,sid,vendor,route,diagnostics=None):
+ diagnostics=diagnostics if isinstance(diagnostics,dict) else {}
+ structured=html_products(payload,sid,vendor,route);links=product_links(payload,route)
+ covered={_base_product_target(row.get('url'),route[1]) for row in structured if row.get('url')}
+ uncovered=[target for target in links if _base_product_target(target,route[1]) not in covered]
+ failures={};detail_rows=[]
+ for target in uncovered:
   try:detail,ctype,status=fetch(target)
-  except Exception:continue
-  if status==200 and ctype in {'text/html','application/xhtml+xml'}:out.extend(html_detail(detail,sid,vendor,route,target))
- return dedupe(out)
+  except Exception as exc:
+   reason='timeout_error' if isinstance(exc,TimeoutError) else type(exc).__name__.lower();failures[reason]=failures.get(reason,0)+1;continue
+  if status!=200:
+   reason=f'http_{status}';failures[reason]=failures.get(reason,0)+1;continue
+  if ctype not in {'text/html','application/xhtml+xml'}:
+   failures['invalid_content_type']=failures.get('invalid_content_type',0)+1;continue
+  found=html_detail(detail,sid,vendor,route,target)
+  if not found:failures['detail_without_product']=failures.get('detail_without_product',0)+1
+  for row in found:row['discovery_method']=row.get('discovery_method') or 'html_product_detail'
+  detail_rows.extend(found)
+ diagnostics.update(structured_rows=len(structured),discovered_links=len(links),uncovered_links=len(uncovered),detail_requests=len(uncovered),detail_failures=sum(failures.values()),detail_failure_reasons=dict(sorted(failures.items())),coverage_status='partial' if failures else 'complete')
+ return dedupe([*detail_rows,*structured])
+
 def dedupe(rows):
  out={}
  for r in rows:out[(r['source_id'],r['url'],r.get('variant',''))]=r
@@ -258,9 +312,12 @@ def scan(source):
    payload,ctype,status=fetch(route[1]);rr.update(http_status=status,content_type=ctype)
    if route[0]=='shopify':rows=shopify(payload,sid,vendor,route);route_diagnostics={}
    elif route[0]=='woo':rows,route_diagnostics=woo(payload,sid,vendor,route)
-   else:rows=html_with_details(payload,sid,vendor,route);route_diagnostics={}
-   rr.update(route_diagnostics);route_status='degraded' if rr.get('variation_failures') else 'healthy' if rows else 'empty';rr.update(status=route_status,products=len(rows),duration_seconds=round(time.monotonic()-t,3));attempts.append(rr)
-   if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':route_status,'health_reason_codes':['woocommerce_variation_incomplete'] if route_status=='degraded' else [],'products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}
+   else:route_diagnostics={};rows=html_with_details(payload,sid,vendor,route,route_diagnostics)
+   rr.update(route_diagnostics);degraded_reasons=[]
+   if rr.get('variation_failures'):degraded_reasons.append('woocommerce_variation_incomplete')
+   if rr.get('detail_failures'):degraded_reasons.append('html_complementary_discovery_incomplete')
+   route_status='degraded' if degraded_reasons else 'healthy' if rows else 'empty';rr.update(status=route_status,products=len(rows),duration_seconds=round(time.monotonic()-t,3));attempts.append(rr)
+   if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':route_status,'health_reason_codes':degraded_reasons,'products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}
   except urllib.error.HTTPError as e:rr.update(status='http_error',http_status=e.code,error=f'HTTP {e.code}')
   except Exception as e:rr.update(status='error',error=f'{type(e).__name__}: {text(e)[:220]}')
   if not attempts or attempts[-1] is not rr:
