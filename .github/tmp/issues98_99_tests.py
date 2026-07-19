@@ -1,5 +1,21 @@
 from pathlib import Path
 
+
+integration_path = Path("web/src/features/integration/register-marketplace-props.tsx")
+integration_text = integration_path.read_text(encoding="utf-8")
+redundant_list = '''      className="df-virtual-viewport"
+      role="list"
+      aria-label="Marketplace results"
+      tabIndex={-1}
+'''
+single_list = '''      className="df-virtual-viewport"
+      tabIndex={-1}
+'''
+if integration_text.count(redundant_list) != 1:
+    raise SystemExit(f"redundant virtual list anchor count: {integration_text.count(redundant_list)}")
+integration_path.write_text(integration_text.replace(redundant_list, single_list, 1), encoding="utf-8")
+
+
 Path("web/test/virtual-query-focus-policy.test.mjs").write_text(r'''import test from 'node:test';
 import assert from 'node:assert/strict';
 import { VirtualMarketplaceAdapter } from '../src/platform/virtualization/virtual-marketplace-adapter.js';
@@ -129,6 +145,12 @@ afterEach(() => {
   if (clientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeight);
 });
 
+function virtualViewport(container: HTMLElement): HTMLElement {
+  const viewport = container.querySelector<HTMLElement>(".df-virtual-viewport");
+  if (!viewport) throw new Error("Virtual marketplace viewport is missing");
+  return viewport;
+}
+
 describe("virtual marketplace semantic scroll and focus policy", () => {
   it("resets DOM scroll for a new query and preserves it for same-query enrichment", () => {
     const model = new VirtualMarketplaceAdapter();
@@ -143,7 +165,9 @@ describe("virtual marketplace semantic scroll and focus policy", () => {
     };
     const view = render(<VirtualizedMarketplace {...props} queryKey="ascending" />);
     view.rerender(<VirtualizedMarketplace {...props} queryKey="ascending" />);
-    const viewport = screen.getByRole("list", { name: "Marketplace results" });
+    const viewport = virtualViewport(view.container);
+    expect(viewport).toHaveAttribute("tabindex", "-1");
+    expect(viewport).not.toHaveAttribute("role");
     viewport.scrollTop = 1_500;
     fireEvent.scroll(viewport);
 
@@ -155,7 +179,7 @@ describe("virtual marketplace semantic scroll and focus policy", () => {
     expect(viewport.scrollTop).toBe(0);
   });
 
-  it("keeps a focused row mounted and restores focus to the list when filtering removes it", () => {
+  it("keeps a focused row mounted and restores focus to the viewport when filtering removes it", () => {
     const model = new VirtualMarketplaceAdapter();
     const original = rows();
     const props = {
@@ -168,7 +192,7 @@ describe("virtual marketplace semantic scroll and focus policy", () => {
     };
     const view = render(<VirtualizedMarketplace {...props} queryKey="all" />);
     view.rerender(<VirtualizedMarketplace {...props} queryKey="all" />);
-    const viewport = screen.getByRole("list", { name: "Marketplace results" });
+    const viewport = virtualViewport(view.container);
     const focused = screen.getByRole("button", { name: "p3" });
     focused.focus();
     expect(document.activeElement).toBe(focused);
