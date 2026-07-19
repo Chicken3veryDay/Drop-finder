@@ -315,6 +315,7 @@ test('document viewer keeps the newest open when older cleanup finishes later', 
       ? new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'application/pdf' } })
       : new Response(new Uint8Array([4]), { headers: { 'content-type': 'image/png' } }),
     loadPdfJs: async () => ({ getDocument: () => loadingTask }),
+    decodeImage: async () => {},
   });
   await viewer.open({ url: 'https://x/original.pdf', mimeType: 'application/pdf' });
 
