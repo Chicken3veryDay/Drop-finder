@@ -49,12 +49,81 @@ def _source_entry(location: str, raw: str) -> dict[str, Any]:
     return {"source_location": location, "raw": raw[:240]}
 
 
+RESULT_ROLE = re.compile(r"\b(?:result|measured|measurement|value|potency)\b", re.I)
+LIMIT_ROLE = re.compile(
+    r"\b(?:loq|lod|action\s+limit|reporting\s+limit|detection\s+limit|"
+    r"quantitation\s+limit|threshold|uncertainty|recovery|limit)\b",
+    re.I,
+)
+
+
+def _metric_name(line: str) -> tuple[str, str] | None:
+    if DIRECT_TOTAL_THC.search(line):
+        return ("cannabinoid", "total_thc")
+    for name, pattern in CANNABINOID_LABELS.items():
+        if pattern.search(line):
+            return ("cannabinoid", name)
+    lower = line.lower()
+    for terpene in TERPENE_NAMES:
+        if terpene in lower:
+            return ("terpene", terpene)
+    return None
+
+
+def _percentage_role(prefix: str) -> str:
+    if RESULT_ROLE.search(prefix):
+        return "result"
+    if LIMIT_ROLE.search(prefix) or "±" in prefix or "+/-" in prefix:
+        return "limit"
+    return "unknown"
+
+
+def _select_metric_percentage(line: str) -> tuple[float | None, str | None]:
+    matches = list(re.finditer(PERCENT, line))
+    if not matches:
+        return None, None
+    roles: list[str] = []
+    previous_end = 0
+    for match in matches:
+        roles.append(_percentage_role(line[previous_end:match.start()]))
+        previous_end = match.end()
+
+    result_indexes = [index for index, role in enumerate(roles) if role == "result"]
+    if len(result_indexes) == 1:
+        value = _number(matches[result_indexes[0]].group(1))
+        return value, None if value is not None else "ignored impossible measured percentage"
+    if len(result_indexes) > 1:
+        return None, "ignored ambiguous row with multiple result percentages"
+
+    unknown_indexes = [index for index, role in enumerate(roles) if role == "unknown"]
+    if len(matches) == 1:
+        if roles[0] == "limit":
+            return None, "ignored limit-only analyte row"
+        value = _number(matches[0].group(1))
+        return value, None if value is not None else "ignored impossible measured percentage"
+    if len(unknown_indexes) == 1 and all(
+        role == "limit" for index, role in enumerate(roles) if index != unknown_indexes[0]
+    ):
+        value = _number(matches[unknown_indexes[0]].group(1))
+        return value, None if value is not None else "ignored impossible measured percentage"
+    return None, "ignored ambiguous analyte row with unlabeled percentages"
+
+
 def _extract_metrics(
     text: str,
-) -> tuple[dict[str, float], dict[str, float], float | None, float | None, dict[str, dict[str, Any]]]:
+) -> tuple[
+    dict[str, float],
+    dict[str, float],
+    float | None,
+    float | None,
+    dict[str, dict[str, Any]],
+    tuple[str, ...],
+]:
     cannabinoids: dict[str, float] = {}
     terpenes: dict[str, float] = {}
     field_provenance: dict[str, dict[str, Any]] = {}
+    warnings: list[str] = []
+    seen_warnings: set[str] = set()
     lines = [
         (re.sub(r"\s+", " ", line).strip(), line_number)
         for line_number, line in enumerate(text.splitlines(), start=1)
@@ -67,32 +136,27 @@ def _extract_metrics(
             line, line_number = lines[index]
             expanded.append((f"{line} {next_line}", f"text_line:{line_number}-{next_number}"))
     for line, location in expanded:
-        values = re.findall(PERCENT, line)
-        if not values:
+        target = _metric_name(line)
+        if target is None:
             continue
-        value = _number(values[-1])
+        value, warning = _select_metric_percentage(line)
+        if warning:
+            rendered = f"{warning} at {location}"
+            if rendered not in seen_warnings:
+                warnings.append(rendered)
+                seen_warnings.add(rendered)
         if value is None:
             continue
-        cannabinoid_name = ""
-        if DIRECT_TOTAL_THC.search(line):
-            cannabinoid_name = "total_thc"
-        else:
-            for name, pattern in CANNABINOID_LABELS.items():
-                if pattern.search(line):
-                    cannabinoid_name = name
-                    break
-        if cannabinoid_name:
-            cannabinoids.setdefault(cannabinoid_name, value)
+        category, metric_name = target
+        if category == "cannabinoid":
+            cannabinoids.setdefault(metric_name, value)
             field_provenance.setdefault(
-                f"cannabinoids.{cannabinoid_name}",
+                f"cannabinoids.{metric_name}",
                 _source_entry(location, line),
             )
-        lower = line.lower()
-        for terpene in TERPENE_NAMES:
-            if terpene in lower:
-                terpenes.setdefault(terpene, value)
-                field_provenance.setdefault(f"terpenes.{terpene}", _source_entry(location, line))
-                break
+        else:
+            terpenes.setdefault(metric_name, value)
+            field_provenance.setdefault(f"terpenes.{metric_name}", _source_entry(location, line))
 
     total_c: float | None = None
     for match in re.finditer(r"total cannabinoids?\s*[:#-]?\s*" + PERCENT, text, re.I):
@@ -108,8 +172,7 @@ def _extract_metrics(
             total_t = value
             field_provenance["total_terpenes"] = _source_entry(_line_location(text, match.start()), match.group(0))
             break
-    return cannabinoids, terpenes, total_c, total_t, field_provenance
-
+    return cannabinoids, terpenes, total_c, total_t, field_provenance, tuple(warnings)
 
 def _confidence(parser_id: str, has_metrics: bool) -> ParseConfidence:
     if not has_metrics:
@@ -130,9 +193,9 @@ def parse_lab_text(text: str, candidate: DocumentCandidate, parser_id: str = "la
         fields[name] = match.group(1).strip() if match else ""
         if match:
             field_provenance[name] = _source_entry(_line_location(normalized, match.start()), match.group(0))
-    cannabinoids, terpenes, total_c, total_t, metric_provenance = _extract_metrics(normalized)
+    cannabinoids, terpenes, total_c, total_t, metric_provenance, metric_warnings = _extract_metrics(normalized)
     field_provenance.update(metric_provenance)
-    limitations: list[str] = []
+    limitations: list[str] = list(metric_warnings)
     impossible_values = [raw for raw in re.findall(PERCENT, normalized) if _number(raw) is None]
     if impossible_values:
         limitations.append(f"ignored {len(impossible_values)} impossible percentage value(s)")
