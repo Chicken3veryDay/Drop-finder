@@ -56,11 +56,28 @@ Only normalized public catalog fields, bounded evidence summaries, and aggregate
 
 This credential-free design uses scheduled, resumable GitHub Actions workers and an immutable static/PWA publication branch. It is not a continuously resident FastAPI process. A permanent API daemon, browser pool, encrypted evidence service, or writable SQLite server would require a real host account or machine credentials. The current design provides autonomous retrieval, validation, persistence through Git, and an always-accessible phone interface without asking the user for credentials.
 
+## Reproducible tracked source
+
+The supported server-side source boundary is the editable reliability package under `app/`. It contains strict contracts, the adapter registry, and a durable SQLite adapter store. It is intentionally smaller than the unrecoverable historical full-server archive and does not claim to provide a resident production API.
+
+From a clean checkout:
+
+```sh
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+python scripts/verify_source_boundary.py
+python -m unittest discover -s tests/app -p 'test_*.py' -v
+```
+
+`.github/workflows/source-boundary.yml` runs the same package installation, import graph, and store tests in CI. The obsolete incomplete `bootstrap/source.part*.b64` fragments are not part of the build.
+
 ## Deployment and maintenance records
 
 - `deployment/autonomous-runtime.json` contains the latest worker runtime receipt.
 - `deployment/cdn.json` identifies the public publication and verified blob hashes.
 - `docs/REPOSITORY_MAINTENANCE.md` is the canonical future-update and rollback guide.
+- `release/source-build.json` records the supported tracked-source boundary and historical archive disposition.
 
 ## Repository
 
