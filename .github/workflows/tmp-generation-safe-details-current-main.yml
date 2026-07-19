@@ -1,0 +1,378 @@
+name: Temporary Generation-Safe Details Current-Main
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-94-generation-safe-details-current-main
+
+permissions:
+  contents: write
+
+jobs:
+  reconstruct:
+    if: github.head_ref == 'trigger/generation-safe-details-current-main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-94-generation-safe-details-current-main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply generation ownership boundaries
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding='utf-8')
+              if new in text:
+                  return
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, found {count}')
+              target.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'web/src/platform/catalog/catalog-generation-client.js',
+              '    this.active = null;\n    this.lastNetworkVerification = null;\n',
+              '    this.active = null;\n    this.activationEpoch = 0;\n    this.lastNetworkVerification = null;\n',
+              'activation epoch state',
+          )
+          replace_once(
+              'web/src/platform/catalog/catalog-generation-client.js',
+              '''  async loadDetail(productId, { signal, prefetch = false } = {}) {
+    const generation = this.active;
+    if (!generation) throw new PlatformError('not_initialized', 'Catalog generation is not initialized');
+''',
+              '''  async loadDetail(productId, { signal, prefetch = false } = {}) {
+    const generation = this.active;
+    const activationEpoch = this.activationEpoch;
+    if (!generation) throw new PlatformError('not_initialized', 'Catalog generation is not initialized');
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
+''',
+              'capture detail ownership',
+          )
+          replace_once(
+              'web/src/platform/catalog/catalog-generation-client.js',
+              '''    if (this.detailLru.has(cacheKey)) {
+      const hit = this.detailLru.get(cacheKey);
+''',
+              '''    if (this.detailLru.has(cacheKey)) {
+      this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
+      const hit = this.detailLru.get(cacheKey);
+''',
+              'LRU ownership check',
+          )
+          replace_once(
+              'web/src/platform/catalog/catalog-generation-client.js',
+              '''    const response = await this.fetchDeduped(cacheKey, detailUrl, {
+      signal,
+      maxBytes: Math.min(descriptor.bytes ?? this.options.maxDetailBytes, this.options.maxDetailBytes),
+      cache: prefetch ? 'force-cache' : 'default',
+    });
+    const text = await response.text();
+    await verifyHash(text, descriptor.sha256);
+    let detail;
+''',
+              '''    const response = await this.fetchDeduped(cacheKey, detailUrl, {
+      signal,
+      maxBytes: Math.min(descriptor.bytes ?? this.options.maxDetailBytes, this.options.maxDetailBytes),
+      cache: prefetch ? 'force-cache' : 'default',
+    });
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
+    const text = await response.text();
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
+    await verifyHash(text, descriptor.sha256);
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
+    let detail;
+''',
+              'post-fetch ownership checks',
+          )
+          replace_once(
+              'web/src/platform/catalog/catalog-generation-client.js',
+              '''    if (detail.generation_id !== generation.generationId) {
+      throw new PlatformError('generation_mismatch', 'Detail data belongs to another generation');
+    }
+    this.detailLru.set(cacheKey, detail);
+''',
+              '''    if (detail.generation_id !== generation.generationId) {
+      throw new PlatformError('generation_mismatch', 'Detail data belongs to another generation');
+    }
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
+    this.detailLru.set(cacheKey, detail);
+''',
+              'pre-LRU ownership check',
+          )
+          replace_once(
+              'web/src/platform/catalog/catalog-generation-client.js',
+              '''  cancelObsolete(reason = 'Catalog request superseded') {
+''',
+              '''  assertDetailGenerationCurrent(generation, activationEpoch, signal) {
+    if (signal?.aborted || this.active !== generation || this.activationEpoch !== activationEpoch) {
+      throw abortError();
+    }
+  }
+
+  cancelObsolete(reason = 'Catalog request superseded') {
+''',
+              'ownership assertion method',
+          )
+          replace_once(
+              'web/src/platform/catalog/catalog-generation-client.js',
+              '''    this.detailLru.clear();
+    this.lastNetworkVerification = null;
+    this.active = Object.freeze({ ...generation, source });
+''',
+              '''    this.detailLru.clear();
+    this.lastNetworkVerification = null;
+    this.activationEpoch += 1;
+    this.active = Object.freeze({ ...generation, source });
+''',
+              'activation epoch increment',
+          )
+
+          replace_once(
+              'web/src/features/integration/register-marketplace-props.tsx',
+              '''type CatalogClient = {
+  initialize(options?: { signal?: AbortSignal; force?: boolean }): Promise<CatalogGeneration>;
+  loadDetail(productId: string, options?: { signal?: AbortSignal }): Promise<unknown>;
+};
+''',
+              '''type CatalogClient = {
+  initialize(options?: { signal?: AbortSignal; force?: boolean }): Promise<CatalogGeneration>;
+  loadDetail(productId: string, options?: { signal?: AbortSignal }): Promise<unknown>;
+  snapshot(): CatalogGeneration | null;
+};
+''',
+              'catalog snapshot contract',
+          )
+          replace_once(
+              'web/src/features/integration/register-marketplace-props.tsx',
+              '''type ProviderProps = {
+  mount: ComponentType<MarketplaceFeatureProps>;
+  capabilities: CapabilityReader;
+};
+''',
+              '''type GenerationAwareMarketplaceFeatureProps = MarketplaceFeatureProps & {
+  catalogGenerationId?: string | null;
+};
+
+type ProviderProps = {
+  mount: ComponentType<GenerationAwareMarketplaceFeatureProps>;
+  capabilities: CapabilityReader;
+};
+''',
+              'generation-aware provider contract',
+          )
+          replace_once(
+              'web/src/features/integration/register-marketplace-props.tsx',
+              '  const [products, setProducts] = useState<MarketplaceProduct[]>([]);\n',
+              '  const [products, setProducts] = useState<MarketplaceProduct[]>([]);\n  const [catalogGenerationId, setCatalogGenerationId] = useState<string | null>(null);\n',
+              'provider generation state',
+          )
+          replace_once(
+              'web/src/features/integration/register-marketplace-props.tsx',
+              '''      if (!mounted.current || signal?.aborted) return;
+      setProducts(nextProducts);
+''',
+              '''      if (!mounted.current || signal?.aborted) return;
+      setCatalogGenerationId(generation.generationId);
+      setProducts(nextProducts);
+''',
+              'publish provider generation',
+          )
+          replace_once(
+              'web/src/features/integration/register-marketplace-props.tsx',
+              '''  const loadDetail = useCallback(async (productId: string, signal: AbortSignal) => {
+    if (!catalog) throw new Error("Catalog detail capability is unavailable.");
+    const payload = await catalog.loadDetail(productId, { signal });
+    if (signal.aborted) throw new DOMException("The operation was aborted", "AbortError");
+    setProducts((current) => current.map((product) =>
+      product.id === productId ? enrichProduct(product, payload) : product
+    ));
+    return mapCatalogDetail(payload, productId);
+  }, [catalog]);
+''',
+              '''  const loadDetail = useCallback(async (productId: string, signal: AbortSignal) => {
+    if (!catalog) throw new Error("Catalog detail capability is unavailable.");
+    const requestedGenerationId = catalogGenerationId ?? catalog.snapshot()?.generationId;
+    if (!requestedGenerationId) throw new Error("Catalog generation is unavailable.");
+    const payload = await catalog.loadDetail(productId, { signal });
+    const payloadGenerationId = stringValue(objectValue(payload)?.generation_id);
+    if (
+      signal.aborted ||
+      catalog.snapshot()?.generationId !== requestedGenerationId ||
+      payloadGenerationId !== requestedGenerationId
+    ) {
+      throw new DOMException("The catalog generation changed", "AbortError");
+    }
+    setProducts((current) => {
+      if (catalog.snapshot()?.generationId !== requestedGenerationId) return current;
+      return current.map((product) =>
+        product.id === productId ? enrichProduct(product, payload) : product
+      );
+    });
+    return mapCatalogDetail(payload, productId);
+  }, [catalog, catalogGenerationId]);
+''',
+              'provider detail ownership',
+          )
+          replace_once(
+              'web/src/features/integration/register-marketplace-props.tsx',
+              '''        loadDetail={loadDetail}
+        documentViewer={documentViewer}
+''',
+              '''        loadDetail={loadDetail}
+        catalogGenerationId={catalogGenerationId}
+        documentViewer={documentViewer}
+''',
+              'generation prop publication',
+          )
+
+          replace_once(
+              'web/src/features/marketplace/MarketplaceFeature.tsx',
+              '''  virtualization,
+  initialSort = "lowest_price_per_gram",
+}: MarketplaceFeatureProps) {
+''',
+              '''  virtualization,
+  initialSort = "lowest_price_per_gram",
+  catalogGenerationId = null,
+}: MarketplaceFeatureProps & { catalogGenerationId?: string | null }) {
+''',
+              'flower feature generation prop',
+          )
+          replace_once(
+              'web/src/features/marketplace/MarketplaceFeature.tsx',
+              '  const [loadedDetails, setLoadedDetails] = useState<Record<string, MarketplaceProductDetail>>({});\n',
+              '''  const [loadedDetailState, setLoadedDetailState] = useState<{
+    generationId: string | null;
+    details: Record<string, MarketplaceProductDetail>;
+  }>({ generationId: catalogGenerationId, details: {} });
+  const loadedDetails = useMemo(
+    () => loadedDetailState.generationId === catalogGenerationId
+      ? loadedDetailState.details
+      : {},
+    [catalogGenerationId, loadedDetailState],
+  );
+''',
+              'generation-scoped detail state',
+          )
+          replace_once(
+              'web/src/features/marketplace/MarketplaceFeature.tsx',
+              '''      if (!controller.signal.aborted) {
+        setLoadedDetails((current) => ({ ...current, [detail.productId]: detail }));
+      }
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [expandedProductId, loadDetail, detailsByProductId, loadedDetails]);
+''',
+              '''      if (!controller.signal.aborted) {
+        setLoadedDetailState((current) => ({
+          generationId: catalogGenerationId,
+          details: current.generationId === catalogGenerationId
+            ? { ...current.details, [detail.productId]: detail }
+            : { [detail.productId]: detail },
+        }));
+      }
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [catalogGenerationId, expandedProductId, loadDetail, detailsByProductId, loadedDetails]);
+''',
+              'generation-scoped detail update',
+          )
+          replace_once(
+              'web/src/features/marketplace/TypeAwareMarketplaceFeature.tsx',
+              'export function TypeAwareMarketplaceFeature(props: MarketplaceFeatureProps) {\n',
+              'export function TypeAwareMarketplaceFeature(props: MarketplaceFeatureProps & { catalogGenerationId?: string | null }) {\n',
+              'type-aware generation prop',
+          )
+
+          Path('web/test/catalog-generation-stale-detail.test.mjs').write_text('''import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import { CatalogGenerationClient, MemoryGenerationCache } from '../src/platform/catalog/catalog-generation-client.js';
+
+          function fixtureGeneration(generationId, detail) {
+            return {
+              generationId,
+              manifest: {
+                schema_version: 4,
+                generation_id: generationId,
+                details: {
+                  p0: {
+                    url: `https://example.test/${generationId}/p0.json`,
+                    bytes: detail.length,
+                  },
+                },
+              },
+              index: {
+                generation_id: generationId,
+                products: [{ id: 'p0' }],
+              },
+              manifestUrl: `https://example.test/${generationId}/manifest.json`,
+              publicationBaseUrl: `https://example.test/${generationId}/`,
+              activatedAt: Date.now(),
+              source: 'fixture',
+            };
+          }
+
+          test('catalog client rejects detail work that finishes after a newer generation activates', async () => {
+            const g1Detail = JSON.stringify({
+              generation_id: 'g1',
+              product: { id: 'p0', image_url: 'https://example.test/g1.jpg' },
+            });
+            const g2Detail = JSON.stringify({
+              generation_id: 'g2',
+              product: { id: 'p0', image_url: 'https://example.test/g2.jpg' },
+            });
+            const client = new CatalogGenerationClient({
+              fetchImpl: async () => new Response('', { status: 500 }),
+              cache: new MemoryGenerationCache(),
+              maxRetries: 0,
+            });
+            client.activate(fixtureGeneration('g1', g1Detail), 'fixture');
+
+            let releaseText;
+            let markTextStarted;
+            const textStarted = new Promise(resolve => { markTextStarted = resolve; });
+            client.fetchDeduped = async () => ({
+              text: () => new Promise(resolve => {
+                releaseText = () => resolve(g1Detail);
+                markTextStarted();
+              }),
+            });
+
+            const pending = client.loadDetail('p0');
+            await textStarted;
+            client.activate(fixtureGeneration('g2', g2Detail), 'fixture');
+            releaseText();
+
+            await assert.rejects(pending, error => error?.name === 'AbortError');
+            assert.equal(client.snapshot().generationId, 'g2');
+            assert.equal(client.detailLru.size, 0);
+          });
+          '''.replace('          ', ''), encoding='utf-8')
+          PY
+      - name: Validate generation-safe detail lifecycle
+        working-directory: web
+        run: |
+          npm ci
+          node --test test/catalog-generation-stale-detail.test.mjs test/catalog-shared-cancellation.test.mjs test/catalog-generation-freshness.test.mjs
+          npm run lint
+          npm run typecheck
+          npm test
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          rm -f .github/workflows/tmp-generation-safe-details-current-main.yml .github/.generation-safe-details-current-main-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: reject stale detail work after catalog activation"
+          git push origin HEAD:fix/issue-94-generation-safe-details-current-main
