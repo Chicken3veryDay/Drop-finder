@@ -17,6 +17,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/issue-128-vite-security-patch
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -30,6 +31,21 @@ jobs:
         run: |
           npm ls vite --depth=0
           node --test test/e2e-vite-server-security.test.mjs test/e2e-vite-patched-version.test.mjs
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            web/package-lock.json \
+            web/package.json \
+            web/test/e2e-vite-patched-version.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
       - name: Validate complete frontend and publication contracts
         working-directory: web
         run: |
@@ -45,16 +61,6 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
           npx playwright test tests/e2e/integrated-app.spec.mjs --project=chromium
-      - name: Verify exact source boundary
-        shell: bash
-        run: |
-          git diff --name-only HEAD | grep -v '^\.github/' | sort > /tmp/actual-files
-          printf '%s\n' \
-            web/package-lock.json \
-            web/package.json \
-            web/test/e2e-vite-patched-version.test.mjs \
-            | sort > /tmp/expected-files
-          diff -u /tmp/expected-files /tmp/actual-files
       - name: Commit clean security repair
         shell: bash
         run: |
