@@ -1,0 +1,39 @@
+name: Temporary PR 356 Catalog Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'fix/issue-90-bounded-detail-shards'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Capture Catalog V4 tests
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+            python -m unittest discover -s tests/catalog_v4 -v
+            python -m scripts.catalog_v4.selftest
+          } > /tmp/pr356-catalog.log 2>&1
+          printf '%s\n' "$?" > /tmp/pr356-catalog.status
+          tail -350 /tmp/pr356-catalog.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr356-catalog
+          path: |
+            /tmp/pr356-catalog.log
+            /tmp/pr356-catalog.status
+          if-no-files-found: error
+          retention-days: 7
