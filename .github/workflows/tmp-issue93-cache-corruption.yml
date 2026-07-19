@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   repair:
-    if: github.head_ref == 'trigger/issue93-cache-corruption-r2'
+    if: github.head_ref == 'trigger/issue93-cache-corruption-r3'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -23,10 +23,29 @@ jobs:
           node-version: '24.18.0'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Apply cached generation validation and quarantine
+      - name: Capture cached-generation transformation
+        shell: bash
         run: |
-          python .github/tmp/issue93_cache_corruption.py
-          python .github/tmp/issue93_test_helper.py
+          set +e
+          {
+            python .github/tmp/issue93_cache_corruption.py
+            python .github/tmp/issue93_test_helper.py
+          } > /tmp/issue93-apply.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue93-apply.status
+          cat /tmp/issue93-apply.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue93-apply
+          path: |
+            /tmp/issue93-apply.log
+            /tmp/issue93-apply.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on transformation failure
+        run: test "$(cat /tmp/issue93-apply.status)" -eq 0
       - name: Verify bounded source boundary
         shell: bash
         run: |
