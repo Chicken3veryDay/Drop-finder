@@ -23,61 +23,34 @@ def replace_exact_count(path: str, old: str, new: str, expected: int, label: str
     target.write_text(text.replace(old, new), encoding="utf-8")
 
 
-replace_once(
-    "web/src/features/marketplace/MarketplaceFeature.tsx",
-    '''    if (!asyncQueryEngine) return;
-    const revision = ++queryRevision.current;
-    for (const controller of requestControllers.current.values()) controller.abort();
-    requestControllers.current.clear();
-    const controller = new AbortController();
-    const requestKey = `${queryKey}:0`;
-    requestControllers.current.set(requestKey, controller);
-''',
-    '''    if (!asyncQueryEngine) return;
-    const controllers = requestControllers.current;
-    const revision = ++queryRevision.current;
-    for (const controller of controllers.values()) controller.abort();
-    controllers.clear();
-    const controller = new AbortController();
-    const requestKey = `${queryKey}:0`;
-    controllers.set(requestKey, controller);
-''',
-    "page-zero controller snapshot",
-)
-replace_once(
-    "web/src/features/marketplace/MarketplaceFeature.tsx",
-    '''    }).finally(() => {
-      if (requestControllers.current.get(requestKey) === controller) requestControllers.current.delete(requestKey);
-      if (
-        revision === queryRevision.current &&
-        activeQueryKey.current === queryKey &&
-        !controller.signal.aborted
-      ) {
-        setQueryLoading(false);
-      }
-    });
-    return () => {
-      controller.abort();
-      if (requestControllers.current.get(requestKey) === controller) requestControllers.current.delete(requestKey);
-    };
-''',
-    '''    }).finally(() => {
-      if (controllers.get(requestKey) === controller) controllers.delete(requestKey);
-      if (
-        revision === queryRevision.current &&
-        activeQueryKey.current === queryKey &&
-        !controller.signal.aborted
-      ) {
-        setQueryLoading(false);
-      }
-    });
-    return () => {
-      controller.abort();
-      if (controllers.get(requestKey) === controller) controllers.delete(requestKey);
-    };
-''',
-    "page-zero controller cleanup",
-)
+def scope_page_zero_controllers() -> None:
+    target = Path("web/src/features/marketplace/MarketplaceFeature.tsx")
+    text = target.read_text(encoding="utf-8")
+    marker = "    const controllers = requestControllers.current;\n"
+    if marker in text:
+        return
+    start_marker = "  useEffect(() => {\n    if (!asyncQueryEngine) return;\n"
+    end_marker = "  }, [asyncQueryEngine, catalogGenerationId, filters, products, queryKey, queryRetryToken, sort]);"
+    start = text.find(start_marker)
+    if start < 0:
+        raise SystemExit("page-zero controller scope: effect start not found")
+    end = text.find(end_marker, start)
+    if end < 0:
+        raise SystemExit("page-zero controller scope: effect end not found")
+    block = text[start:end]
+    if block.count("requestControllers.current") != 5:
+        raise SystemExit(
+            f"page-zero controller scope: expected 5 ref accesses, found {block.count('requestControllers.current')}"
+        )
+    block = block.replace(
+        "    if (!asyncQueryEngine) return;\n",
+        "    if (!asyncQueryEngine) return;\n    const controllers = requestControllers.current;\n",
+        1,
+    ).replace("requestControllers.current", "controllers")
+    target.write_text(text[:start] + block + text[end:], encoding="utf-8")
+
+
+scope_page_zero_controllers()
 
 replace_once(
     "web/src/features/integration/marketplace-integration.test.ts",
