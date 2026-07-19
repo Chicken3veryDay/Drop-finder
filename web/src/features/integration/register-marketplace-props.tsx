@@ -165,6 +165,19 @@ const numberValue = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const httpsUrlValue = (value: unknown): string => {
+  const normalized = stringValue(value);
+  if (!normalized) return "";
+  try {
+    const parsed = new URL(normalized);
+    return parsed.protocol === "https:" && parsed.hostname ? normalized : "";
+  } catch {
+    return "";
+  }
+};
+
+const catalogIntegrityError = (message: string): Error => new Error(`Catalog integrity error: ${message}`);
+
 const documentFormat = (url: string, mimeType: string): MarketplaceDocument["format"] => {
   const normalizedMime = mimeType.toLowerCase();
   if (normalizedMime === "application/pdf" || /\.pdf(?:$|[?#])/i.test(url)) return "pdf";
@@ -204,43 +217,70 @@ const selectDocument = (
 
 export const mapCatalogIndex = (index: unknown): MarketplaceProduct[] => {
   const envelope = objectValue(index);
-  const rows = Array.isArray(envelope?.products) ? envelope.products : [];
-  return rows.flatMap((raw): MarketplaceProduct[] => {
-    const product = objectValue(raw);
-    if (!product) return [];
-    const id = stringValue(product.product_id ?? product.id);
-    const vendorId = stringValue(product.vendor_id);
-    const vendorName = stringValue(product.vendor_name ?? product.vendor);
-    const strainName = stringValue(product.strain_name ?? product.strain);
-    if (!id || !vendorId || !vendorName || !strainName) return [];
+  if (!envelope || !Array.isArray(envelope.products)) {
+    throw catalogIntegrityError("products must be an array");
+  }
+  const rows = envelope.products;
+  const declaredProductCount = numberValue(envelope.product_count);
+  const declaredVariantCount = numberValue(envelope.in_stock_variant_count);
+  if (declaredProductCount !== null && declaredProductCount !== rows.length) {
+    throw catalogIntegrityError(`product count mismatch: declared ${declaredProductCount}, received ${rows.length}`);
+  }
 
-    const variants = (Array.isArray(product.variants) ? product.variants : []).flatMap((rawVariant): MarketplaceVariant[] => {
+  const productIds = new Set<string>();
+  const variantIds = new Set<string>();
+  let mappedVariantCount = 0;
+  const products = rows.map((raw, productIndex): MarketplaceProduct => {
+    const product = objectValue(raw);
+    if (!product) throw catalogIntegrityError(`catalog product ${productIndex} must be an object`);
+    const id = stringValue(product.product_id);
+    const vendorId = stringValue(product.vendor_id);
+    const vendorName = stringValue(product.vendor_name);
+    const strainName = stringValue(product.strain_name);
+    if (!id) throw catalogIntegrityError(`catalog product ${productIndex} is missing product_id`);
+    if (productIds.has(id)) throw catalogIntegrityError(`duplicate catalog product: ${id}`);
+    productIds.add(id);
+    if (!vendorId) throw catalogIntegrityError(`catalog product ${id} is missing vendor_id`);
+    if (!vendorName) throw catalogIntegrityError(`catalog product ${id} is missing vendor_name`);
+    if (!strainName) throw catalogIntegrityError(`catalog product ${id} is missing strain_name`);
+    if (!Array.isArray(product.variants) || product.variants.length === 0) {
+      throw catalogIntegrityError(`catalog product ${id} has no variants`);
+    }
+
+    const variants = product.variants.map((rawVariant, variantIndex): MarketplaceVariant => {
       const variant = objectValue(rawVariant);
-      if (!variant) return [];
-      const variantId = stringValue(variant.variant_id ?? variant.id);
-      const grams = numberValue(variant.grams ?? variant.weight);
-      const currentPrice = numberValue(variant.current_price ?? variant.price);
+      if (!variant) throw catalogIntegrityError(`catalog variant ${id}:${variantIndex} must be an object`);
+      const variantId = stringValue(variant.variant_id);
+      if (!variantId) throw catalogIntegrityError(`catalog variant ${id}:${variantIndex} is missing variant_id`);
+      if (variantIds.has(variantId)) throw catalogIntegrityError(`duplicate catalog variant: ${variantId}`);
+      variantIds.add(variantId);
+      if (variant.in_stock !== true) throw catalogIntegrityError(`catalog variant ${variantId} is not explicitly in stock`);
+      const grams = numberValue(variant.grams);
+      const currentPrice = numberValue(variant.current_price);
       const pricePerGram = numberValue(variant.price_per_gram);
-      const productUrl = stringValue(variant.product_url ?? variant.variant_url);
-      if (!variantId || !grams || !currentPrice || !pricePerGram || !productUrl) return [];
-      const originalPrice = numberValue(variant.original_price);
-      return [{
+      const productUrl = httpsUrlValue(variant.product_url);
+      if (grams === null || grams <= 0) throw catalogIntegrityError(`catalog variant ${variantId} has invalid grams`);
+      if (currentPrice === null || currentPrice <= 0) throw catalogIntegrityError(`catalog variant ${variantId} has invalid price`);
+      if (pricePerGram === null || pricePerGram <= 0) throw catalogIntegrityError(`catalog variant ${variantId} has invalid price per gram`);
+      if (!productUrl) throw catalogIntegrityError(`catalog variant ${variantId} has invalid product URL`);
+      mappedVariantCount += 1;
+      return {
         id: variantId,
         grams,
         sourceWeightLabel: stringValue(variant.source_weight_label) || `${grams} g`,
         currentPrice,
-        originalPrice,
+        originalPrice: numberValue(variant.original_price),
         pricePerGram,
         inStock: true,
         productUrl,
         imageUrl: stringValue(variant.image_url) || null,
         coa: selectDocument(variant.documents, "coa"),
         terpeneDocument: selectDocument(variant.documents, "terpene"),
-      }];
+      };
     });
 
     const lineage = stringValue(product.lineage);
-    return [{
+    return {
       id,
       vendorId,
       vendorName,
@@ -257,8 +297,13 @@ export const mapCatalogIndex = (index: unknown): MarketplaceProduct[] => {
       rating: numberValue(product.rating),
       reviewCount: numberValue(product.review_count),
       variants,
-    }];
+    };
   });
+
+  if (declaredVariantCount !== null && declaredVariantCount !== mappedVariantCount) {
+    throw catalogIntegrityError(`variant count mismatch: declared ${declaredVariantCount}, mapped ${mappedVariantCount}`);
+  }
+  return products;
 };
 
 const detailProduct = (payload: unknown, productId: string): Record<string, unknown> | null => {

@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import (
     DETAIL_SCHEMA_VERSION,
@@ -45,6 +46,24 @@ def _resolve_data_path(output_root: Path, declared: str) -> Path:
     return path
 
 
+def _required_text(value: Any, *, field: str, product_id: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise VerificationError(f"missing {field}: {product_id}")
+    return normalized
+
+
+def _https_url(value: Any, *, product_id: str, variant_id: str) -> str:
+    normalized = str(value or "").strip()
+    try:
+        parsed = urlsplit(normalized)
+    except ValueError as exc:
+        raise VerificationError(f"invalid variant URL: {product_id} {variant_id}") from exc
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise VerificationError(f"invalid variant URL: {product_id} {variant_id}")
+    return normalized
+
+
 def _variant_identity(variant: dict[str, Any], *, product_id: str, detail: bool) -> tuple[float, str]:
     variant_id = str(variant.get("variant_id") or "")
     if not variant_id:
@@ -54,9 +73,7 @@ def _variant_identity(variant: dict[str, Any], *, product_id: str, detail: bool)
     except (KeyError, TypeError, ValueError) as exc:
         raise VerificationError(f"invalid variant grams: {product_id} {variant_id}") from exc
     url_field = "variant_url" if detail else "product_url"
-    variant_url = str(variant.get(url_field) or "")
-    if not variant_url:
-        raise VerificationError(f"missing variant URL: {product_id} {variant_id}")
+    variant_url = _https_url(variant.get(url_field), product_id=product_id, variant_id=variant_id)
     return grams, variant_url
 
 
@@ -110,6 +127,9 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
         if not product_id or product_id in product_ids:
             raise VerificationError("missing or duplicate product id")
         product_ids.add(product_id)
+        _required_text(product.get("vendor_id"), field="vendor id", product_id=product_id)
+        _required_text(product.get("vendor_name"), field="vendor name", product_id=product_id)
+        _required_text(product.get("strain_name"), field="strain name", product_id=product_id)
         if product.get("lineage") not in allowed_lineages:
             raise VerificationError(f"invalid lineage: {product_id}")
         variants = product.get("variants")
