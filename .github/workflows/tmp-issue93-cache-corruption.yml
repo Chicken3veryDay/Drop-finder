@@ -1,0 +1,115 @@
+name: Temporary Issue 93 Cache Corruption
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-93-cache-corruption
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue93-cache-corruption'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-93-cache-corruption
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply cached generation validation and quarantine
+        run: |
+          python .github/tmp/issue93_cache_corruption.py
+          python .github/tmp/issue93_test_helper.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-cache-corruption.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Capture focused cache-corruption contracts
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          node --test \
+            test/catalog-cache-corruption.test.mjs \
+            test/catalog-cache-fallback-age.test.mjs \
+            test/catalog-cache-persistence.test.mjs \
+            > /tmp/issue93-focused.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue93-focused.status
+          cat /tmp/issue93-focused.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue93-focused
+          path: |
+            /tmp/issue93-focused.log
+            /tmp/issue93-focused.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on focused failure
+        run: test "$(cat /tmp/issue93-focused.status)" -eq 0
+      - name: Capture complete frontend validation
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          {
+            npm run lint
+            npm run typecheck
+            npm test
+            npm run benchmark
+            npm run build
+            npm run build:platform
+            npm run analyze:chunks
+            npm run pwa:check
+          } > /tmp/issue93-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue93-validation.status
+          tail -350 /tmp/issue93-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue93-validation
+          path: |
+            /tmp/issue93-validation.log
+            /tmp/issue93-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on complete validation failure
+        run: test "$(cat /tmp/issue93-validation.status)" -eq 0
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue93-cache-corruption.yml \
+            .github/tmp/issue93_cache_corruption.py \
+            .github/tmp/issue93_test_helper.py
+          git add \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-cache-corruption.test.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: quarantine corrupt cached generations"
+          git push origin HEAD:fix/issue-93-cache-corruption
