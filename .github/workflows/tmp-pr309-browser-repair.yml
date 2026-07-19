@@ -23,7 +23,9 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Apply browser integration repair
-        run: python .github/tmp/pr309_browser_repair.py
+        run: |
+          python .github/tmp/pr309_browser_repair.py
+          python .github/tmp/pr309_browser_test_repair.py
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
@@ -64,7 +66,10 @@ jobs:
       - name: Commit clean repair
         shell: bash
         run: |
-          git rm .github/workflows/tmp-pr309-browser-repair.yml .github/tmp/pr309_browser_repair.py
+          git rm \
+            .github/workflows/tmp-pr309-browser-repair.yml \
+            .github/tmp/pr309_browser_repair.py \
+            .github/tmp/pr309_browser_test_repair.py
           git add \
             web/src/features/marketplace/MarketplaceFeature.query-path.test.tsx \
             web/src/features/marketplace/MarketplaceFeature.tsx \
