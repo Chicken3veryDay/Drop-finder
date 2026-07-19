@@ -36,6 +36,7 @@ type CatalogGeneration = {
 type CatalogClient = {
   initialize(options?: { signal?: AbortSignal; force?: boolean }): Promise<CatalogGeneration>;
   loadDetail(productId: string, options?: { signal?: AbortSignal }): Promise<unknown>;
+  snapshot(): CatalogGeneration | null;
 };
 
 type PlatformQueryResult = {
@@ -101,8 +102,12 @@ type PwaCoordinator = {
   register(scriptUrl?: string, options?: { scope: string }): Promise<unknown>;
 };
 
+type GenerationAwareMarketplaceFeatureProps = MarketplaceFeatureProps & {
+  catalogGenerationId?: string | null;
+};
+
 type ProviderProps = {
-  mount: ComponentType<MarketplaceFeatureProps>;
+  mount: ComponentType<GenerationAwareMarketplaceFeatureProps>;
   capabilities: CapabilityReader;
 };
 
@@ -538,6 +543,7 @@ export function IntegratedMarketplaceProvider({
   const viewer = capabilities.getCapability<PlatformDocumentViewer>("platform.documents", 1);
   const pwa = capabilities.getCapability<PwaCoordinator>("platform.pwa", 1);
   const [products, setProducts] = useState<MarketplaceProduct[]>([]);
+  const [catalogGenerationId, setCatalogGenerationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -567,6 +573,7 @@ export function IntegratedMarketplaceProvider({
       const nextProducts = mapCatalogIndex(generation.index);
       await queryEngine.initialize(generation.generationId, toPlatformProducts(nextProducts));
       if (!mounted.current || signal?.aborted) return;
+      setCatalogGenerationId(generation.generationId);
       setProducts(nextProducts);
     } catch (caught) {
       if (!mounted.current || signal?.aborted) return;
@@ -599,13 +606,25 @@ export function IntegratedMarketplaceProvider({
 
   const loadDetail = useCallback(async (productId: string, signal: AbortSignal) => {
     if (!catalog) throw new Error("Catalog detail capability is unavailable.");
+    const requestedGenerationId = catalogGenerationId ?? catalog.snapshot()?.generationId;
+    if (!requestedGenerationId) throw new Error("Catalog generation is unavailable.");
     const payload = await catalog.loadDetail(productId, { signal });
-    if (signal.aborted) throw new DOMException("The operation was aborted", "AbortError");
-    setProducts((current) => current.map((product) =>
-      product.id === productId ? enrichProduct(product, payload) : product
-    ));
+    const payloadGenerationId = stringValue(objectValue(payload)?.generation_id);
+    if (
+      signal.aborted ||
+      catalog.snapshot()?.generationId !== requestedGenerationId ||
+      payloadGenerationId !== requestedGenerationId
+    ) {
+      throw new DOMException("The catalog generation changed", "AbortError");
+    }
+    setProducts((current) => {
+      if (catalog.snapshot()?.generationId !== requestedGenerationId) return current;
+      return current.map((product) =>
+        product.id === productId ? enrichProduct(product, payload) : product
+      );
+    });
     return mapCatalogDetail(payload, productId);
-  }, [catalog]);
+  }, [catalog, catalogGenerationId]);
 
   const documentViewer = useMemo(() => viewer ? {
     async open(request: DocumentViewerRequest) {
@@ -627,6 +646,7 @@ export function IntegratedMarketplaceProvider({
         error={error}
         onRetry={() => void refresh(true)}
         loadDetail={loadDetail}
+        catalogGenerationId={catalogGenerationId}
         documentViewer={documentViewer}
         asyncQueryEngine={queryAdapter}
         virtualization={virtualization}

@@ -28,6 +28,7 @@ export class CatalogGenerationClient {
       deploymentUrl: options.deploymentUrl ?? this.options.manifestUrl,
     });
     this.active = null;
+    this.activationEpoch = 0;
     this.lastNetworkVerification = null;
     this.pending = null;
     this.inflight = new Map();
@@ -161,7 +162,9 @@ export class CatalogGenerationClient {
 
   async loadDetail(productId, { signal, prefetch = false } = {}) {
     const generation = this.active;
+    const activationEpoch = this.activationEpoch;
     if (!generation) throw new PlatformError('not_initialized', 'Catalog generation is not initialized');
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
     const legacy = generation.manifest.details?.[productId] ?? generation.index.detail_shards?.[productId];
     const product = generation.index.products.find(row => String(row.product_id ?? row.id ?? '') === String(productId));
     const shard = Number(product?.detail_shard);
@@ -178,6 +181,7 @@ export class CatalogGenerationClient {
     );
     const cacheKey = `${generation.generationId}:${detailUrl}`;
     if (this.detailLru.has(cacheKey)) {
+      this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
       const hit = this.detailLru.get(cacheKey);
       this.detailLru.delete(cacheKey);
       this.detailLru.set(cacheKey, hit);
@@ -188,19 +192,29 @@ export class CatalogGenerationClient {
       maxBytes: Math.min(descriptor.bytes ?? this.options.maxDetailBytes, this.options.maxDetailBytes),
       cache: prefetch ? 'force-cache' : 'default',
     });
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
     const text = await response.text();
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
     await verifyHash(text, descriptor.sha256);
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
     let detail;
     try { detail = JSON.parse(text); }
     catch (cause) { throw new PlatformError('malformed_detail', 'Product detail data is malformed', cause); }
     if (detail.generation_id !== generation.generationId) {
       throw new PlatformError('generation_mismatch', 'Detail data belongs to another generation');
     }
+    this.assertDetailGenerationCurrent(generation, activationEpoch, signal);
     this.detailLru.set(cacheKey, detail);
     while (this.detailLru.size > this.options.maxDetailShards) {
       this.detailLru.delete(this.detailLru.keys().next().value);
     }
     return detail;
+  }
+
+  assertDetailGenerationCurrent(generation, activationEpoch, signal) {
+    if (signal?.aborted || this.active !== generation || this.activationEpoch !== activationEpoch) {
+      throw abortError();
+    }
   }
 
   cancelObsolete(reason = 'Catalog request superseded') {
@@ -213,6 +227,7 @@ export class CatalogGenerationClient {
     this.cancelObsolete('Catalog generation changed');
     this.detailLru.clear();
     this.lastNetworkVerification = null;
+    this.activationEpoch += 1;
     this.active = Object.freeze({ ...generation, source });
     for (const listener of this.listeners) listener({ type: 'generation-activated', previous, current: this.active });
   }
