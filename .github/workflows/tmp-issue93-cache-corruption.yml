@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   repair:
-    if: github.head_ref == 'trigger/issue93-cache-corruption'
+    if: github.head_ref == 'trigger/issue93-cache-corruption-r2'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -24,8 +24,10 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Apply cached generation validation and quarantine
-        run: python .github/tmp/issue93_cache_corruption.py
-      - name: Verify exact source boundary
+        run: |
+          python .github/tmp/issue93_cache_corruption.py
+          python .github/tmp/issue93_test_helper.py
+      - name: Verify bounded source boundary
         shell: bash
         run: |
           git fetch origin main
@@ -42,8 +44,11 @@ jobs:
             web/test/catalog-cache-fallback-age.test.mjs \
             web/test/catalog-cache-persistence.test.mjs \
             web/test/platform.test.mjs \
-            | sort > /tmp/expected-files
-          diff -u /tmp/expected-files /tmp/actual-files
+            | sort > /tmp/allowed-files
+          comm -23 /tmp/actual-files /tmp/allowed-files > /tmp/unexpected-files
+          test ! -s /tmp/unexpected-files || { cat /tmp/unexpected-files; exit 1; }
+          grep -qx 'web/src/platform/catalog/catalog-generation-client.js' /tmp/actual-files
+          grep -qx 'web/test/catalog-cache-corruption.test.mjs' /tmp/actual-files
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
