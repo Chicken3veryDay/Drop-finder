@@ -26,11 +26,9 @@ def build_artifact(
     candidates, checks = collect_candidates(products, profiles, **options)
     documents, unmatched, decisions = map_publication_documents(products, candidates)
     active_vendors = {vendor_id(product) for product in products if vendor_id(product)}
-    ambiguous = {
-        row.get("document_id")
-        for row in decisions
-        if isinstance(row, dict) and row.get("ambiguous")
-    }
+    ambiguous_count = sum(
+        1 for row in unmatched if row.get("reason") == "ambiguous_product_match"
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": timestamp(options.get("observed_at")),
@@ -41,7 +39,7 @@ def build_artifact(
         "candidate_count": len(candidates),
         "mapped_document_count": len(documents),
         "unmatched_count": len(unmatched),
-        "ambiguous_count": len(ambiguous),
+        "ambiguous_count": ambiguous_count,
         "documents": documents,
         "unmatched_documents": unmatched,
         "mapping_decisions": decisions,
@@ -91,10 +89,15 @@ def verify_artifact(
         if not str(document.get("url") or "").startswith(("https://", "http://")):
             raise ValueError("document URL is missing or invalid")
 
+    ambiguous_count = sum(
+        1 for row in unmatched
+        if isinstance(row, dict) and row.get("reason") == "ambiguous_product_match"
+    )
     expected = {
         "product_count": len(products),
         "mapped_document_count": len(documents),
         "unmatched_count": len(unmatched),
+        "ambiguous_count": ambiguous_count,
     }
     for field, value in expected.items():
         if artifact.get(field) != value:
@@ -104,6 +107,7 @@ def verify_artifact(
         "product_count": len(products),
         "mapped_document_count": len(documents),
         "unmatched_count": len(unmatched),
+        "ambiguous_count": ambiguous_count,
         "check_count": len(checks),
         "failed_check_count": sum(
             1 for item in checks if isinstance(item, dict) and not item.get("ok")
