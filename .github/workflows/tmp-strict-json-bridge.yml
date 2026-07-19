@@ -1,0 +1,48 @@
+name: Temporary Strict JSON Bridge
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-89-strict-json-publication
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    if: github.head_ref == 'trigger/strict-json-reconstruction'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-89-strict-json-publication
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply strict JSON reconstruction
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/tmp-strict-json-pr-runner.yml').read_text(encoding='utf-8')
+          marker = "          python - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY\n", start)
+          code = textwrap.dedent(workflow[start:end])
+          exec(compile(code, 'strict-json-reconstruction', 'exec'))
+          PY
+      - name: Validate strict JSON boundary
+        run: |
+          python -m compileall -q scripts/catalog_v4 tests/catalog_v4
+          python -m unittest tests.catalog_v4.test_strict_json tests.catalog_v4.test_builder
+      - name: Commit final reconstruction
+        shell: bash
+        run: |
+          rm -f .github/workflows/tmp-strict-json-builder.yml .github/workflows/tmp-strict-json-pr-runner.yml .github/workflows/tmp-strict-json-bridge.yml .github/.tmp-strict-json-trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: enforce strict JSON publication boundaries"
+          git push origin HEAD:fix/issue-89-strict-json-publication
