@@ -1,0 +1,37 @@
+name: Temporary PR 300 Python Diagnostic
+
+on:
+  push:
+    branches:
+      - verification/pr300-python-contracts
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run exact multi-product tests
+        shell: bash
+        run: |
+          set +e
+          python -m compileall -q scripts/multi_product tests/multi_product
+          python -m unittest discover -s tests/multi_product -v > /tmp/pr300-python.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/pr300-python.status
+          tail -n 360 /tmp/pr300-python.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr300-python-diagnostic
+          path: |
+            /tmp/pr300-python.log
+            /tmp/pr300-python.status
+      - name: Preserve result
+        run: test "$(cat /tmp/pr300-python.status)" = "0"
