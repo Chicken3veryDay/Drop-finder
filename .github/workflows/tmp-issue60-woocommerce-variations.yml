@@ -33,6 +33,10 @@ jobs:
           else
             status=$primary_status
           fi
+          if [ "$status" -eq 0 ]; then
+            python .github/tmp/issue60_record_compatibility.py >> /tmp/issue60-transform.log 2>&1
+            status=$?
+          fi
           printf '%s\n' "$status" > /tmp/issue60-transform.status
           cat /tmp/issue60-transform.log
           exit 0
@@ -155,7 +159,8 @@ jobs:
           git rm \
             .github/workflows/tmp-issue60-woocommerce-variations.yml \
             .github/tmp/issue60_woocommerce_variations.py \
-            .github/tmp/issue60_finish_scan_router.py
+            .github/tmp/issue60_finish_scan_router.py \
+            .github/tmp/issue60_record_compatibility.py
           git add scripts/cloud_scan.py tests/test_woocommerce_variations.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
