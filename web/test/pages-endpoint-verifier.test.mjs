@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { verifyPagesEndpoint } from "../scripts/verify-pages-endpoint.mjs";
 
 const baseUrl = "https://example.test/Drop-finder/";
+const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
-const validBodies = () => ({
-  [baseUrl]: `<!doctype html>
+const validBodies = () => {
+  const html = `<!doctype html>
 <html>
   <head>
     <link rel="manifest" href="./manifest.webmanifest" />
@@ -14,51 +16,98 @@ const validBodies = () => ({
     <script type="module" src="./assets/app-current.js"></script>
   </head>
   <body><div id="root"></div></body>
-</html>`,
-  [`${baseUrl}manifest.webmanifest`]: JSON.stringify({
-    short_name: "DropFinder",
-    start_url: "./",
-    scope: "./",
-  }),
-  [`${baseUrl}data/catalog.json`]: JSON.stringify({
+</html>`;
+  const compact = JSON.stringify({
+    generation_id: "generation-test",
     product_count: 1,
-    products: [{ id: "product-1" }],
-  }),
-  [`${baseUrl}data/status.json`]: JSON.stringify({
-    degraded_sources: 0,
-    healthy_sources: 2,
-    enabled_sources: 2,
-    services: { catalog: "healthy", publisher: "healthy" },
-  }),
-});
+    in_stock_variant_count: 1,
+    products: [{ product_id: "product-1" }],
+  });
+  return {
+    [baseUrl]: html,
+    [`${baseUrl}index.html`]: html,
+    [`${baseUrl}manifest.webmanifest`]: JSON.stringify({
+      short_name: "DropFinder",
+      start_url: "./",
+      scope: "./",
+    }),
+    [`${baseUrl}app-shell.json`]: JSON.stringify({
+      schema_version: "dropfinder-app-shell-v1",
+      assets: ["./", "./index.html"],
+    }),
+    [`${baseUrl}sw.js`]: "index.html manifest.webmanifest data/catalog.json data/status.json",
+    [`${baseUrl}data/catalog.json`]: JSON.stringify({
+      product_count: 1,
+      products: [{ id: "product-1" }],
+    }),
+    [`${baseUrl}data/status.json`]: JSON.stringify({
+      degraded_sources: 0,
+      healthy_sources: 2,
+      enabled_sources: 2,
+      services: { catalog: "healthy", publisher: "healthy" },
+    }),
+    [`${baseUrl}data/runtime.json`]: JSON.stringify({
+      zero_degraded_active_services: true,
+    }),
+    [`${baseUrl}data/catalog-v4/manifest.json`]: JSON.stringify({
+      schema_version: "dropfinder-catalog-manifest-v4",
+      generation_id: "generation-test",
+      product_count: 1,
+      in_stock_variant_count: 1,
+      compact_index: { sha256: sha256(compact) },
+    }),
+    [`${baseUrl}data/catalog-v4/index.json`]: compact,
+  };
+};
 
 const fetchFrom = (bodies, overrides = {}) => async (input) => {
   const url = String(input);
   if (url in overrides) return overrides[url];
   if (!(url in bodies)) return new Response("not found", { status: 404 });
+  const contentType = url.endsWith(".json") || url.endsWith(".webmanifest")
+    ? "application/json"
+    : url.endsWith(".js")
+      ? "text/javascript"
+      : "text/html";
   return new Response(bodies[url], {
     status: 200,
-    headers: { "content-type": url.endsWith(".json") ? "application/json" : "text/html" },
+    headers: { "content-type": contentType, "cache-control": "max-age=60" },
   });
 };
 
 test("accepts the current marketplace shell without the retired text marker", async () => {
   const result = await verifyPagesEndpoint(baseUrl, { fetchImpl: fetchFrom(validBodies()) });
 
-  assert.deepEqual(result, {
-    pageUrl: baseUrl,
-    productCount: 1,
-    healthySources: 2,
-  });
+  assert.equal(result.status, "verified");
+  assert.equal(result.pageUrl, baseUrl);
+  assert.equal(result.generationId, "generation-test");
+  assert.equal(result.productCount, 1);
+  assert.equal(result.catalogV4ProductCount, 1);
+  assert.equal(result.variantCount, 1);
+  assert.equal(result.healthySources, 2);
+  assert.equal(result.zeroDegraded, true);
+  assert.equal(result.endpoints["/"].sha256, result.endpoints["index.html"].sha256);
 });
 
 test("rejects a shell that does not reference the relative manifest", async () => {
   const bodies = validBodies();
-  bodies[baseUrl] = '<script type="module" src="./assets/app-current.js"></script>';
+  const invalid = '<script type="module" src="./assets/app-current.js"></script>';
+  bodies[baseUrl] = invalid;
+  bodies[`${baseUrl}index.html`] = invalid;
 
   await assert.rejects(
     verifyPagesEndpoint(baseUrl, { fetchImpl: fetchFrom(bodies) }),
     /relative PWA manifest/u,
+  );
+});
+
+test("rejects inconsistent root and index shell bytes", async () => {
+  const bodies = validBodies();
+  bodies[`${baseUrl}index.html`] = bodies[`${baseUrl}index.html`].replace("app-current", "app-other");
+
+  await assert.rejects(
+    verifyPagesEndpoint(baseUrl, { fetchImpl: fetchFrom(bodies) }),
+    /identical application shell bytes/u,
   );
 });
 
@@ -105,9 +154,9 @@ test("stream-bounds oversized responses without a content-length header", async 
 
   await assert.rejects(
     verifyPagesEndpoint(baseUrl, {
-      maxBytes: 32,
+      maxBytes: 512,
       fetchImpl: fetchFrom(bodies, {
-        [oversizedUrl]: new Response("x".repeat(64), { status: 200 }),
+        [oversizedUrl]: new Response("x".repeat(1024), { status: 200 }),
       }),
     }),
     /verification limit/u,
