@@ -45,18 +45,35 @@ jobs:
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
-      - name: Validate detail failure, frontend, and build contracts
+      - name: Capture detail failure, frontend, and build contracts
         working-directory: web
+        shell: bash
         run: |
-          npx vitest run src/features/marketplace/MarketplaceFeature.detail-failure.test.tsx src/features/marketplace/MarketplaceFeature.query-path.test.tsx
-          npm run lint
-          npm run typecheck
-          npm test
-          npm run benchmark
-          npm run build
-          npm run build:platform
-          npm run analyze:chunks
-          npm run pwa:check
+          set +e
+          {
+            npx vitest run src/features/marketplace/MarketplaceFeature.detail-failure.test.tsx src/features/marketplace/MarketplaceFeature.query-path.test.tsx
+            npm run lint
+            npm run typecheck
+            npm test
+            npm run benchmark
+            npm run build
+            npm run build:platform
+            npm run analyze:chunks
+            npm run pwa:check
+          } > /tmp/issue59-validation.log 2>&1
+          printf '%s\n' "$?" > /tmp/issue59-validation.status
+          tail -200 /tmp/issue59-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue59-validation
+          path: |
+            /tmp/issue59-validation.log
+            /tmp/issue59-validation.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on frontend validation failure
+        run: test "$(cat /tmp/issue59-validation.status)" -eq 0
       - name: Install Chromium
         working-directory: web
         run: npx playwright install --with-deps chromium
@@ -68,6 +85,7 @@ jobs:
         run: |
           git rm \
             .github/workflows/tmp-issue59-detail-failure.yml \
+            .github/workflows/tmp-issue59-apply-diagnostic.yml \
             .github/tmp/issue59_detail_failure_state.py \
             .github/tmp/issue59_detail_failure_css.py
           git add \
