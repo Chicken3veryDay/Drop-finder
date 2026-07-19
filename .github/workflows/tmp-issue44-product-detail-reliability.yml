@@ -22,7 +22,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply product detail reliability integration
-        run: python .github/tmp/issue44_product_detail_reliability.py
+        run: |
+          python .github/tmp/issue44_product_detail_reliability.py
+          python .github/tmp/issue44_test_import_path.py
       - name: Verify exact source boundary
         shell: bash
         run: |
@@ -51,7 +53,7 @@ jobs:
             python scripts/autonomous_worker_v2.py --self-test
             python scripts/autonomous_worker_v4.py --self-test
             rm -rf /tmp/issue44-merge-selftest
-            python scripts/autonomous_merge.py --self-test /tmp/issue44-merge-selftest
+            python scripts/autonomous_merge.py --self-test --output /tmp/issue44-merge-selftest
           } > /tmp/issue44-validation.log 2>&1
           status=$?
           printf '%s\n' "$status" > /tmp/issue44-validation.status
@@ -74,10 +76,18 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import sys
           import tempfile
           from pathlib import Path
-          from scripts import autonomous_worker_v4 as production
-          from scripts import product_detail_reliability as detail
+
+          scripts = Path.cwd() / 'scripts'
+          try:
+              sys.path.remove(str(scripts))
+          except ValueError:
+              pass
+          sys.path.insert(0, str(scripts))
+          import autonomous_worker_v4 as production
+          import product_detail_reliability as detail
 
           production.install_runtime()
           worker = production.worker
@@ -126,7 +136,8 @@ jobs:
         run: |
           git rm \
             .github/workflows/tmp-issue44-product-detail-reliability.yml \
-            .github/tmp/issue44_product_detail_reliability.py
+            .github/tmp/issue44_product_detail_reliability.py \
+            .github/tmp/issue44_test_import_path.py
           git add \
             scripts/autonomous_merge.py \
             scripts/autonomous_worker_v4.py \
