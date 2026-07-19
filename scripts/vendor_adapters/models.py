@@ -111,6 +111,9 @@ class MappingDecision:
     ambiguous: bool = False
     vendor_id: str = ""
     document_kind: DocumentKind = "unknown"
+    target_variant_id: str = ""
+    target_batch_id: str = ""
+    target_weight_grams: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
