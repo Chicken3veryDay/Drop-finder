@@ -1,0 +1,58 @@
+name: Temporary Atomic Frontend Tests
+
+on:
+  pull_request:
+    branches:
+      - verification/atomic-frontend-tests
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'trigger/atomic-frontend-tests'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: verification/atomic-frontend-tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+      - name: Capture unit suite
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          npm run test:unit > /tmp/atomic-unit.log 2>&1
+          printf '%s\n' "$?" > /tmp/atomic-unit.status
+          tail -n 240 /tmp/atomic-unit.log
+          exit 0
+      - name: Capture platform suite
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          npm run test:platform > /tmp/atomic-platform.log 2>&1
+          printf '%s\n' "$?" > /tmp/atomic-platform.status
+          tail -n 300 /tmp/atomic-platform.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: atomic-frontend-test-diagnostic
+          path: |
+            /tmp/atomic-unit.log
+            /tmp/atomic-unit.status
+            /tmp/atomic-platform.log
+            /tmp/atomic-platform.status
+      - name: Preserve results
+        run: |
+          test "$(cat /tmp/atomic-unit.status)" = "0"
+          test "$(cat /tmp/atomic-platform.status)" = "0"
