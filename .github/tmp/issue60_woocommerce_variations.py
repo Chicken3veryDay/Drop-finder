@@ -6,7 +6,7 @@ def replace_once(path: str, old: str, new: str) -> None:
     text = target.read_text(encoding="utf-8")
     count = text.count(old)
     if count != 1:
-        raise SystemExit(f"{path}: expected one anchor, found {count}")
+        raise SystemExit(f"{path}: expected one anchor, found {count}: {old[:120]!r}")
     target.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
