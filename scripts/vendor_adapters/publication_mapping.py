@@ -61,3 +61,70 @@ def _record(
     elif decision.scope == "batch":
         output["batch"] = candidate.batch_id
     return output
+
+
+def map_publication_documents(
+    products: list[dict[str, Any]],
+    candidates: list[DocumentCandidate],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    decisions = map_documents(products, candidates)
+    candidate_by_id = {candidate.document_id: candidate for candidate in candidates}
+    targets = _target_index(products)
+    selected: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    mapped_ids: set[str] = set()
+    ambiguous_ids = {decision.document_id for decision in decisions if decision.ambiguous}
+
+    for decision in decisions:
+        if decision.ambiguous:
+            continue
+        candidate = candidate_by_id.get(decision.document_id)
+        target = targets.get((decision.vendor_id, decision.product_id, decision.variant_id))
+        if candidate is None or target is None:
+            continue
+        record = _record(decision, candidate, target)
+        identity = str(
+            record.get("source_variant_id")
+            or record.get("grams")
+            or record.get("batch")
+            or ""
+        )
+        key = (
+            record["vendor_id"],
+            record["source_product_id"],
+            identity,
+            record["kind"],
+            record["url"],
+        )
+        selected[key] = record
+        mapped_ids.add(decision.document_id)
+
+    documents = sorted(
+        selected.values(),
+        key=lambda row: (
+            row["vendor_id"],
+            row["source_product_id"],
+            row["scope"],
+            row["kind"],
+            row["url"],
+        ),
+    )
+    unmatched: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if candidate.document_id in mapped_ids:
+            continue
+        row = candidate.to_dict()
+        row["reason"] = (
+            "ambiguous_product_match"
+            if candidate.document_id in ambiguous_ids
+            else "no_unambiguous_product_match"
+        )
+        unmatched.append(row)
+    unmatched.sort(
+        key=lambda row: (
+            row["vendor_id"],
+            row["document_kind"],
+            row["url"],
+            row["document_id"],
+        )
+    )
+    return documents, unmatched, [decision.to_dict() for decision in decisions]
