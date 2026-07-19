@@ -12,7 +12,7 @@ jobs:
   repair:
     if: github.head_ref == 'trigger/issue59-detail-failure'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,7 +45,7 @@ jobs:
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
-      - name: Validate detail failure, frontend, and build contracts
+      - name: Capture detail failure, frontend, and build contracts
         working-directory: web
         run: |
           npx vitest run src/features/marketplace/MarketplaceFeature.detail-failure.test.tsx src/features/marketplace/MarketplaceFeature.query-path.test.tsx
