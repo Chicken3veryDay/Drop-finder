@@ -1,0 +1,138 @@
+name: Temporary Issue 57 Publication Documents
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-57-publication-documents
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.head_ref == 'trigger/issue57-publication-documents'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-57-publication-documents
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Wire scheduled publication workflow
+        run: python .github/tmp/issue57_wire_publication.py
+      - name: Verify exact implementation boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/tmp/' | grep -v '^\.github/workflows/tmp-' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            .github/workflows/catalog-v4.yml \
+            .github/workflows/dropfinder-cloud.yml \
+            scripts/vendor_adapters/publication.py \
+            scripts/vendor_adapters/publication_artifact.py \
+            scripts/vendor_adapters/publication_common.py \
+            scripts/vendor_adapters/publication_discovery.py \
+            scripts/vendor_adapters/publication_mapping.py \
+            tests/test_vendor_document_publication.py \
+            tests/test_vendor_document_publication_workflows.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Capture deterministic publication validation
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts/vendor_adapters scripts/catalog_v4 tests
+            python -m unittest -v \
+              tests.test_vendor_document_publication \
+              tests.test_vendor_document_publication_workflows \
+              tests.test_catalog_v4_workflow_permissions \
+              tests.test_dropfinder_cloud_workflow_permissions
+            python -m unittest discover -s tests -p 'test_*.py' -v
+            rm -rf /tmp/issue57-offline /tmp/issue57-offline-documents.json
+            python -m scripts.vendor_adapters.publication generate \
+              --catalog cloud_pages/data/catalog.json \
+              --profiles data/vendor_profiles.json \
+              --output /tmp/issue57-offline-documents.json \
+              --offline
+            python -m scripts.vendor_adapters.publication verify \
+              --artifact /tmp/issue57-offline-documents.json \
+              --catalog cloud_pages/data/catalog.json \
+              --profiles data/vendor_profiles.json
+            python -m scripts.catalog_v4 \
+              --input cloud_pages/data/catalog.json \
+              --output /tmp/issue57-offline \
+              --vendor-profiles data/vendor_profiles.json \
+              --vendor-expansion data/vendor_expansion.json \
+              --documents /tmp/issue57-offline-documents.json \
+              --detail-shards 16 \
+              --minimum-products 1 \
+              --minimum-variants 1
+            python -m scripts.catalog_v4 \
+              --input cloud_pages/data/catalog.json \
+              --output /tmp/issue57-offline \
+              --verify-only
+          } > /tmp/issue57-validation.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue57-validation.status
+          tail -260 /tmp/issue57-validation.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue57-deterministic-validation
+          path: |
+            /tmp/issue57-validation.log
+            /tmp/issue57-validation.status
+            /tmp/issue57-offline-documents.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on deterministic failure
+        run: test "$(cat /tmp/issue57-validation.status)" -eq 0
+      - name: Run bounded live document probe
+        shell: bash
+        run: |
+          python -m scripts.vendor_adapters.publication generate \
+            --catalog cloud_pages/data/catalog.json \
+            --profiles data/vendor_profiles.json \
+            --output /tmp/issue57-live-documents.json \
+            --timeout 5 \
+            --max-product-pages-per-vendor 1
+          python -m scripts.vendor_adapters.publication verify \
+            --artifact /tmp/issue57-live-documents.json \
+            --catalog cloud_pages/data/catalog.json \
+            --profiles data/vendor_profiles.json \
+            > /tmp/issue57-live-receipt.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue57-live-probe
+          path: |
+            /tmp/issue57-live-documents.json
+            /tmp/issue57-live-receipt.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Push validated implementation
+        shell: bash
+        run: |
+          git add \
+            .github/workflows/catalog-v4.yml \
+            .github/workflows/dropfinder-cloud.yml \
+            scripts/vendor_adapters/publication.py \
+            scripts/vendor_adapters/publication_artifact.py \
+            scripts/vendor_adapters/publication_common.py \
+            scripts/vendor_adapters/publication_discovery.py \
+            scripts/vendor_adapters/publication_mapping.py \
+            tests/test_vendor_document_publication.py \
+            tests/test_vendor_document_publication_workflows.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: compose vendor documents into publication'
+          git push origin HEAD:fix/issue-57-publication-documents
