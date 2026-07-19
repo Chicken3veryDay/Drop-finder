@@ -1,0 +1,45 @@
+name: Temporary PR 331 Vendor Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - fix/issues-72-74-81-86-document-mapping
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'trigger/pr331-vendor-diagnostic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issues-72-74-81-86-document-mapping
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Capture complete deterministic Python suite
+        shell: bash
+        run: |
+          set +e
+          {
+            python -m compileall -q scripts tests
+            python -m scripts.vendor_adapters.cli verify
+            python -m unittest discover -s tests -p 'test_*.py' -v
+            python -m scripts.catalog_v4.selftest
+            python -m unittest discover -s tests/catalog_v4 -v
+          } > /tmp/pr331-diagnostic.log 2>&1
+          printf '%s\n' "$?" > /tmp/pr331-diagnostic.status
+          cat /tmp/pr331-diagnostic.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr331-vendor-diagnostic
+          path: |
+            /tmp/pr331-diagnostic.log
+            /tmp/pr331-diagnostic.status
+          if-no-files-found: error
+          retention-days: 7
