@@ -8,68 +8,35 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "dropfinder-cloud.yml"
 
 
-def _block(lines: list[str], header: str, indent: int) -> list[str]:
-    marker = f"{' ' * indent}{header}:"
-    start = lines.index(marker) + 1
-    result: list[str] = []
-    for line in lines[start:]:
-        if line.strip() and len(line) - len(line.lstrip()) <= indent:
-            break
-        result.append(line)
-    return result
-
-
-def _mapping(lines: list[str], header: str, indent: int) -> dict[str, str]:
-    entries: dict[str, str] = {}
-    entry_indent = " " * (indent + 2)
-    for line in _block(lines, header, indent):
-        if not line.startswith(entry_indent) or line.startswith(f"{entry_indent} "):
-            continue
-        key, separator, value = line.strip().partition(":")
-        if separator and value.strip():
-            entries[key] = value.strip()
-    return entries
-
-
 class DropfinderCloudWorkflowPermissionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        self.text = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_non_publishing_jobs_inherit_read_only_repository_access(self) -> None:
-        self.assertEqual(_mapping(self.lines, "permissions", 0), {"contents": "read"})
-        for job in ("python-validation", "frontend", "scan"):
-            self.assertNotIn("    permissions:", _block(self.lines, job, 2))
+    def test_workflow_is_read_only_while_atomic_publication_is_rebuilt(self) -> None:
+        self.assertIn("permissions:\n  contents: read", self.text)
+        self.assertNotIn("contents: write", self.text)
+        self.assertNotIn("git push", self.text)
+        self.assertNotIn("git pull --rebase", self.text)
+        self.assertNotIn("gh-pages", self.text)
+        self.assertNotIn("jobs:\n  publish:", self.text)
 
-    def test_publish_job_uses_shared_pages_lock_and_snapshot_guard(self) -> None:
-        publish = _block(self.lines, "publish", 2)
-        self.assertEqual(
-            _mapping(publish, "concurrency", 4),
-            {"group": "dropfinder-pages-publication", "cancel-in-progress": "false"},
-        )
-        joined = "\n".join(publish)
-        self.assertIn(
-            "The production snapshot was superseded on main; refusing to publish stale",
-            joined,
-        )
-        self.assertIn(
-            "does not match the canonical main snapshot.",
-            joined,
-        )
+    def test_scheduled_mutation_is_paused(self) -> None:
+        self.assertNotIn("schedule:", self.text)
+        self.assertIn("workflow_dispatch:", self.text)
+        self.assertIn("if: github.event_name == 'workflow_dispatch'", self.text)
 
-    def test_only_publish_job_receives_repository_write_access(self) -> None:
-        publish = _block(self.lines, "publish", 2)
-        self.assertEqual(_mapping(publish, "permissions", 4), {"contents": "write"})
-        self.assertEqual(
-            [line for line in self.lines if line.strip() == "contents: write"],
-            ["      contents: write"],
-        )
+    def test_manual_scans_only_upload_bounded_artifacts(self) -> None:
+        self.assertIn("name: Manual retrieval worker", self.text)
+        self.assertIn("actions/upload-artifact@v4", self.text)
+        self.assertIn("retention-days: 1", self.text)
+        self.assertNotIn("actions/download-artifact", self.text)
 
     def test_permission_regression_runs_when_it_changes(self) -> None:
         path_entry = '      - "tests/test_dropfinder_cloud_workflow_permissions.py"'
-        self.assertEqual(self.lines.count(path_entry), 2)
+        self.assertEqual(self.text.count(path_entry), 2)
         self.assertIn(
-            "          python -m unittest -v tests.test_dropfinder_cloud_workflow_permissions",
-            self.lines,
+            "python -m unittest -v tests.test_dropfinder_cloud_workflow_permissions",
+            self.text,
         )
 
 
