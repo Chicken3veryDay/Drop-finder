@@ -13,6 +13,7 @@ from . import (
     VENDOR_SCHEMA_VERSION,
 )
 from .selection import select_active_variant
+from .strict_json import StrictJsonError, load_path_strict
 
 
 class VerificationError(RuntimeError):
@@ -21,8 +22,8 @@ class VerificationError(RuntimeError):
 
 def _load(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = load_path_strict(path)
+    except StrictJsonError as exc:
         raise VerificationError(f"unable to load {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise VerificationError(f"expected JSON object: {path}")

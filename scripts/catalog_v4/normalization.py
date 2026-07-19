@@ -8,6 +8,8 @@ import urllib.parse
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Iterable
 
+from .strict_json import json_safe_raw
+
 SPACE = re.compile(r"\s+")
 PUNCT_SPACE = re.compile(r"[\s\-_/|,:;·•]+")
 GRAM_PATTERN = re.compile(
@@ -331,13 +333,20 @@ def rating(score: Any, count: Any) -> tuple[float | None, int | None, dict[str, 
     parsed_score = safe_decimal(score, minimum=Decimal("0"), maximum=Decimal("5"))
     parsed_count = safe_decimal(count, minimum=Decimal("1"), maximum=Decimal("100000000"))
     if parsed_score is None or parsed_count is None or parsed_count != parsed_count.to_integral_value():
-        return None, None, {"source": "unavailable", "raw_score": score, "raw_count": count}
+        return None, None, {
+            "source": "unavailable",
+            "raw_score": json_safe_raw(score),
+            "raw_count": json_safe_raw(count),
+        }
     return (
         float(parsed_score.quantize(Decimal("0.01"))),
         int(parsed_count),
-        {"source": "source_exposed", "raw_score": score, "raw_count": count},
+        {
+            "source": "source_exposed",
+            "raw_score": json_safe_raw(score),
+            "raw_count": json_safe_raw(count),
+        },
     )
-
 
 def explicit_stock(value: Any) -> tuple[bool | None, str]:
     if isinstance(value, bool):
