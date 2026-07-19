@@ -12,7 +12,7 @@ jobs:
   repair:
     if: github.head_ref == 'trigger/issue93-cache-corruption'
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,6 +37,7 @@ jobs:
             git diff --name-only HEAD
           } | grep -v '^\.github/' | sort -u > /tmp/actual-files
           printf '%s\n' \
+            web/src/features/platform/canonical-catalog-generation-client.test.ts \
             web/src/platform/catalog/catalog-generation-client.js \
             web/test/catalog-cache-corruption.test.mjs \
             web/test/catalog-cache-fallback-age.test.mjs \
@@ -110,6 +111,7 @@ jobs:
             .github/tmp/issue93_cache_corruption.py \
             .github/tmp/issue93_test_helper.py
           git add \
+            web/src/features/platform/canonical-catalog-generation-client.test.ts \
             web/src/platform/catalog/catalog-generation-client.js \
             web/test/catalog-cache-corruption.test.mjs \
             web/test/catalog-cache-fallback-age.test.mjs \
