@@ -1,0 +1,33 @@
+name: Temporary Issue 4 Source Boundary Audit
+
+on:
+  pull_request:
+    branches:
+      - audit/issue-4-source-boundary
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    if: github.head_ref == 'trigger/issue4-source-boundary'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Inventory source boundary
+        run: python .github/tmp/issue4_source_audit.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue4-source-boundary
+          path: |
+            /tmp/issue4-source-boundary.json
+            /tmp/issue4-source-boundary.md
+          if-no-files-found: error
+          retention-days: 7
