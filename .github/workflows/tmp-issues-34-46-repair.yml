@@ -57,11 +57,35 @@ jobs:
         run: test "$(cat /tmp/issues-34-46-focused.status)" = 0
       - name: Validate complete frontend contracts
         working-directory: web
+        shell: bash
         run: |
-          npm run lint
-          npm run typecheck
-          npm test
-          npm run benchmark
+          set +e
+          {
+            npm run lint
+            lint_status=$?
+            npm run typecheck
+            typecheck_status=$?
+            npm test
+            test_status=$?
+            npm run benchmark
+            benchmark_status=$?
+            printf 'statuses lint=%s typecheck=%s test=%s benchmark=%s\n' \
+              "$lint_status" "$typecheck_status" "$test_status" "$benchmark_status"
+            test "$lint_status" = 0 -a "$typecheck_status" = 0 -a "$test_status" = 0 -a "$benchmark_status" = 0
+          } > /tmp/issues-34-46-complete.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issues-34-46-complete.status
+          cat /tmp/issues-34-46-complete.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issues-34-46-complete
+          path: |
+            /tmp/issues-34-46-complete.log
+            /tmp/issues-34-46-complete.status
+      - name: Stop on complete frontend failure
+        run: test "$(cat /tmp/issues-34-46-complete.status)" = 0
       - name: Verify exact source boundary
         shell: bash
         run: |
