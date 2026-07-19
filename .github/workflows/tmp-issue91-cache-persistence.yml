@@ -1,0 +1,69 @@
+name: Temporary Issue 91 Cache Persistence
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-91-cache-persistence-degraded
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue91-cache-persistence'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-91-cache-persistence-degraded
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply cache-persistence degradation repair
+        run: python .github/tmp/issue91_cache_persistence.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-cache-persistence.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Validate focused and complete frontend contracts
+        working-directory: web
+        run: |
+          node --test test/catalog-cache-persistence.test.mjs test/platform.test.mjs test/catalog-bounds.test.mjs
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run benchmark
+          npm run build
+          npm run build:platform
+          npm run analyze:chunks
+          npm run pwa:check
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue91-cache-persistence.yml \
+            .github/tmp/issue91_cache_persistence.py
+          git add \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-cache-persistence.test.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: activate verified catalogs when persistence fails"
+          git push origin HEAD:fix/issue-91-cache-persistence-degraded
