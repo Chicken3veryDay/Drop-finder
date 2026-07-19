@@ -17,13 +17,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/issues-34-46-query-pagination-retention-current-main
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Apply query and pagination lifecycle repair
-        run: python .github/tmp/issues_34_46_query_pagination_repair.py
+        run: |
+          python .github/tmp/issues_34_46_query_pagination_repair.py
+          python .github/tmp/issues_34_46_legacy_test_repair.py
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
@@ -62,7 +65,11 @@ jobs:
       - name: Verify exact source boundary
         shell: bash
         run: |
-          git diff --name-only HEAD | grep -v '^\.github/' | sort > /tmp/actual-files
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
           printf '%s\n' \
             web/src/features/integration/register-marketplace-props.tsx \
             web/src/features/marketplace/MarketplaceFeature.tsx \
@@ -70,6 +77,7 @@ jobs:
             web/src/features/marketplace/marketplace-pagination.ts \
             web/src/features/marketplace/test/marketplace-pagination.test.ts \
             web/src/platform/virtualization/virtual-marketplace-adapter.js \
+            web/test/platform.test.mjs \
             web/test/virtual-page-retention.test.mjs \
             | sort > /tmp/expected-files
           diff -u /tmp/expected-files /tmp/actual-files
@@ -79,7 +87,10 @@ jobs:
       - name: Commit clean implementation
         shell: bash
         run: |
-          git rm .github/workflows/tmp-issues-34-46-repair.yml .github/tmp/issues_34_46_query_pagination_repair.py
+          git rm \
+            .github/workflows/tmp-issues-34-46-repair.yml \
+            .github/tmp/issues_34_46_query_pagination_repair.py \
+            .github/tmp/issues_34_46_legacy_test_repair.py
           git add \
             web/src/features/integration/register-marketplace-props.tsx \
             web/src/features/marketplace/MarketplaceFeature.tsx \
@@ -87,6 +98,7 @@ jobs:
             web/src/features/marketplace/marketplace-pagination.ts \
             web/src/features/marketplace/test/marketplace-pagination.test.ts \
             web/src/platform/virtualization/virtual-marketplace-adapter.js \
+            web/test/platform.test.mjs \
             web/test/virtual-page-retention.test.mjs
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
