@@ -113,15 +113,24 @@ def score_candidate(
     reasons: list[str] = ["same vendor"]
     matched_scopes = {"vendor"}
     score = SCORE_VENDOR
+    product_associated = False
 
     if candidate.product_id and candidate.product_id == product_id:
         score += SCORE_PRODUCT_ID
         matched_scopes.add("product")
         reasons.append("exact product id")
+        product_associated = True
     elif name and candidate_name and (name == candidate_name or name in candidate_name or candidate_name in name):
         score += SCORE_PRODUCT_NAME
         matched_scopes.add("product")
         reasons.append("normalized product-name match")
+        product_associated = True
+
+    # Variant, batch, and package weight refine an established product
+    # association. They are not globally identifying properties and must never
+    # create a mapping from vendor-only evidence.
+    if not product_associated:
+        return _unmatched(product, candidate, "product identity insufficient")
 
     if variant_id and candidate.variant_id and variant_id == candidate.variant_id:
         score += SCORE_VARIANT_ID
