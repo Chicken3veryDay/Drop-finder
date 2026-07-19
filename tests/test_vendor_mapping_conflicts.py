@@ -82,13 +82,13 @@ class MappingConflictTests(unittest.TestCase):
                 "v", "https://v.example/product.pdf", "coa", product_id="p1"
             ),
             "weight": DocumentCandidate(
-                "v", "https://v.example/weight.pdf", "coa", weight_grams=7
+                "v", "https://v.example/weight.pdf", "coa", product_id="p1", weight_grams=7
             ),
             "batch": DocumentCandidate(
-                "v", "https://v.example/batch.pdf", "coa", batch_id="B1"
+                "v", "https://v.example/batch.pdf", "coa", product_id="p1", batch_id="B1"
             ),
             "variant": DocumentCandidate(
-                "v", "https://v.example/variant.pdf", "coa", variant_id="v7"
+                "v", "https://v.example/variant.pdf", "coa", product_id="p1", variant_id="v7"
             ),
         }
         scored = {
