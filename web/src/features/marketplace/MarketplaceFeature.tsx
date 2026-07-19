@@ -48,6 +48,13 @@ const EMPTY_DETAIL: MarketplaceProductDetail = {
   effects: [],
   growEnvironment: "unknown",
 };
+const EMPTY_DETAILS_BY_PRODUCT_ID: Record<string, MarketplaceProductDetail> = Object.freeze({});
+
+type DetailLoadStatus = "loading" | "ready" | "error";
+type DetailLoadEntry = {
+  status: DetailLoadStatus;
+  message: string | null;
+};
 
 function stopEvent(event: { stopPropagation(): void }): void {
   event.stopPropagation();
@@ -286,21 +293,27 @@ function documentBody(): HTMLElement {
 function ExpandedDetail({
   row,
   detail,
+  detailStatus,
+  detailError,
   selectedVariantId,
   onVariantChange,
   onOpenDocument,
+  onRetryDetail,
 }: {
   row: MarketplaceRowProjection;
   detail: MarketplaceProductDetail;
+  detailStatus: DetailLoadStatus;
+  detailError: string | null;
   selectedVariantId: string | undefined;
   onVariantChange(variantId: string): void;
   onOpenDocument(kind: DocumentKind, variant: MarketplaceVariant, element: HTMLElement): void;
+  onRetryDetail(): void;
 }) {
   const variant = resolveVariant(row.product, selectedVariantId, row.activeVariant);
   const imageUrl = variant.imageUrl || detail.imageUrl;
   const effects = (detail.effects ?? []).filter(Boolean);
-  const coa = resolveDocument(variant, "coa");
-  const terpene = resolveDocument(variant, "terpene");
+  const coa = detailStatus === "ready" ? resolveDocument(variant, "coa") : null;
+  const terpene = detailStatus === "ready" ? resolveDocument(variant, "terpene") : null;
 
   return (
     <div className="df-expanded" id={`detail-${row.product.id}`} role="region" aria-label={`${row.product.strainName} details`}>
@@ -327,16 +340,35 @@ function ExpandedDetail({
           <strong>{formatPricePerGram(variant.pricePerGram)}</strong>
         </div>
       </div>
-      <div className="df-expanded-facts">
-        <p>
-          <span>Effects</span>
-          <strong>{effects.length > 0 ? effects.join(", ") : "—"}</strong>
-        </p>
-        <p>
-          <span>Grow</span>
-          <strong>{detail.growEnvironment === "unknown" ? "Unknown" : detail.growEnvironment}</strong>
-        </p>
-      </div>
+      {detailStatus === "error" ? (
+        <div className="df-detail-state" role="alert">
+          <p>{detailError || "Product details and lab documents could not be loaded."}</p>
+          <button
+            type="button"
+            onClick={(event: any) => {
+              stopEvent(event);
+              onRetryDetail();
+            }}
+          >
+            Retry details
+          </button>
+        </div>
+      ) : detailStatus === "loading" ? (
+        <div className="df-detail-state" role="status" aria-live="polite">
+          Loading product details and lab documents…
+        </div>
+      ) : (
+        <div className="df-expanded-facts">
+          <p>
+            <span>Effects</span>
+            <strong>{effects.length > 0 ? effects.join(", ") : "—"}</strong>
+          </p>
+          <p>
+            <span>Grow</span>
+            <strong>{detail.growEnvironment === "unknown" ? "Unknown" : detail.growEnvironment}</strong>
+          </p>
+        </div>
+      )}
       <div className="df-expanded-actions">
         <a href={variant.productUrl} target="_blank" rel="noreferrer" onClick={stopEvent}>
           Product link
@@ -372,18 +404,24 @@ function MarketplaceRow({
   row,
   expanded,
   detail,
+  detailStatus,
+  detailError,
   selectedVariantId,
   onToggle,
   onVariantChange,
   onOpenDocument,
+  onRetryDetail,
 }: {
   row: MarketplaceRowProjection;
   expanded: boolean;
   detail: MarketplaceProductDetail;
+  detailStatus: DetailLoadStatus;
+  detailError: string | null;
   selectedVariantId: string | undefined;
   onToggle(): void;
   onVariantChange(variantId: string): void;
   onOpenDocument(kind: DocumentKind, variant: MarketplaceVariant, element: HTMLElement): void;
+  onRetryDetail(): void;
 }) {
   const rating = formatRating(row.product.rating, row.product.reviewCount);
   const onKeyDown = (event: { key: string; preventDefault(): void }) => {
@@ -417,9 +455,12 @@ function MarketplaceRow({
         <ExpandedDetail
           row={row}
           detail={detail}
+          detailStatus={detailStatus}
+          detailError={detailError}
           selectedVariantId={selectedVariantId}
           onVariantChange={onVariantChange}
           onOpenDocument={onOpenDocument}
+          onRetryDetail={onRetryDetail}
         />
       ) : null}
     </article>
@@ -428,7 +469,7 @@ function MarketplaceRow({
 
 export function MarketplaceFeature({
   products,
-  detailsByProductId = {},
+  detailsByProductId = EMPTY_DETAILS_BY_PRODUCT_ID,
   loading = false,
   refreshing = false,
   error = null,
@@ -452,8 +493,19 @@ export function MarketplaceFeature({
   const loadedDetails = useMemo(
     () => loadedDetailState.generationId === catalogGenerationId
       ? loadedDetailState.details
-      : {},
+      : EMPTY_DETAILS_BY_PRODUCT_ID,
     [catalogGenerationId, loadedDetailState],
+  );
+  const [detailLoadState, setDetailLoadState] = useState<{
+    generationId: string | null;
+    entries: Record<string, DetailLoadEntry>;
+  }>({ generationId: catalogGenerationId, entries: {} });
+  const [detailRetryTokens, setDetailRetryTokens] = useState<Record<string, number>>({});
+  const activeDetailLoads = useMemo(
+    () => detailLoadState.generationId === catalogGenerationId
+      ? detailLoadState.entries
+      : {},
+    [catalogGenerationId, detailLoadState],
   );
   const [fallbackDocument, setFallbackDocument] = useState<{
     document: MarketplaceDocument;
@@ -597,19 +649,52 @@ const effectiveLoading = loading || queryLoading;
 
   useEffect(() => {
     if (!expandedProductId || !loadDetail || detailsByProductId[expandedProductId] || loadedDetails[expandedProductId]) return;
+    const productId = expandedProductId;
     const controller = new AbortController();
-    void loadDetail(expandedProductId, controller.signal).then((detail) => {
-      if (!controller.signal.aborted) {
-        setLoadedDetailState((current) => ({
-generationId: catalogGenerationId,
-details: current.generationId === catalogGenerationId
-  ? { ...current.details, [detail.productId]: detail }
-  : { [detail.productId]: detail },
-        }));
-      }
-    }).catch(() => undefined);
+    setDetailLoadState((current) => ({
+      generationId: catalogGenerationId,
+      entries: {
+        ...(current.generationId === catalogGenerationId ? current.entries : {}),
+        [productId]: { status: "loading", message: null },
+      },
+    }));
+    void loadDetail(productId, controller.signal).then((detail) => {
+      if (controller.signal.aborted) return;
+      setLoadedDetailState((current) => ({
+        generationId: catalogGenerationId,
+        details: current.generationId === catalogGenerationId
+          ? { ...current.details, [detail.productId]: detail }
+          : { [detail.productId]: detail },
+      }));
+      setDetailLoadState((current) => ({
+        generationId: catalogGenerationId,
+        entries: {
+          ...(current.generationId === catalogGenerationId ? current.entries : {}),
+          [productId]: { status: "ready", message: null },
+        },
+      }));
+    }).catch((caught: unknown) => {
+      if (controller.signal.aborted || (caught instanceof DOMException && caught.name === "AbortError")) return;
+      setDetailLoadState((current) => ({
+        generationId: catalogGenerationId,
+        entries: {
+          ...(current.generationId === catalogGenerationId ? current.entries : {}),
+          [productId]: {
+            status: "error",
+            message: "Product details and lab documents could not be loaded.",
+          },
+        },
+      }));
+    });
     return () => controller.abort();
-  }, [catalogGenerationId, expandedProductId, loadDetail, detailsByProductId, loadedDetails]);
+  }, [
+    catalogGenerationId,
+    expandedProductId,
+    loadDetail,
+    detailsByProductId,
+    loadedDetails,
+    detailRetryTokens,
+  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -629,6 +714,12 @@ details: current.generationId === catalogGenerationId
   };
 
   const clearFilters = () => setFilters(DEFAULT_FILTERS);
+  const retryDetail = useCallback((productId: string) => {
+    setDetailRetryTokens((current) => ({
+      ...current,
+      [productId]: (current[productId] ?? 0) + 1,
+    }));
+  }, []);
 
   const openDocument = async (
     kind: DocumentKind,
@@ -656,10 +747,17 @@ details: current.generationId === catalogGenerationId
       row={row}
       expanded={expandedProductId === row.product.id}
       detail={detailsByProductId[row.product.id] || loadedDetails[row.product.id] || { ...EMPTY_DETAIL, productId: row.product.id }}
+      detailStatus={
+        detailsByProductId[row.product.id] || loadedDetails[row.product.id] || !loadDetail
+          ? "ready"
+          : activeDetailLoads[row.product.id]?.status ?? "loading"
+      }
+      detailError={activeDetailLoads[row.product.id]?.message ?? null}
       selectedVariantId={selectedVariantIds[row.product.id]}
       onToggle={() => setExpandedProductId((current) => nextExpandedProduct(current, row.product.id))}
       onVariantChange={(variantId) => setSelectedVariantIds((current) => ({ ...current, [row.product.id]: variantId }))}
       onOpenDocument={(kind, variant, element) => void openDocument(kind, variant, element, row.product.id)}
+      onRetryDetail={() => retryDetail(row.product.id)}
     />
   );
 
