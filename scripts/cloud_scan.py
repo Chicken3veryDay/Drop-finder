@@ -47,6 +47,7 @@ TITLE=re.compile(r'<title\b[^>]*>(.*?)</title>',re.I|re.S)
 STOCK_SEPARATOR=re.compile(r'[_\-/]+')
 NEGATIVE_STOCK=re.compile(r'\b(?:out\s+of\s+stock|outofstock|sold\s+out|unavailable|not(?:\s+\w+){0,2}\s+(?:available|in\s+stock))\b',re.I)
 POSITIVE_STOCK=re.compile(r'\b(?:in\s+stock|instock|available(?:\s+for\s+order)?)\b',re.I)
+WOO_VARIATION_RETRY_DELAYS=(0.0,1.0,3.0);WOO_VARIATION_MAX_PAGES=5;WOO_RETRYABLE_HTTP={408,425,429,500,502,503,504}
 
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 def text(v): return WS.sub(' ',TAG.sub(' ',html.unescape(str(v or '')))).strip()
@@ -94,6 +95,11 @@ def record(sid,vendor,route,name,target,desc='',price=None,stock='',image='',var
  p=num(price);g,weight_label=weight(combined);pots=[num(x) for x in POTENCY.findall(combined)];pot=max([x for x in pots if x and x<=100],default=None);stock_state=availability(stock)
  stock_method='explicit_boolean' if isinstance(stock,bool) else 'explicit_source_state' if stock_state!='unknown' else 'unknown'
  return {'id':hashlib.sha256(f'{sid}|{target}|{variant}'.encode()).hexdigest()[:24],'source_id':sid,'vendor':vendor,'name':name,'url':target,'image':url(image,route[1]) if image else '', 'price':p,'grams':g,'source_weight_label':weight_label,'weight_provenance':'explicit_text' if weight_label else 'unavailable','price_per_gram':round(p/g,4) if p and g else None,'thca':pot,'availability':stock_state,'availability_raw':stock,'availability_normalization':stock_method,'variant':text(variant),'source_type':route[0],'route_url':route[1],'collected_at':now()}
+def record_identity(row,source_product_id='',source_variant_id='',regular_price=None):
+ if not row:return None
+ row=dict(row);row['source_product_id']=text(source_product_id);row['source_variant_id']=text(source_variant_id);regular=num(regular_price);current=num(row.get('price'));row['original_price']=regular if regular and current and regular>current else None
+ if source_variant_id:row['id']=hashlib.sha256(f"{row.get('source_id')}|{row.get('url')}|{source_variant_id}".encode()).hexdigest()[:24]
+ return row
 def shopify(payload,sid,vendor,route):
  data=json.loads(payload);rows=[];base=route[1].split('/collections/',1)[0].split('/products.json',1)[0]
  for item in data.get('products',[]) if isinstance(data,dict) else []:
@@ -103,19 +109,89 @@ def shopify(payload,sid,vendor,route):
   for v in variants:
    if not isinstance(v,dict):continue
    vt=text(v.get('title'));name=item.get('title');name=f'{name} {vt}' if vt and vt.lower()!='default title' else name
-   r=record(sid,vendor,route,name,f"{product_url}?variant={v.get('id')}" if v.get('id') else product_url,item.get('body_html',''),v.get('price'),v.get('available'),image,vt)
+   r=record_identity(record(sid,vendor,route,name,f"{product_url}?variant={v.get('id')}" if v.get('id') else product_url,item.get('body_html',''),v.get('price'),v.get('available'),image,vt),item.get('id'),v.get('id'),v.get('compare_at_price'))
    if r:rows.append(r)
  return rows
+def woo_price(item):
+ prices=item.get('prices') or {};minor=int(prices.get('currency_minor_unit',2) or 2)
+ current=next((num(prices.get(k)) for k in ('sale_price','price','regular_price') if num(prices.get(k))),None);regular=num(prices.get('regular_price'))
+ return (round(current/(10**minor),4) if current else None,round(regular/(10**minor),4) if regular else None)
+def woo_variant_label(item,parent=None):
+ raw=text(item.get('variation'))
+ if raw:return raw
+ attrs=[]
+ for value in item.get('attributes',[]) if isinstance(item.get('attributes'),list) else []:
+  if isinstance(value,dict):
+   label=text(value.get('value') or value.get('term') or value.get('option'))
+   if label:attrs.append(label)
+ if attrs:return ' / '.join(attrs)
+ name=text(item.get('name'));parent_name=text((parent or {}).get('name'))
+ if parent_name and name.lower().startswith(parent_name.lower()):name=name[len(parent_name):].lstrip(' -–—:')
+ return name
+def woo_variant_endpoint(route_url,parent_id,page):
+ parsed=urllib.parse.urlsplit(route_url);query={'type':'variation','parent':str(parent_id),'per_page':'100','page':str(page)}
+ return urllib.parse.urlunsplit((parsed.scheme,parsed.netloc,parsed.path,'&'.join(f'{urllib.parse.quote(k)}={urllib.parse.quote(v)}' for k,v in query.items()),''))
+def woo_fetch_variations(parent,route):
+ diagnostics={'variation_requests':0,'variation_retries':0,'variation_failures':0,'variation_failure_reasons':{}};rows=[]
+ parent_id=parent.get('id')
+ if parent_id in (None,''):
+  diagnostics['variation_failures']=1;diagnostics['variation_failure_reasons']={'variation_parent_id_missing':1};return rows,diagnostics
+ for page in range(1,WOO_VARIATION_MAX_PAGES+1):
+  target=woo_variant_endpoint(route[1],parent_id,page);page_rows=None;terminal=''
+  for attempt,delay in enumerate(WOO_VARIATION_RETRY_DELAYS,1):
+   if delay:time.sleep(delay)
+   diagnostics['variation_requests']+=1
+   try:raw,ctype,status=fetch(target)
+   except urllib.error.HTTPError as e:
+    terminal=f'variation_http_{e.code}'
+    if e.code in WOO_RETRYABLE_HTTP and attempt<len(WOO_VARIATION_RETRY_DELAYS):diagnostics['variation_retries']+=1;continue
+    break
+   except Exception as e:
+    terminal=f'variation_{type(e).__name__.lower()}'
+    if isinstance(e,(TimeoutError,urllib.error.URLError)) and attempt<len(WOO_VARIATION_RETRY_DELAYS):diagnostics['variation_retries']+=1;continue
+    break
+   if status!=200:
+    terminal=f'variation_http_{status}'
+    if status in WOO_RETRYABLE_HTTP and attempt<len(WOO_VARIATION_RETRY_DELAYS):diagnostics['variation_retries']+=1;continue
+    break
+   if ctype not in {'application/json','text/json'}:terminal='variation_invalid_content_type';break
+   try:decoded=json.loads(raw)
+   except json.JSONDecodeError:terminal='variation_invalid_json';break
+   page_rows=decoded if isinstance(decoded,list) else decoded.get('products',[]) if isinstance(decoded,dict) else []
+   break
+  if page_rows is None:
+   diagnostics['variation_failures']+=1;diagnostics['variation_failure_reasons'][terminal or 'variation_fetch_failed']=diagnostics['variation_failure_reasons'].get(terminal or 'variation_fetch_failed',0)+1;break
+  rows.extend(item for item in page_rows if isinstance(item,dict))
+  if len(page_rows)<100:break
+ else:
+  diagnostics['variation_failures']+=1;diagnostics['variation_failure_reasons']['variation_page_limit']=1
+ return rows,diagnostics
 def woo(payload,sid,vendor,route):
- data=json.loads(payload);data=data if isinstance(data,list) else data.get('products',[]);rows=[]
+ data=json.loads(payload);data=data if isinstance(data,list) else data.get('products',[]);rows=[];diagnostics={'variable_parents':0,'variation_requests':0,'variation_retries':0,'variation_failures':0,'variation_failure_reasons':{},'variation_rejections':0,'variation_rejection_reasons':{}}
+ def merge_diag(extra):
+  for key in ('variation_requests','variation_retries','variation_failures'):diagnostics[key]+=int(extra.get(key) or 0)
+  for reason,count in (extra.get('variation_failure_reasons') or {}).items():diagnostics['variation_failure_reasons'][reason]=diagnostics['variation_failure_reasons'].get(reason,0)+int(count)
+ def reject(reason):diagnostics['variation_rejections']+=1;diagnostics['variation_rejection_reasons'][reason]=diagnostics['variation_rejection_reasons'].get(reason,0)+1
  for item in data:
   if not isinstance(item,dict):continue
-  prices=item.get('prices') or {};minor=int(prices.get('currency_minor_unit',2) or 2);p=next((num(prices.get(k)) for k in ('sale_price','price','regular_price') if num(prices.get(k))),None);p=round(p/(10**minor),4) if p else None
-  images=item.get('images') or [];image=images[0].get('src','') if images and isinstance(images[0],dict) else ''
-  cats=' '.join(text(x.get('name')) for x in item.get('categories',[]) if isinstance(x,dict))
-  r=record(sid,vendor,route,item.get('name'),item.get('permalink'),f"{item.get('short_description','')} {item.get('description','')} {cats}",p,item.get('stock_status') or item.get('is_in_stock'),image)
-  if r:rows.append(r)
- return rows
+  is_variation=str(item.get('type') or '').lower()=='variation' or bool(item.get('parent'))
+  if is_variation:
+   parent={};variations=[item]
+  elif item.get('has_options') is True or str(item.get('type') or '').lower()=='variable':
+   diagnostics['variable_parents']+=1;variations,extra=woo_fetch_variations(item,route);merge_diag(extra);parent=item
+  else:
+   p,regular=woo_price(item);images=item.get('images') or [];image=images[0].get('src','') if images and isinstance(images[0],dict) else '';cats=' '.join(text(x.get('name')) for x in item.get('categories',[]) if isinstance(x,dict));r=record_identity(record(sid,vendor,route,item.get('name'),item.get('permalink'),f"{item.get('short_description','')} {item.get('description','')} {cats}",p,item.get('stock_status') or item.get('is_in_stock'),image,''),item.get('id'),'',regular)
+   if r:rows.append(r)
+   continue
+  for variation in variations:
+   stock=variation.get('stock_status') if variation.get('stock_status') not in (None,'') else variation.get('is_in_stock')
+   if availability(stock)!='in_stock':reject('variation_not_explicitly_in_stock');continue
+   label=woo_variant_label(variation,parent)
+   if not label or grams(label) is None:reject('variation_weight_missing');continue
+   p,regular=woo_price(variation);parent_name=parent.get('name') or variation.get('name');parent_id=parent.get('id') or variation.get('parent');variation_id=variation.get('id');parent_url=parent.get('permalink') or variation.get('permalink');target=f"{parent_url}{'&' if '?' in str(parent_url) else '?'}variant={variation_id}" if variation_id else parent_url;images=variation.get('images') or parent.get('images') or [];image=images[0].get('src','') if images and isinstance(images[0],dict) else '';cats=' '.join(text(x.get('name')) for x in parent.get('categories',[]) if isinstance(x,dict));desc=f"{variation.get('description','')} {cats}";name=f'{parent_name} {label}'
+   r=record_identity(record(sid,vendor,route,name,target,desc,p,stock,image,label),parent_id,variation_id,regular)
+   if r:rows.append(r)
+ return dedupe(rows),diagnostics
 def objects(v):
  if isinstance(v,dict):
   yield v
@@ -180,9 +256,11 @@ def scan(source):
   rr={'route_id':f'{sid}-{idx}','url':route[1],'source_type':route[0]};t=time.monotonic()
   try:
    payload,ctype,status=fetch(route[1]);rr.update(http_status=status,content_type=ctype)
-   rows=shopify(payload,sid,vendor,route) if route[0]=='shopify' else woo(payload,sid,vendor,route) if route[0]=='woo' else html_with_details(payload,sid,vendor,route)
-   rr.update(status='healthy' if rows else 'empty',products=len(rows),duration_seconds=round(time.monotonic()-t,3));attempts.append(rr)
-   if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':'healthy','products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}
+   if route[0]=='shopify':rows=shopify(payload,sid,vendor,route);route_diagnostics={}
+   elif route[0]=='woo':rows,route_diagnostics=woo(payload,sid,vendor,route)
+   else:rows=html_with_details(payload,sid,vendor,route);route_diagnostics={}
+   rr.update(route_diagnostics);route_status='degraded' if rr.get('variation_failures') else 'healthy' if rows else 'empty';rr.update(status=route_status,products=len(rows),duration_seconds=round(time.monotonic()-t,3));attempts.append(rr)
+   if rows:return dedupe(rows),{'source_id':sid,'name':vendor,'enabled':True,'status':route_status,'health_reason_codes':['woocommerce_variation_incomplete'] if route_status=='degraded' else [],'products':len(rows),'routes_attempted':len(attempts),'active_route':route[1],'route_results':attempts,'duration_seconds':round(time.monotonic()-started,3)}
   except urllib.error.HTTPError as e:rr.update(status='http_error',http_status=e.code,error=f'HTTP {e.code}')
   except Exception as e:rr.update(status='error',error=f'{type(e).__name__}: {text(e)[:220]}')
   if not attempts or attempts[-1] is not rr:
