@@ -44,63 +44,92 @@ jobs:
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
-      - name: Capture focused cache contracts
+      - name: Validate focused cache contracts
+        working-directory: web
+        run: |
+          node --test test/service-worker.test.mjs test/service-worker-document-bound.test.mjs
+          npx vitest run src/features/integration/register-marketplace-props.document-cache.test.ts
+          npm run typecheck
+      - name: Install Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Capture blank-shell diagnostics
         working-directory: web
         shell: bash
         run: |
+          cat > tests/e2e/issue26-diagnostic.spec.mjs <<'EOF'
+          import { test } from '@playwright/test';
+          import fs from 'node:fs/promises';
+
+          test('capture integrated app boot diagnostics', async ({ page, context }) => {
+            const events = [];
+            page.on('console', message => events.push({ type: 'console', level: message.type(), text: message.text() }));
+            page.on('pageerror', error => events.push({ type: 'pageerror', name: error.name, message: error.message, stack: error.stack }));
+            page.on('requestfailed', request => events.push({ type: 'requestfailed', url: request.url(), failure: request.failure() }));
+            page.on('response', response => {
+              if (response.status() >= 400 || /(?:\.js|\.tsx?|catalog-v4|sw\.js)(?:\?|$)/.test(response.url())) {
+                events.push({ type: 'response', url: response.url(), status: response.status(), contentType: response.headers()['content-type'] || '' });
+              }
+            });
+            const response = await page.goto('/', { waitUntil: 'networkidle' }).catch(error => {
+              events.push({ type: 'goto-error', message: error.message, stack: error.stack });
+              return null;
+            });
+            await page.waitForTimeout(2500);
+            const state = await page.evaluate(async () => {
+              const registrations = 'serviceWorker' in navigator
+                ? await navigator.serviceWorker.getRegistrations().then(rows => rows.map(row => ({ scope: row.scope, active: row.active?.scriptURL || '', waiting: row.waiting?.scriptURL || '', installing: row.installing?.scriptURL || '' })))
+                : [];
+              const cacheRows = 'caches' in globalThis
+                ? await caches.keys().then(async names => Promise.all(names.map(async name => {
+                    const cache = await caches.open(name);
+                    const keys = await cache.keys();
+                    return { name, keys: keys.map(key => key.url) };
+                  })))
+                : [];
+              return {
+                href: location.href,
+                title: document.title,
+                readyState: document.readyState,
+                bodyText: document.body?.innerText || '',
+                bodyHtml: document.body?.innerHTML || '',
+                rootHtml: document.querySelector('#root')?.innerHTML || '',
+                registrations,
+                controller: navigator.serviceWorker?.controller?.scriptURL || '',
+                caches: cacheRows,
+              };
+            }).catch(error => ({ evaluateError: error.message }));
+            const payload = {
+              response: response ? { url: response.url(), status: response.status(), headers: response.headers() } : null,
+              events,
+              state,
+            };
+            await fs.writeFile('/tmp/issue26-page-diagnostic.json', JSON.stringify(payload, null, 2));
+            console.log(JSON.stringify(payload, null, 2));
+          });
+          EOF
           set +e
-          {
-            node --test test/service-worker.test.mjs test/service-worker-document-bound.test.mjs
-            npx vitest run src/features/integration/register-marketplace-props.document-cache.test.ts
-            npm run typecheck
-          } > /tmp/issue26-cache-key.log 2>&1
+          npx playwright test tests/e2e/issue26-diagnostic.spec.mjs --project=chromium > /tmp/issue26-diagnostic.log 2>&1
           status=$?
-          printf '%s\n' "$status" > /tmp/issue26-cache-key.status
-          cat /tmp/issue26-cache-key.log
+          rm -f tests/e2e/issue26-diagnostic.spec.mjs
+          printf '%s\n' "$status" > /tmp/issue26-diagnostic.status
+          cat /tmp/issue26-diagnostic.log
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: issue26-cache-key
+          name: issue26-page-diagnostic
           path: |
-            /tmp/issue26-cache-key.log
-            /tmp/issue26-cache-key.status
-          if-no-files-found: error
-          retention-days: 7
-      - name: Stop on focused cache failure
-        shell: bash
-        run: test "$(cat /tmp/issue26-cache-key.status)" -eq 0
-      - name: Capture integrated browser matrix
-        working-directory: web
-        shell: bash
-        run: |
-          set +e
-          npx playwright install --with-deps chromium firefox webkit > /tmp/issue26-browser-install.log 2>&1
-          install_status=$?
-          if [ "$install_status" -eq 0 ]; then
-            npx playwright test tests/e2e/integrated-app.spec.mjs > /tmp/issue26-browser.log 2>&1
-            status=$?
-          else
-            cp /tmp/issue26-browser-install.log /tmp/issue26-browser.log
-            status=$install_status
-          fi
-          printf '%s\n' "$status" > /tmp/issue26-browser.status
-          cat /tmp/issue26-browser.log
-          exit 0
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: issue26-browser
-          path: |
-            /tmp/issue26-browser.log
-            /tmp/issue26-browser.status
+            /tmp/issue26-diagnostic.log
+            /tmp/issue26-diagnostic.status
+            /tmp/issue26-page-diagnostic.json
             web/test-results
             web/playwright-report
           if-no-files-found: warn
           retention-days: 7
-      - name: Stop on browser failure
+      - name: Stop after diagnostic failure
         shell: bash
-        run: test "$(cat /tmp/issue26-browser.status)" -eq 0
+        run: test "$(cat /tmp/issue26-diagnostic.status)" -eq 0
       - name: Commit clean browser repair
         shell: bash
         run: |
