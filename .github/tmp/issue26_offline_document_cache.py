@@ -105,6 +105,13 @@ async function cacheApplicationShell() {
 service_worker_test = "web/test/service-worker.test.mjs"
 replace_once(
     service_worker_test,
+    '''  const context = vm.createContext({ self, caches, fetch: fetcher, Request, Response, Headers, URL, DOMException, console, setTimeout, clearTimeout });
+''',
+    '''  const context = vm.createContext({ self, caches, fetch: fetcher, Request, Response, Headers, ReadableStream, URL, DOMException, console, setTimeout, clearTimeout });
+''',
+)
+replace_once(
+    service_worker_test,
     '''function navigationRequest(path) {
 ''',
     '''test('explicitly opened same-origin and cross-origin documents reopen offline from the dedicated cache', async () => {
