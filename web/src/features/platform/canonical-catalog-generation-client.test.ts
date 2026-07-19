@@ -40,12 +40,14 @@ describe("CanonicalCatalogGenerationClient", () => {
     expect(result.products[0].variants).toEqual([malformedIndex.products[0].variants[0]]);
   });
 
-  it("canonicalizes a cached fallback before activating or returning it", async () => {
+  it("canonicalizes a fresh cached fallback before activating or returning it", async () => {
+    const cachedAt = Date.now();
     const cached = {
       generationId: "g1",
-      manifest: { generation_id: "g1" },
+      manifest: { generation_id: "g1", generated_at: new Date(cachedAt).toISOString() },
       index: malformedIndex,
-      activatedAt: 1,
+      activatedAt: cachedAt,
+      cachedAt,
       source: "cache",
     };
     const cache = {
@@ -64,5 +66,6 @@ describe("CanonicalCatalogGenerationClient", () => {
     const snapshot = client.snapshot();
     expect(snapshot).not.toBeNull();
     expect(snapshot?.index.products).toEqual(result.index.products);
+    expect(snapshot?.source).toBe("cache-fallback");
   });
 });
