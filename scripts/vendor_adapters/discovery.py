@@ -97,7 +97,8 @@ def discover_html_documents(
     candidates: list[DocumentCandidate] = []
     seen: set[str] = set()
     for index, (href, label, attrs) in enumerate(parser.links):
-        context = " ".join([label, attrs.get("title", ""), attrs.get("aria-label", ""), href])
+        filename_label = _filename_label(href)
+        context = " ".join([label, attrs.get("title", ""), attrs.get("aria-label", ""), filename_label, href])
         if not (DOCUMENT_WORDS.search(context) or PDF_WORDS.search(href)):
             continue
         try:
