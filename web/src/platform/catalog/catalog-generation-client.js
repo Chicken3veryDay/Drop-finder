@@ -96,7 +96,21 @@ export class CatalogGenerationClient {
         if (!allowCachedFallback || error?.name === 'AbortError') throw error;
         const cached = await this.cache.getLastComplete();
         if (!cached) throw error;
-        const accepted = acceptCachedGeneration(cached, this.options.maxFallbackAgeMs);
+        const validation = validateCachedGeneration(cached, this.options.schemaVersion);
+        if (!validation.valid) {
+          let cleanupError = null;
+          try { await this.cache.deleteLastComplete?.(); }
+          catch (caught) { cleanupError = caught; }
+          this.emit(Object.freeze({
+            type: 'generation-cache-corrupt',
+            generationId: typeof cached?.generationId === 'string' ? cached.generationId : null,
+            code: validation.code,
+            error: validation.error ?? null,
+            cleanupError,
+          }));
+          throw error;
+        }
+        const accepted = acceptCachedGeneration(validation.generation, this.options.maxFallbackAgeMs);
         if (!accepted) {
           throw new PlatformError(
             'cache_fallback_stale',
@@ -322,18 +336,35 @@ export class BrowserGenerationCache {
   }
 
   async getLastComplete() {
-    try {
-      if (!this.cacheStorage?.open) return null;
-      const cache = await this.cacheStorage.open(this.cacheName);
-      const response = await cache.match(this.key);
-      if (!response) return null;
-      const record = await response.json();
-      if (record?.schemaVersion !== CACHE_RECORD_SCHEMA) return null;
-      if (record.deploymentKey !== this.deploymentKey) return null;
-      if (!this.owns(record.generation)) return null;
-      if (!Number.isFinite(record.cachedAt)) return null;
-      return Object.freeze({ ...record.generation, cachedAt: record.cachedAt });
-    } catch { return null; }
+    if (!this.cacheStorage?.open) return null;
+    let cache;
+    try { cache = await this.cacheStorage.open(this.cacheName); }
+    catch { return null; }
+    let response;
+    try { response = await cache.match(this.key); }
+    catch { return null; }
+    if (!response) return null;
+    let record;
+    try { record = await response.json(); }
+    catch {
+      try { if (typeof cache.delete === 'function') await cache.delete(this.key); } catch {}
+      return null;
+    }
+    if (!record || typeof record !== 'object' || Array.isArray(record)
+        || record.schemaVersion !== CACHE_RECORD_SCHEMA
+        || record.deploymentKey !== this.deploymentKey
+        || !Number.isFinite(record.cachedAt)
+        || !this.owns(record.generation)) {
+      try { if (typeof cache.delete === 'function') await cache.delete(this.key); } catch {}
+      return null;
+    }
+    return Object.freeze({ ...record.generation, cachedAt: record.cachedAt });
+  }
+
+  async deleteLastComplete() {
+    if (!this.cacheStorage?.open) return false;
+    const cache = await this.cacheStorage.open(this.cacheName);
+    return cache.delete(this.key);
   }
 
   async putComplete(value) {
@@ -364,6 +395,64 @@ export class MemoryGenerationCache {
   async putComplete(value) {
     this.complete = Object.freeze({ ...value, cachedAt: Date.now() });
   }
+  async deleteLastComplete() {
+    const existed = this.complete !== null;
+    this.complete = null;
+    return existed;
+  }
+}
+
+function cacheValidationFailure(code, error = null) {
+  return Object.freeze({ valid: false, code, error });
+}
+
+function validateCachedGeneration(value, expectedSchema = null) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return cacheValidationFailure('cache_value_invalid');
+  }
+  if (typeof value.__cacheCorruptionCode === 'string') {
+    return cacheValidationFailure(value.__cacheCorruptionCode, value.__cacheCorruptionError ?? null);
+  }
+  const generationId = typeof value.generationId === 'string' ? value.generationId.trim() : '';
+  if (!generationId) return cacheValidationFailure('cache_generation_id_missing');
+
+  let manifest;
+  try { manifest = assertGenerationEnvelope(value.manifest, expectedSchema); }
+  catch (error) { return cacheValidationFailure('cache_manifest_invalid', error); }
+  if (manifest.generation_id !== generationId) {
+    return cacheValidationFailure('cache_generation_mismatch');
+  }
+
+  const index = value.index;
+  if (!index || typeof index !== 'object' || Array.isArray(index)) {
+    return cacheValidationFailure('cache_index_invalid');
+  }
+  if (index.generation_id !== generationId) {
+    return cacheValidationFailure('cache_generation_mismatch');
+  }
+  if (!Array.isArray(index.products)) {
+    return cacheValidationFailure('cache_products_invalid');
+  }
+  if (index.product_count != null
+      && (!Number.isInteger(index.product_count) || index.product_count !== index.products.length)) {
+    return cacheValidationFailure('cache_product_count_mismatch');
+  }
+
+  if (index.product_count != null
+      && (!Number.isInteger(index.product_count) || index.product_count !== index.products.length)) {
+    return cacheValidationFailure('cache_product_count_mismatch');
+  }
+  for (const product of index.products) {
+    if (!product || typeof product !== 'object' || Array.isArray(product)) {
+      return cacheValidationFailure('cache_product_invalid');
+    }
+    const productId = typeof product.product_id === 'string' ? product.product_id.trim() : '';
+    if (!productId) return cacheValidationFailure('cache_product_invalid');
+    if (!Array.isArray(product.variants)) {
+      return cacheValidationFailure('cache_variants_invalid');
+    }
+  }
+  return Object.freeze({ valid: true, generation: value });
 }
 
 function acceptCachedGeneration(value, maxFallbackAgeMs, now = Date.now()) {

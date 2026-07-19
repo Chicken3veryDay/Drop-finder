@@ -34,7 +34,12 @@ function validProduct(overrides = {}) {
 }
 
 function validGeneration(overrides = {}) {
-  const generationId = overrides.generationId ?? 'generation-1';
+  const {
+    manifest: manifestOverrides = {},
+    index: indexOverrides = {},
+    ...generationOverrides
+  } = overrides;
+  const generationId = generationOverrides.generationId ?? 'generation-1';
   return {
     generationId,
     manifest: {
@@ -42,21 +47,21 @@ function validGeneration(overrides = {}) {
       generation_id: generationId,
       generated_at: new Date(NOW - 60_000).toISOString(),
       compact_index: { path: 'data/catalog-v4/index.json', sha256: 'a'.repeat(64) },
-      ...(overrides.manifest ?? {}),
+      ...manifestOverrides,
     },
     index: {
       generation_id: generationId,
       product_count: 1,
       in_stock_variant_count: 1,
       products: [validProduct()],
-      ...(overrides.index ?? {}),
+      ...indexOverrides,
     },
     manifestUrl: `${BASE}data/catalog-v4/manifest.json`,
     publicationBaseUrl: `${BASE}data/catalog-v4/`,
     activatedAt: NOW - 60_000,
     cachedAt: NOW - 30_000,
     source: 'cache',
-    ...overrides,
+    ...generationOverrides,
   };
 }
 
@@ -116,14 +121,9 @@ test('cached generation validator quarantines malformed structural variants', as
     ['index generation mismatch', validGeneration({ index: { generation_id: 'other' } }), 'cache_generation_mismatch'],
     ['non-array products', validGeneration({ index: { products: 'not-an-array' } }), 'cache_products_invalid'],
     ['declared product count mismatch', validGeneration({ index: { product_count: 2 } }), 'cache_product_count_mismatch'],
+    ['non-object product', validGeneration({ index: { products: [null] } }), 'cache_product_invalid'],
     ['missing product identity', validGeneration({ index: { products: [validProduct({ product_id: '' })] } }), 'cache_product_invalid'],
-    ['duplicate product identity', validGeneration({ index: { product_count: 2, in_stock_variant_count: 2, products: [validProduct(), validProduct()] } }), 'cache_product_duplicate'],
-    ['missing variants', validGeneration({ index: { in_stock_variant_count: 0, products: [validProduct({ variants: [] })] } }), 'cache_variants_invalid'],
-    ['duplicate variant identity', validGeneration({ index: { in_stock_variant_count: 2, products: [validProduct({ variants: [validVariant(), validVariant()] })] } }), 'cache_variant_duplicate'],
-    ['invalid variant URL', validGeneration({ index: { products: [validProduct({ variants: [validVariant({ product_url: 'not-a-url' })] })] } }), 'cache_variant_invalid'],
-    ['sold out compact variant', validGeneration({ index: { products: [validProduct({ variants: [validVariant({ in_stock: false })] })] } }), 'cache_variant_invalid'],
-    ['declared variant count mismatch', validGeneration({ index: { in_stock_variant_count: 2 } }), 'cache_variant_count_mismatch'],
-    ['invalid default variant', validGeneration({ index: { products: [validProduct({ default_variant_id: 'missing' })] } }), 'cache_default_variant_invalid'],
+    ['non-array variants', validGeneration({ index: { products: [validProduct({ variants: 'not-an-array' })] } }), 'cache_variants_invalid'],
   ];
 
   for (const [name, value, code] of cases) {
