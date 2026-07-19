@@ -12,7 +12,7 @@ jobs:
   repair:
     if: github.head_ref == 'trigger/issue59-detail-failure'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,35 +45,62 @@ jobs:
       - name: Install frozen frontend dependencies
         working-directory: web
         run: npm ci
-      - name: Capture detail failure, frontend, and build contracts
+      - name: Capture focused detail-state contracts
         working-directory: web
         shell: bash
         run: |
           set +e
-          {
-            npx vitest run src/features/marketplace/MarketplaceFeature.detail-failure.test.tsx src/features/marketplace/MarketplaceFeature.query-path.test.tsx
-            npm run lint
-            npm run typecheck
-            npm test
-            npm run benchmark
-            npm run build
-            npm run build:platform
-            npm run analyze:chunks
-            npm run pwa:check
-          } > /tmp/issue59-validation.log 2>&1
-          printf '%s\n' "$?" > /tmp/issue59-validation.status
-          tail -200 /tmp/issue59-validation.log
+          timeout 6m npx vitest run \
+            src/features/marketplace/MarketplaceFeature.detail-failure.test.tsx \
+            src/features/marketplace/MarketplaceFeature.query-path.test.tsx \
+            > /tmp/issue59-focused.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue59-focused.status
+          cat /tmp/issue59-focused.log
           exit 0
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: issue59-validation
+          name: issue59-focused
           path: |
-            /tmp/issue59-validation.log
-            /tmp/issue59-validation.status
+            /tmp/issue59-focused.log
+            /tmp/issue59-focused.status
           if-no-files-found: error
           retention-days: 7
-      - name: Stop on frontend validation failure
-        run: test "$(cat /tmp/issue59-validation.status)" -eq 0
+      - name: Stop on focused failure
+        run: test "$(cat /tmp/issue59-focused.status)" -eq 0
+      - name: Capture complete frontend tests
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          timeout 16m npm test > /tmp/issue59-tests.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/issue59-tests.status
+          tail -250 /tmp/issue59-tests.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue59-tests
+          path: |
+            /tmp/issue59-tests.log
+            /tmp/issue59-tests.status
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stop on complete test failure
+        run: test "$(cat /tmp/issue59-tests.status)" -eq 0
+      - name: Validate static, performance, build, and PWA contracts
+        working-directory: web
+        shell: bash
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run benchmark
+          npm run build
+          npm run build:platform
+          npm run analyze:chunks
+          npm run pwa:check
       - name: Install Chromium
         working-directory: web
         run: npx playwright install --with-deps chromium
