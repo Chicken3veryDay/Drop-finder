@@ -198,8 +198,12 @@ def _flatten_records(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             for variant in variants:
                 if not isinstance(variant, dict):
                     continue
+                parent_documents = parent.get("documents") if isinstance(parent.get("documents"), list) else []
+                child_documents = variant.get("documents") if isinstance(variant.get("documents"), list) else []
                 merged = dict(parent)
                 merged.update(variant)
+                if parent_documents or "documents" in variant:
+                    merged["documents"] = [*parent_documents, *child_documents]
                 merged.setdefault("source_title", raw.get("source_title") or raw.get("name") or raw.get("title"))
                 merged.setdefault("name", raw.get("name") or raw.get("title"))
                 output.append(merged)
