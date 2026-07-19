@@ -1,7 +1,14 @@
 name: DropFinder Autonomous Cloud
 
 on:
+  schedule:
+    - cron: "23 */3 * * *"
   workflow_dispatch:
+    inputs:
+      continuity_override_reason:
+        description: "Audited reason for intentionally accepting a continuity violation"
+        required: false
+        type: string
   push:
     branches: [main]
     paths:
@@ -11,8 +18,12 @@ on:
       - "scripts/autonomous_worker_v2.py"
       - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
+      - "scripts/catalog_v4/**"
+      - "scripts/multi_product/**"
+      - "scripts/publication_release.py"
       - "web/**"
       - "tests/test_dropfinder_cloud_workflow_permissions.py"
+      - "tests/test_publication_release.py"
       - ".github/workflows/dropfinder-cloud.yml"
   pull_request:
     branches: [main]
@@ -23,45 +34,51 @@ on:
       - "scripts/autonomous_worker_v2.py"
       - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
+      - "scripts/catalog_v4/**"
+      - "scripts/multi_product/**"
+      - "scripts/publication_release.py"
       - "web/**"
       - "tests/test_dropfinder_cloud_workflow_permissions.py"
+      - "tests/test_publication_release.py"
       - ".github/workflows/dropfinder-cloud.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: dropfinder-autonomous-cloud-validation-${{ github.ref }}
+  group: dropfinder-autonomous-validation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   python-validation:
     name: Python contract validation
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run affected Python self-tests
+      - name: Run Python publication and retrieval contracts
         run: |
           set -euo pipefail
           python -m py_compile \
             scripts/cloud_scan.py scripts/cloud_scan_v2.py \
             scripts/autonomous_worker.py scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \
-            web/scripts/publication_gate.py
+            scripts/publication_release.py web/scripts/publication_gate.py
           python scripts/cloud_scan_v2.py --self-test
           python scripts/autonomous_worker_v4.py --self-test
           rm -rf /tmp/dropfinder-autonomous-merge-test
           python scripts/autonomous_merge.py --self-test
-          python -m unittest -v tests.test_dropfinder_cloud_workflow_permissions
+          python -m unittest -v \
+            tests.test_publication_release \
+            tests.test_dropfinder_cloud_workflow_permissions
 
   frontend:
     name: Frontend foundation validation
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -83,9 +100,9 @@ jobs:
           npm run verify:publication
 
   scan:
-    name: Manual retrieval worker ${{ matrix.shard }}
+    name: Retrieval worker ${{ matrix.shard }}
     needs: python-validation
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
@@ -94,6 +111,8 @@ jobs:
         shard: [0, 1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -104,9 +123,193 @@ jobs:
           python scripts/autonomous_worker_v4.py \
             --shard "${{ matrix.shard }}" --shards 6 --workers 3 \
             --output "scan-output/${{ matrix.shard }}"
+          python scripts/publication_release.py stamp-shard \
+            "scan-output/${{ matrix.shard }}/shard-${{ matrix.shard }}.json" \
+            --source-commit "${GITHUB_SHA}"
       - uses: actions/upload-artifact@v4
         with:
           name: autonomous-shard-${{ matrix.shard }}
           path: scan-output/${{ matrix.shard }}/shard-${{ matrix.shard }}.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
+
+  publish:
+    name: Atomic generation and Pages publication
+    needs: [python-validation, frontend, scan]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write
+    concurrency:
+      group: dropfinder-pages-publication
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PAGE_URL: https://chicken3veryday.github.io/Drop-finder/
+      OVERRIDE_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.continuity_override_reason || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: autonomous-shard-*
+          path: scan-results
+          merge-multiple: true
+      - name: Prove immutable source and shard ownership
+        run: |
+          set -euo pipefail
+          git fetch origin main gh-pages
+          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}" || {
+            echo "::error::Main advanced after this run started; fresh scans are required."
+            exit 1
+          }
+          python scripts/publication_release.py verify-shards scan-results \
+            --expected-commit "${GITHUB_SHA}" \
+            --output /tmp/shard-provenance.json
+          echo "ROLLBACK_COMMIT=$(git rev-parse origin/gh-pages)" >> "${GITHUB_ENV}"
+      - name: Build one coupled legacy and catalog-v4 candidate
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/dropfinder-generated-data /tmp/dropfinder-candidate
+          mkdir -p /tmp/dropfinder-generated-data
+          python scripts/autonomous_merge.py \
+            --input scan-results --output /tmp/dropfinder-generated-data \
+            --min-active 5 --min-products 25
+          python -m scripts.catalog_v4 \
+            --input /tmp/dropfinder-generated-data/catalog.json \
+            --output /tmp/dropfinder-generated-data \
+            --detail-shards 16 \
+            --minimum-products 1 \
+            --minimum-variants 1
+          python -m scripts.catalog_v4 \
+            --input /tmp/dropfinder-generated-data/catalog.json \
+            --output /tmp/dropfinder-generated-data \
+            --verify-only
+          rm -rf cloud_pages/data cloud_pages/assets
+          mkdir -p cloud_pages/data
+          cp -a /tmp/dropfinder-generated-data/. cloud_pages/data/
+          npm --prefix web ci --no-audit --no-fund
+          npm --prefix web run build
+          cp -a cloud_pages /tmp/dropfinder-candidate
+      - name: Validate candidate and continuity against live rollback generation
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/dropfinder-previous
+          git worktree add --detach /tmp/dropfinder-previous origin/gh-pages
+          node web/scripts/verify-publication.mjs /tmp/dropfinder-candidate
+          python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-candidate
+          python -m scripts.catalog_v4 \
+            --input /tmp/dropfinder-candidate/data/catalog.json \
+            --output /tmp/dropfinder-candidate/data \
+            --verify-only
+          python scripts/publication_release.py check-continuity \
+            /tmp/dropfinder-candidate \
+            --previous /tmp/dropfinder-previous \
+            --override-reason "${OVERRIDE_REASON}" \
+            --output /tmp/publication-continuity.json
+      - name: Commit candidate to main using compare-and-swap
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}" || {
+            echo "::error::Main advanced before candidate commit; refusing to rebase generated output."
+            exit 1
+          }
+          git config user.name "dropfinder-publication-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cloud_pages
+          if git diff --cached --quiet; then
+            generated_commit="$(git rev-parse HEAD)"
+          else
+            git commit -m "chore: publish atomic DropFinder generation [skip ci]"
+            generated_commit="$(git rev-parse HEAD)"
+            git push origin HEAD:main
+          fi
+          echo "GENERATED_COMMIT=${generated_commit}" >> "${GITHUB_ENV}"
+      - name: Publish candidate by normal fast-forward commit
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/dropfinder-pages
+          git worktree add --detach /tmp/dropfinder-pages origin/gh-pages
+          find /tmp/dropfinder-pages -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
+          cp -a /tmp/dropfinder-candidate/. /tmp/dropfinder-pages/
+          touch /tmp/dropfinder-pages/.nojekyll
+          git -C /tmp/dropfinder-pages add -A
+          if git -C /tmp/dropfinder-pages diff --cached --quiet; then
+            publication_commit="$(git -C /tmp/dropfinder-pages rev-parse HEAD)"
+          else
+            git -C /tmp/dropfinder-pages commit -m "Publish atomic DropFinder generation ${GENERATED_COMMIT}"
+            publication_commit="$(git -C /tmp/dropfinder-pages rev-parse HEAD)"
+            git -C /tmp/dropfinder-pages push origin HEAD:gh-pages
+          fi
+          echo "PUBLICATION_COMMIT=${publication_commit}" >> "${GITHUB_ENV}"
+      - name: Verify branch and public endpoint generation
+        run: |
+          set -euo pipefail
+          node web/scripts/verify-publication.mjs /tmp/dropfinder-pages
+          python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-pages
+          verified=false
+          for attempt in $(seq 1 30); do
+            if node web/scripts/verify-pages-endpoint.mjs "${PAGE_URL}" >/tmp/pages-verification.json 2>/tmp/pages-verification.err; then
+              if CANDIDATE=/tmp/dropfinder-pages ENDPOINT=/tmp/pages-verification.json python - <<'PY'
+          import json, os
+          from pathlib import Path
+          candidate=json.loads((Path(os.environ['CANDIDATE'])/'data/catalog-v4/manifest.json').read_text())
+          endpoint=json.loads(Path(os.environ['ENDPOINT']).read_text())
+          if endpoint.get('generationId') != candidate.get('generation_id'):
+              raise SystemExit('public endpoint still serves a different generation')
+          PY
+              then
+                verified=true
+                break
+              fi
+            fi
+            sleep 10
+          done
+          test "${verified}" = true || {
+            cat /tmp/pages-verification.err >&2 || true
+            exit 1
+          }
+      - name: Record canonical deployment receipt on main
+        run: |
+          set -euo pipefail
+          python scripts/publication_release.py record-receipt /tmp/dropfinder-pages \
+            --source-commit "${GITHUB_SHA}" \
+            --generated-commit "${GENERATED_COMMIT}" \
+            --publication-commit "${PUBLICATION_COMMIT}" \
+            --rollback-commit "${ROLLBACK_COMMIT}" \
+            --workflow-name "${GITHUB_WORKFLOW}" \
+            --workflow-run-id "${GITHUB_RUN_ID}" \
+            --public-url "${PAGE_URL}" \
+            --continuity /tmp/publication-continuity.json \
+            --endpoint-verification /tmp/pages-verification.json \
+            --output deployment/release.json
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "${GENERATED_COMMIT}" || {
+            echo "::error::Main advanced before receipt commit; refusing to rewrite history."
+            exit 1
+          }
+          git add deployment/release.json
+          git commit -m "chore: record verified atomic deployment [skip ci]"
+          git push origin HEAD:main
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: atomic-publication-evidence-${{ github.run_id }}
+          path: |
+            /tmp/shard-provenance.json
+            /tmp/publication-continuity.json
+            /tmp/pages-verification.json
+            deployment/release.json
+          if-no-files-found: warn
+          retention-days: 90
