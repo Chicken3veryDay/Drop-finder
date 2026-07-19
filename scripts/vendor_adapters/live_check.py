@@ -8,21 +8,52 @@ from pathlib import Path
 from typing import Any
 
 from .fetch import fetch_public_document
+from .registry import validate_profiles
 
 
 def now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _report(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    rows.sort(key=lambda row: (row["vendor_id"], row["kind"], row["url"]))
+    return {
+        "schema_version": "dropfinder-vendor-live-check-v1",
+        "generated_at": now(),
+        "probe_count": len(rows),
+        "success_count": sum(1 for row in rows if row.get("ok")),
+        "failure_count": sum(1 for row in rows if not row.get("ok")),
+        "checks": rows,
+        "limitations": [
+            "GET-only public probes; no checkout, account, identity submission, gate interaction, or bypass.",
+            "A failed probe can be caused by WAF, rate limiting, routing, or site changes and does not prove the vendor is offline.",
+        ],
+    }
+
+
 def run_live_checks(profiles_path: str | Path, *, workers: int = 4, timeout: float = 8.0, max_bytes: int = 512_000) -> dict[str, Any]:
     payload = json.loads(Path(profiles_path).read_text(encoding="utf-8"))
+    validation_errors = validate_profiles(payload)
+    if validation_errors:
+        return _report([
+            {
+                "vendor_id": "profile_validation",
+                "kind": "configuration",
+                "url": "",
+                "ok": False,
+                "status": 0,
+                "error": error,
+            }
+            for error in validation_errors
+        ])
+
     jobs: list[tuple[str, str, set[str], str]] = []
-    for profile in payload.get("vendors", []):
-        vendor_id = str(profile["vendor_id"])
-        hosts = set(str(item) for item in profile.get("allowed_document_hosts", []))
-        jobs.append((vendor_id, str(profile["category_url"]), hosts, "category"))
-        for lab_url in profile.get("lab_index_urls", []):
-            jobs.append((vendor_id, str(lab_url), hosts, "lab_index"))
+    for profile in payload["vendors"]:
+        vendor_id = profile["vendor_id"]
+        hosts = set(profile["allowed_document_hosts"])
+        jobs.append((vendor_id, profile["category_url"], hosts, "category"))
+        for lab_url in profile["lab_index_urls"]:
+            jobs.append((vendor_id, lab_url, hosts, "lab_index"))
     rows: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=max(1, min(workers, 8))) as pool:
         future_map = {
@@ -47,16 +78,4 @@ def run_live_checks(profiles_path: str | Path, *, workers: int = 4, timeout: flo
                 })
             except Exception as exc:  # a live maintenance report must preserve failure evidence
                 rows.append({"vendor_id": vendor_id, "kind": kind, "url": url, "ok": False, "status": 0, "error": f"{type(exc).__name__}: {exc}"})
-    rows.sort(key=lambda row: (row["vendor_id"], row["kind"], row["url"]))
-    return {
-        "schema_version": "dropfinder-vendor-live-check-v1",
-        "generated_at": now(),
-        "probe_count": len(rows),
-        "success_count": sum(1 for row in rows if row.get("ok")),
-        "failure_count": sum(1 for row in rows if not row.get("ok")),
-        "checks": rows,
-        "limitations": [
-            "GET-only public probes; no checkout, account, identity submission, gate interaction, or bypass.",
-            "A failed probe can be caused by WAF, rate limiting, routing, or site changes and does not prove the vendor is offline.",
-        ],
-    }
+    return _report(rows)
