@@ -90,6 +90,7 @@ class StructuredDiscoveryIntegrityTests(unittest.TestCase):
         )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].title, "Stuffed Cherry Potency")
+        self.assertIn("Potency", rows[0].title)
         self.assertEqual(rows[0].document_kind, "coa")
         self.assertEqual(rows[0].source_path, "html_anchor:1")
 
