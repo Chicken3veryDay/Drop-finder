@@ -2,10 +2,8 @@ name: DropFinder Autonomous Cloud
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "23 */3 * * *"
   push:
-    branches: [main, "ui-rewrite/**"]
+    branches: [main]
     paths:
       - "scripts/cloud_scan.py"
       - "scripts/cloud_scan_v2.py"
@@ -13,36 +11,33 @@ on:
       - "scripts/autonomous_worker_v2.py"
       - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
-      - "cloud_pages/index.html"
-      - "cloud_pages/manifest.webmanifest"
-      - "cloud_pages/icon.svg"
-      - "cloud_pages/sw.js"
       - "web/**"
       - "tests/test_dropfinder_cloud_workflow_permissions.py"
-      - "docs/UI_REWRITE_CONTRACT.md"
       - ".github/workflows/dropfinder-cloud.yml"
   pull_request:
     branches: [main]
     paths:
-      - "cloud_pages/manifest.webmanifest"
-      - "cloud_pages/icon.svg"
-      - "cloud_pages/sw.js"
+      - "scripts/cloud_scan.py"
+      - "scripts/cloud_scan_v2.py"
+      - "scripts/autonomous_worker.py"
+      - "scripts/autonomous_worker_v2.py"
+      - "scripts/autonomous_worker_v4.py"
+      - "scripts/autonomous_merge.py"
       - "web/**"
       - "tests/test_dropfinder_cloud_workflow_permissions.py"
-      - "docs/UI_REWRITE_CONTRACT.md"
       - ".github/workflows/dropfinder-cloud.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: dropfinder-autonomous-cloud-${{ github.ref }}
-  cancel-in-progress: false
+  group: dropfinder-autonomous-cloud-validation-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python-validation:
     name: Python contract validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +60,7 @@ jobs:
 
   frontend:
     name: Frontend foundation validation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -77,53 +72,21 @@ jobs:
       - name: Install locked frontend dependencies
         working-directory: web
         run: npm ci --no-audit --no-fund
-      - name: Lint frontend
-        working-directory: web
-        run: npm run lint
-      - name: Typecheck frontend
-        id: typecheck
-        continue-on-error: true
+      - name: Validate frontend and publication tree
         working-directory: web
         run: |
-          set -o pipefail
-          npm run typecheck 2>&1 | tee typecheck.log
-      - name: Test frontend contracts and shell
-        id: tests
-        continue-on-error: true
-        working-directory: web
-        run: |
-          set -o pipefail
-          npm test 2>&1 | tee test.log
-      - name: Build and verify static publication
-        id: build
-        continue-on-error: true
-        working-directory: web
-        run: |
-          set -o pipefail
-          { npm run build && npm run verify:publication; } 2>&1 | tee build.log
-      - name: Export frontend diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dropfinder-web-diagnostics
-          path: |
-            web/typecheck.log
-            web/test.log
-            web/build.log
-          if-no-files-found: warn
-          retention-days: 1
-      - name: Enforce frontend validation results
-        if: always()
-        run: |
-          test "${{ steps.typecheck.outcome }}" = success
-          test "${{ steps.tests.outcome }}" = success
-          test "${{ steps.build.outcome }}" = success
+          set -euo pipefail
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run build
+          npm run verify:publication
 
   scan:
-    name: Retrieval worker ${{ matrix.shard }}
+    name: Manual retrieval worker ${{ matrix.shard }}
     needs: python-validation
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -147,123 +110,3 @@ jobs:
           path: scan-output/${{ matrix.shard }}/shard-${{ matrix.shard }}.json
           if-no-files-found: error
           retention-days: 1
-
-  publish:
-    name: Admit healthy sources and publish atomically
-    needs: [frontend, python-validation, scan]
-    if: needs.frontend.result == 'success' && needs.python-validation.result == 'success' && needs.scan.result == 'success'
-    permissions:
-      contents: write
-    concurrency:
-      group: dropfinder-pages-publication
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: autonomous-shard-*
-          path: scan-results
-          merge-multiple: true
-      - name: Admit a zero-degraded production snapshot
-        run: |
-          set -euo pipefail
-          rm -rf /tmp/dropfinder-autonomous-merge-test
-          python scripts/autonomous_merge.py --self-test
-          python scripts/autonomous_merge.py \
-            --input scan-results --output cloud_pages/data \
-            --min-active 5 --min-products 25
-          python web/scripts/publication_gate.py validate-snapshot
-      - name: Commit runtime state to main
-        run: |
-          set -euo pipefail
-          mkdir -p deployment
-          cp cloud_pages/data/runtime.json deployment/autonomous-runtime.json
-          git config user.name "DropFinder Autonomous Worker"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add cloud_pages/data deployment/autonomous-runtime.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Refresh zero-degraded DropFinder catalog [skip ci]"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Build deterministic frontend without touching generated data
-        working-directory: web
-        run: |
-          npm ci --no-audit --no-fund
-          npm run build
-          npm run verify:publication
-      - name: Publish immutable phone app to gh-pages
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          for relative in data/runtime.json data/status.json data/catalog.json data/catalog-v4/manifest.json; do
-            safe_name="${relative//\//-}"
-            git show "origin/main:cloud_pages/${relative}" > "/tmp/dropfinder-main-${safe_name}"
-            if ! cmp -s "cloud_pages/${relative}" "/tmp/dropfinder-main-${safe_name}"; then
-              echo "::error::The production snapshot was superseded on main; refusing to publish stale ${relative}."
-              exit 1
-            fi
-          done
-          rm -rf /tmp/dropfinder-site
-          mkdir -p /tmp/dropfinder-site
-          cp -a cloud_pages/. /tmp/dropfinder-site/
-          touch /tmp/dropfinder-site/.nojekyll
-          test -s /tmp/dropfinder-site/data/catalog.json
-          test -s /tmp/dropfinder-site/data/status.json
-          test -s /tmp/dropfinder-site/data/runtime.json
-          test -s /tmp/dropfinder-site/assets/vite-manifest.json
-          git config user.name "DropFinder Autonomous Publisher"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch --orphan autonomous-pages-next
-          git rm -rf . >/dev/null 2>&1 || true
-          git clean -fdx >/dev/null 2>&1 || true
-          cp -a /tmp/dropfinder-site/. .
-          git add -A
-          git commit -m "Publish autonomous DropFinder catalog ${GITHUB_SHA}"
-          git push --force origin HEAD:gh-pages
-          git fetch origin main gh-pages
-          for relative in data/runtime.json data/status.json data/catalog.json data/catalog-v4/manifest.json; do
-            safe_name="${relative//\//-}"
-            git show "origin/main:cloud_pages/${relative}" > "/tmp/dropfinder-post-main-${safe_name}"
-            git show "origin/gh-pages:${relative}" > "/tmp/dropfinder-post-pages-${safe_name}"
-            if ! cmp -s "/tmp/dropfinder-post-main-${safe_name}" "/tmp/dropfinder-post-pages-${safe_name}"; then
-              echo "::error::Published ${relative} does not match the canonical main snapshot."
-              exit 1
-            fi
-          done
-      - name: Verify published branch tree
-        run: |
-          set -euo pipefail
-          git fetch origin gh-pages
-          rm -rf /tmp/dropfinder-published
-          git worktree add --detach /tmp/dropfinder-published origin/gh-pages
-          node web/scripts/verify-publication.mjs /tmp/dropfinder-published
-          python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-published
-      - name: Record synchronized deployment receipt
-        run: |
-          set -euo pipefail
-          git switch --force main
-          git pull --rebase origin main
-          git fetch origin gh-pages
-          python web/scripts/publication_gate.py record-receipt
-          git config user.name "DropFinder Autonomous Publisher"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deployment/cdn.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Record current autonomous deployment [skip ci]"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
