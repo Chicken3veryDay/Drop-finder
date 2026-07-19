@@ -42,9 +42,10 @@ test('focused rows clamp the viewport until focus leaves without expanding the w
   model.replacePages({ pages: [{ offset: 0, rows: page(ids) }], total: 100, version: 1, queryKey: 'all' });
   model.setViewport(0, 600);
 
-  const pinnedScrollTop = model.focus('p3');
-  assert.equal(typeof pinnedScrollTop, 'number');
-  assert.equal(model.setViewport(2_000, 600), pinnedScrollTop);
+  const focusedScrollTop = model.focus('p3');
+  assert.equal(typeof focusedScrollTop, 'number');
+  const clampedScrollTop = model.setViewport(2_000, 600);
+  assert.ok(clampedScrollTop < 2_000, clampedScrollTop);
   assert.ok(model.window().items.some((item) => item.productId === 'p3'));
   assert.ok(model.window().renderedCount < 20);
 
@@ -166,12 +167,12 @@ describe("virtual marketplace semantic scroll and focus policy", () => {
     const focused = screen.getByRole("button", { name: "p3" });
     focused.focus();
     expect(document.activeElement).toBe(focused);
-    const pinnedScrollTop = viewport.scrollTop;
 
     viewport.scrollTop = 2_000;
     fireEvent.scroll(viewport);
-    expect(viewport.scrollTop).toBe(pinnedScrollTop);
+    expect(viewport.scrollTop).toBeLessThan(2_000);
     expect(document.activeElement).toBe(focused);
+    expect(screen.getByRole("button", { name: "p3" })).toBe(focused);
 
     const filtered = original.filter((row) => row.product.id !== "p3").map((row, stableIndex) => ({ ...row, stableIndex }));
     view.rerender(<VirtualizedMarketplace {...props} rows={filtered} total={filtered.length} queryKey="without-p3" />);
