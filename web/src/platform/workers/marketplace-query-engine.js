@@ -255,8 +255,10 @@ export function executeQuery(rows, request, version = 0, generationId = 'fixture
     if (vendors.size && !vendors.has(product.vendorId)) continue;
     if (lineages.size && !lineages.has(product.lineage)) continue;
     if (!between(product.totalThc, request.minTotalThc, request.maxTotalThc)) continue;
-    const variant = chooseVariant(product.variants, request.minWeight, request.maxWeight, request.minPrice, request.maxPrice, request.minPpg, request.maxPpg);
+    const variant = chooseVariant(product.variants, request.minWeight, request.maxWeight);
     if (!variant) continue;
+    if (!between(variant.price, request.minPrice, request.maxPrice)) continue;
+    if (!between(variant.ppg, request.minPpg, request.maxPpg)) continue;
     selected.push(projectRow(product, variant));
   }
   selected.sort(sorter(request.sort));
@@ -290,12 +292,10 @@ function queryIdentity(request) {
   });
 }
 
-function chooseVariant(variants, minWeight, maxWeight, minPrice, maxPrice, minPpg, maxPpg) {
+function chooseVariant(variants, minWeight, maxWeight) {
   let best = null;
   for (const variant of variants) {
     if (!between(variant.weight, minWeight, maxWeight)) continue;
-    if (!between(variant.price, minPrice, maxPrice)) continue;
-    if (!between(variant.ppg, minPpg, maxPpg)) continue;
     if (!best || compareVariant(variant, best) < 0) best = variant;
   }
   return best;
