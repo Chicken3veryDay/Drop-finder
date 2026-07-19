@@ -138,7 +138,7 @@ function scheduleMeasurement(productId, article) {
 
 viewport.addEventListener('scroll', () => {
   virtual.setViewport(viewport.scrollTop, viewport.clientHeight);
-  if (nextOffset != null && viewport.scrollTop + viewport.clientHeight > virtual.totalHeight() - 900) {
+  if (nextOffset != null && viewport.scrollTop + viewport.clientHeight > virtual.loadedRange().endPx - 900) {
     const offset = nextOffset; nextOffset = null; void runQuery({ append: true, offset });
   }
 }, { passive: true });

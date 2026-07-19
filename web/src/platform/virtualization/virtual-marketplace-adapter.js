@@ -8,9 +8,9 @@ const DEFAULTS = Object.freeze({
 });
 
 /**
- * Headless variable-height virtualization model. A shell may bind this to
- * React Virtuoso or a native absolute-positioned list without changing issue
- * #8's feature contract.
+ * Headless variable-height virtualization model with a bounded, offset-aware
+ * page window. Evicted rows retain estimated scroll space and can be refetched
+ * when the viewport approaches the loaded boundary.
  */
 export class VirtualMarketplaceAdapter {
   constructor(options = {}) {
@@ -26,69 +26,112 @@ export class VirtualMarketplaceAdapter {
     this.totalCount = 0;
     this.loadedPages = new Map();
     this.pageRequests = new Map();
+    this.baseOffset = 0;
+    this.endOffset = 0;
     this.listeners = new Set();
   }
 
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
 
-  replace({ rows, total, version, queryKey = null, preserveAnchor = false }) {
-    if (!Array.isArray(rows)) throw new PlatformError('invalid_rows', 'Virtualized rows must be an array');
+  replace({ rows, total, version, queryKey = null, offset = 0, preserveAnchor = false }) {
+    this.replacePages({
+      pages: [{ offset, rows }],
+      total,
+      version,
+      queryKey,
+      preserveAnchor,
+    });
+  }
+
+  replacePages({ pages, total, version, queryKey = null, preserveAnchor = false }) {
+    if (!Array.isArray(pages)) throw new PlatformError('invalid_pages', 'Virtualized pages must be an array');
+    if (pages.length > this.options.maxRetainedPages) {
+      throw new PlatformError('page_window_oversized', 'Virtualized page window exceeds its retention limit');
+    }
     const priorAnchor = preserveAnchor ? this.captureAnchor() : null;
+    const normalized = [...pages]
+      .map(page => {
+        if (!Number.isInteger(page?.offset) || page.offset < 0 || !Array.isArray(page.rows)) {
+          throw new PlatformError('invalid_page', 'Virtualized page offset and rows are required');
+        }
+        return [page.offset, dedupe(page.rows)];
+      })
+      .sort((left, right) => left[0] - right[0]);
+
     this.resultVersion = queryKey ?? version;
-    this.totalCount = Math.max(rows.length, Number(total) || 0);
-    this.items = dedupe(rows);
-    this.itemByKey = new Map(this.items.map((row, index) => [keyOf(row), { row, index }]));
-    this.loadedPages.clear();
-    this.loadedPages.set(0, this.items);
+    this.totalCount = Math.max(0, Number(total) || 0);
+    this.loadedPages = new Map(normalized);
+    this.baseOffset = normalized[0]?.[0] ?? 0;
+    const last = normalized.at(-1);
+    this.endOffset = last ? Math.min(this.totalCount, last[0] + last[1].length) : 0;
+    this.rebuildItemsFromPages();
     this.rebuildOffsets();
+
     if (priorAnchor && this.itemByKey.has(priorAnchor.key)) this.restoreAnchor(priorAnchor);
-    else this.viewport.scrollTop = 0;
+    else if (this.baseOffset === 0) this.viewport.scrollTop = 0;
     if (this.focusedKey && !this.itemByKey.has(this.focusedKey)) this.focusedKey = null;
-    this.emit('replace');
+    this.emit('replace-pages');
   }
 
   appendPage(offset, rows, identity = this.resultVersion) {
     if (identity !== this.resultVersion) return false;
-    if (this.loadedPages.has(offset)) return false;
-    const priorAnchor = this.captureAnchor();
-    this.loadedPages.set(offset, dedupe(rows));
-    while (this.loadedPages.size > this.options.maxRetainedPages) {
-      const removable = [...this.loadedPages.keys()].find(pageOffset => pageOffset !== 0 && pageOffset !== offset);
+    if (!Number.isInteger(offset) || offset < 0 || this.loadedPages.has(offset)) return false;
+    const pages = new Map(this.loadedPages);
+    pages.set(offset, dedupe(rows));
+    while (pages.size > this.options.maxRetainedPages) {
+      const offsets = [...pages.keys()].sort((left, right) => left - right);
+      const viewportRow = Math.floor((this.viewport.scrollTop + (this.viewport.height / 2)) / this.options.estimatedRowHeight);
+      const removable = offsets
+        .filter(candidate => candidate !== offset)
+        .sort((left, right) => Math.abs(right - viewportRow) - Math.abs(left - viewportRow))[0];
       if (removable == null) break;
-      this.loadedPages.delete(removable);
+      pages.delete(removable);
     }
-    this.rebuildItemsFromPages();
-    this.rebuildOffsets();
-    this.restoreAnchor(priorAnchor);
+    this.replacePages({
+      pages: [...pages].map(([pageOffset, pageRows]) => ({ offset: pageOffset, rows: pageRows })),
+      total: this.totalCount,
+      version: this.resultVersion,
+      queryKey: this.resultVersion,
+      preserveAnchor: true,
+    });
     this.emit('append');
     return true;
   }
 
-  async requestPage(offset, loader) {
+  async requestPage(offset, loader, identity = this.resultVersion) {
+    if (identity !== this.resultVersion) return [];
     if (this.loadedPages.has(offset)) return this.loadedPages.get(offset);
-    if (this.pageRequests.has(offset)) return this.pageRequests.get(offset);
+    const requestKey = `${identity}:${offset}`;
+    if (this.pageRequests.has(requestKey)) return this.pageRequests.get(requestKey);
     const request = Promise.resolve(loader(offset, this.options.pageSize))
       .then(result => {
-        this.appendPage(offset, result.rows, result.queryKey ?? result.version);
+        if (identity !== this.resultVersion) return [];
+        this.appendPage(offset, result.rows, result.queryKey ?? result.version ?? identity);
         return result.rows;
       })
-      .finally(() => this.pageRequests.delete(offset));
-    this.pageRequests.set(offset, request);
+      .finally(() => this.pageRequests.delete(requestKey));
+    this.pageRequests.set(requestKey, request);
     return request;
   }
-
 
   rebuildItemsFromPages() {
     const merged = [];
     const seen = new Set();
-    for (const [, page] of [...this.loadedPages].sort((a, b) => a[0] - b[0])) {
-      for (const row of page) {
+    for (const [pageOffset, page] of [...this.loadedPages].sort((a, b) => a[0] - b[0])) {
+      page.forEach((row, pageIndex) => {
         const key = keyOf(row);
-        if (!seen.has(key)) { seen.add(key); merged.push(row); }
-      }
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push({ row, globalIndex: Number(row?.row?.stableIndex ?? row?.stableIndex ?? (pageOffset + pageIndex)) });
+      });
     }
-    this.items = merged;
-    this.itemByKey = new Map(this.items.map((row, index) => [keyOf(row), { row, index }]));
+    merged.sort((left, right) => left.globalIndex - right.globalIndex || keyOf(left.row).localeCompare(keyOf(right.row)));
+    this.items = merged.map(entry => entry.row);
+    this.itemByKey = new Map(merged.map((entry, index) => [keyOf(entry.row), {
+      row: entry.row,
+      index,
+      globalIndex: entry.globalIndex,
+    }]));
   }
 
   setViewport(scrollTop, height) {
@@ -109,20 +152,39 @@ export class VirtualMarketplaceAdapter {
     return true;
   }
 
+  loadedRange() {
+    const startPx = this.baseOffset * this.options.estimatedRowHeight;
+    const endPx = startPx + (this.offsets.at(-1) ?? 0);
+    return Object.freeze({
+      startOffset: this.baseOffset,
+      endOffset: this.endOffset,
+      startPx,
+      endPx,
+      pageOffsets: Object.freeze([...this.loadedPages.keys()].sort((left, right) => left - right)),
+    });
+  }
+
   window() {
+    const totalHeight = this.totalHeight();
+    const loaded = this.loadedRange();
     if (!this.items.length || this.viewport.height <= 0) {
-      return { start: 0, end: 0, items: [], topSpacer: 0, bottomSpacer: this.totalHeight(), totalCount: this.totalCount };
+      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount, ariaRowCount: this.totalCount, renderedCount: 0 };
     }
-    const min = Math.max(0, this.viewport.scrollTop - this.options.overscanPx);
-    const max = this.viewport.scrollTop + this.viewport.height + this.options.overscanPx;
+    const localTop = this.viewport.scrollTop - loaded.startPx;
+    const localBottom = localTop + this.viewport.height;
+    if (localBottom < -this.options.overscanPx || localTop > (this.offsets.at(-1) ?? 0) + this.options.overscanPx) {
+      return { start: 0, end: 0, items: [], topSpacer: loaded.startPx, bottomSpacer: Math.max(0, totalHeight - loaded.startPx), totalCount: this.totalCount, ariaRowCount: this.totalCount, renderedCount: 0 };
+    }
+    const min = Math.max(0, localTop - this.options.overscanPx);
+    const max = Math.max(0, localBottom + this.options.overscanPx);
     const start = Math.max(0, upperBound(this.offsets, min) - 1);
     const end = Math.min(this.items.length, upperBound(this.offsets, max));
     return Object.freeze({
       start,
       end,
       items: this.items.slice(start, end),
-      topSpacer: this.offsets[start] ?? 0,
-      bottomSpacer: Math.max(0, this.totalHeight() - (this.offsets[end] ?? this.totalHeight())),
+      topSpacer: loaded.startPx + (this.offsets[start] ?? 0),
+      bottomSpacer: Math.max(0, totalHeight - (loaded.startPx + (this.offsets[end] ?? (this.offsets.at(-1) ?? 0)))),
       totalCount: this.totalCount,
       ariaRowCount: this.totalCount,
       renderedCount: end - start,
@@ -130,11 +192,12 @@ export class VirtualMarketplaceAdapter {
   }
 
   focus(key) {
-    if (!this.itemByKey.has(key)) return null;
+    const entry = this.itemByKey.get(key);
+    if (!entry) return null;
     this.focusedKey = key;
-    const { index } = this.itemByKey.get(key);
-    const top = this.offsets[index];
-    const bottom = this.offsets[index + 1];
+    const loaded = this.loadedRange();
+    const top = loaded.startPx + this.offsets[entry.index];
+    const bottom = loaded.startPx + this.offsets[entry.index + 1];
     if (top < this.viewport.scrollTop) this.viewport.scrollTop = top;
     else if (bottom > this.viewport.scrollTop + this.viewport.height) this.viewport.scrollTop = Math.max(0, bottom - this.viewport.height);
     this.emit('focus');
@@ -143,19 +206,28 @@ export class VirtualMarketplaceAdapter {
 
   captureAnchor() {
     if (!this.items.length) return null;
-    const index = Math.max(0, Math.min(this.items.length - 1, upperBound(this.offsets, this.viewport.scrollTop) - 1));
-    return { key: keyOf(this.items[index]), delta: this.viewport.scrollTop - this.offsets[index] };
+    const loaded = this.loadedRange();
+    const localTop = this.viewport.scrollTop - loaded.startPx;
+    if (localTop < 0 || localTop > (this.offsets.at(-1) ?? 0)) return null;
+    const index = Math.max(0, Math.min(this.items.length - 1, upperBound(this.offsets, localTop) - 1));
+    return { key: keyOf(this.items[index]), delta: localTop - this.offsets[index] };
   }
 
   restoreAnchor(anchor) {
     if (!anchor) return;
     const entry = this.itemByKey.get(anchor.key);
     if (!entry) return;
-    this.viewport.scrollTop = Math.max(0, this.offsets[entry.index] + anchor.delta);
+    const loaded = this.loadedRange();
+    this.viewport.scrollTop = Math.max(0, loaded.startPx + this.offsets[entry.index] + anchor.delta);
     this.anchor = anchor;
   }
 
-  totalHeight() { return this.offsets[this.offsets.length - 1] ?? 0; }
+  totalHeight() {
+    const retainedHeight = this.offsets.at(-1) ?? 0;
+    const before = this.baseOffset * this.options.estimatedRowHeight;
+    const after = Math.max(0, this.totalCount - this.endOffset) * this.options.estimatedRowHeight;
+    return before + retainedHeight + after;
+  }
 
   rebuildOffsets() {
     const offsets = new Array(this.items.length + 1);
@@ -167,7 +239,7 @@ export class VirtualMarketplaceAdapter {
   }
 
   emit(reason) {
-    const snapshot = { reason, viewport: { ...this.viewport }, window: this.window(), focusedKey: this.focusedKey };
+    const snapshot = { reason, viewport: { ...this.viewport }, window: this.window(), loadedRange: this.loadedRange(), focusedKey: this.focusedKey };
     for (const listener of this.listeners) listener(snapshot);
   }
 }
@@ -177,6 +249,7 @@ function keyOf(row) {
   if (key == null || key === '') throw new PlatformError('invalid_row_key', 'Virtual row has no stable product identity');
   return String(key);
 }
+
 function dedupe(rows) {
   const output = [];
   const seen = new Set();
@@ -186,6 +259,7 @@ function dedupe(rows) {
   }
   return output;
 }
+
 function upperBound(values, needle) {
   let low = 0; let high = values.length;
   while (low < high) {

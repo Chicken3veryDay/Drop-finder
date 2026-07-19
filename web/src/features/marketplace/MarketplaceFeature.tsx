@@ -30,6 +30,16 @@ import {
   type NumericRange,
   type SortOption,
 } from "./marketplace-core.js";
+import {
+  MARKETPLACE_PAGE_SIZE,
+  acceptMarketplacePageZero,
+  acceptMarketplaceRetainedPage,
+  emptyMarketplacePageWindow,
+  marketplaceQueryIdentity,
+  marketplaceRetainedRows,
+  nextMarketplacePageOffset,
+  previousMarketplacePageOffset,
+} from "./marketplace-pagination.js";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import "./marketplace.css";
 
@@ -450,75 +460,135 @@ export function MarketplaceFeature({
     returnFocus: HTMLElement | null;
   } | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const syncQuery = useMemo(
-    () => asyncQueryEngine
-      ? { rows: [], total: 0 }
-      : queryEngine?.query(products, filters, sort) ?? queryMarketplace(products, filters, sort),
-    [asyncQueryEngine, products, filters, sort, queryEngine],
-  );
-  const [asyncQuery, setAsyncQuery] = useState({
-    rows: [] as readonly MarketplaceRowProjection[],
-    total: 0,
-    nextOffset: null as number | null,
+const syncQuery = useMemo(
+  () => asyncQueryEngine
+    ? { rows: [], total: 0 }
+    : queryEngine?.query(products, filters, sort) ?? queryMarketplace(products, filters, sort),
+  [asyncQueryEngine, products, filters, sort, queryEngine],
+);
+const queryKey = useMemo(() => marketplaceQueryIdentity({
+  catalogGenerationId,
+  productType: "cannabis_flower",
+  products,
+  filters,
+  sort,
+}), [catalogGenerationId, filters, products, sort]);
+const activeQueryKey = useRef(queryKey);
+activeQueryKey.current = queryKey;
+const expandedProductIdRef = useRef(expandedProductId);
+expandedProductIdRef.current = expandedProductId;
+const productsRef = useRef(products);
+productsRef.current = products;
+const [asyncWindow, setAsyncWindow] = useState(() => emptyMarketplacePageWindow(queryKey));
+const activeAsyncWindow = useMemo(
+  () => asyncWindow.queryKey === queryKey ? asyncWindow : emptyMarketplacePageWindow(queryKey),
+  [asyncWindow, queryKey],
+);
+const [queryLoading, setQueryLoading] = useState(false);
+const [queryError, setQueryError] = useState<string | null>(null);
+const [queryRetryToken, setQueryRetryToken] = useState(0);
+const requestControllers = useRef(new Map<string, AbortController>());
+const queryRevision = useRef(0);
+const asyncRows = useMemo(() => marketplaceRetainedRows(activeAsyncWindow), [activeAsyncWindow]);
+const query = asyncQueryEngine
+  ? { rows: asyncRows, total: activeAsyncWindow.total }
+  : syncQuery;
+const virtualPages = useMemo(
+  () => asyncQueryEngine
+    ? activeAsyncWindow.pages.map((page) => ({ offset: page.offset, rows: page.rows }))
+    : [{ offset: 0, rows: syncQuery.rows }],
+  [activeAsyncWindow.pages, asyncQueryEngine, syncQuery.rows],
+);
+const vendors = useMemo(() => uniqueVendors(products), [products]);
+
+useEffect(() => {
+  if (!asyncQueryEngine) return;
+  const controllers = requestControllers.current;
+  const revision = ++queryRevision.current;
+  for (const controller of controllers.values()) controller.abort();
+  controllers.clear();
+  const controller = new AbortController();
+  const requestKey = `${queryKey}:0`;
+  controllers.set(requestKey, controller);
+  setAsyncWindow(emptyMarketplacePageWindow(queryKey));
+  setQueryLoading(true);
+  setQueryError(null);
+  void asyncQueryEngine.query(productsRef.current, filters, sort, {
+    queryKey,
+    generationId: catalogGenerationId,
+    offset: 0,
+    limit: MARKETPLACE_PAGE_SIZE,
+    expandedProductId: expandedProductIdRef.current,
+    signal: controller.signal,
+  }).then((result) => {
+    if (
+      revision === queryRevision.current &&
+      activeQueryKey.current === queryKey &&
+      !controller.signal.aborted
+    ) {
+      setAsyncWindow((current) => acceptMarketplacePageZero(
+        current.queryKey === queryKey ? current : emptyMarketplacePageWindow(queryKey),
+        result,
+      ));
+    }
+  }).catch((caught: unknown) => {
+    if (
+      revision === queryRevision.current &&
+      activeQueryKey.current === queryKey &&
+      !controller.signal.aborted &&
+      !(caught instanceof DOMException && caught.name === "AbortError")
+    ) {
+      setQueryError(caught instanceof Error ? caught.message : "Marketplace query failed.");
+    }
+  }).finally(() => {
+    if (controllers.get(requestKey) === controller) controllers.delete(requestKey);
+    if (
+      revision === queryRevision.current &&
+      activeQueryKey.current === queryKey &&
+      !controller.signal.aborted
+    ) {
+      setQueryLoading(false);
+    }
   });
-  const [queryLoading, setQueryLoading] = useState(false);
-  const [queryError, setQueryError] = useState<string | null>(null);
-  const loadMorePending = useRef(false);
-  const queryRevision = useRef(0);
-  const query = asyncQueryEngine ? asyncQuery : syncQuery;
-  const vendors = useMemo(() => uniqueVendors(products), [products]);
+  return () => {
+    controller.abort();
+    if (controllers.get(requestKey) === controller) controllers.delete(requestKey);
+  };
+}, [asyncQueryEngine, catalogGenerationId, filters, queryKey, queryRetryToken, sort]);
 
-  useEffect(() => {
-    if (!asyncQueryEngine) return;
-    const revision = ++queryRevision.current;
-    const controller = new AbortController();
-    setQueryLoading(true);
-    setQueryError(null);
-    void asyncQueryEngine.query(products, filters, sort, {
-      offset: 0,
-      limit: 120,
-      expandedProductId,
-      signal: controller.signal,
-    }).then((result) => {
-      if (revision === queryRevision.current && !controller.signal.aborted) setAsyncQuery(result);
-    }).catch((caught: unknown) => {
-      if (
-        revision === queryRevision.current &&
-        !controller.signal.aborted &&
-        !(caught instanceof DOMException && caught.name === "AbortError")
-      ) {
-        setQueryError(caught instanceof Error ? caught.message : "Marketplace query failed.");
-      }
-    }).finally(() => {
-      if (revision === queryRevision.current && !controller.signal.aborted) setQueryLoading(false);
-    });
-    return () => controller.abort();
-  }, [asyncQueryEngine, expandedProductId, products, filters, sort]);
+const loadPage = useCallback((direction: "forward" | "backward") => {
+  if (!asyncQueryEngine || queryLoading || !activeAsyncWindow.pageZeroAccepted) return;
+  const offset = direction === "forward"
+    ? nextMarketplacePageOffset(activeAsyncWindow)
+    : previousMarketplacePageOffset(activeAsyncWindow);
+  if (offset === null) return;
+  const requestKey = `${queryKey}:${offset}`;
+  if (requestControllers.current.has(requestKey)) return;
+  const controller = new AbortController();
+  requestControllers.current.set(requestKey, controller);
+  void asyncQueryEngine.query(productsRef.current, filters, sort, {
+    queryKey,
+    generationId: catalogGenerationId,
+    offset,
+    limit: MARKETPLACE_PAGE_SIZE,
+    expandedProductId: expandedProductIdRef.current,
+    signal: controller.signal,
+  }).then((result) => {
+    if (activeQueryKey.current !== queryKey || controller.signal.aborted) return;
+    setAsyncWindow((current) => acceptMarketplaceRetainedPage(current, result, direction));
+  }).catch((caught: unknown) => {
+    if (!(caught instanceof DOMException && caught.name === "AbortError")) {
+      setQueryError(caught instanceof Error ? caught.message : "Additional results could not be loaded.");
+    }
+  }).finally(() => {
+    if (requestControllers.current.get(requestKey) === controller) requestControllers.current.delete(requestKey);
+  });
+}, [activeAsyncWindow, asyncQueryEngine, catalogGenerationId, filters, queryKey, queryLoading, sort]);
 
-  const loadMore = useCallback(() => {
-    if (!asyncQueryEngine || asyncQuery.nextOffset === null || loadMorePending.current) return;
-    loadMorePending.current = true;
-    const offset = asyncQuery.nextOffset;
-    void asyncQueryEngine.query(products, filters, sort, {
-      offset,
-      limit: 120,
-      expandedProductId,
-    }).then((result) => {
-      setAsyncQuery((current) => ({
-        rows: [...current.rows, ...result.rows],
-        total: result.total,
-        nextOffset: result.nextOffset,
-      }));
-    }).catch((caught: unknown) => {
-      if (!(caught instanceof DOMException && caught.name === "AbortError")) {
-        setQueryError(caught instanceof Error ? caught.message : "Additional results could not be loaded.");
-      }
-    }).finally(() => {
-      loadMorePending.current = false;
-    });
-  }, [asyncQuery, asyncQueryEngine, expandedProductId, filters, products, sort]);
-
-  const effectiveLoading = loading || queryLoading;
+const loadMore = useCallback(() => loadPage("forward"), [loadPage]);
+const loadPrevious = useCallback(() => loadPage("backward"), [loadPage]);
+const retryQuery = useCallback(() => setQueryRetryToken((value) => value + 1), []);
+const effectiveLoading = loading || queryLoading;
   const effectiveError = error || queryError;
 
   useEffect(() => {
@@ -656,7 +726,9 @@ details: current.generationId === catalogGenerationId
       {effectiveError && query.rows.length === 0 ? (
         <div className="df-state" role="alert">
           <p>{effectiveError}</p>
-          {onRetry ? <button type="button" onClick={onRetry}>Retry</button> : null}
+          {(queryError || onRetry) ? (
+            <button type="button" onClick={queryError ? retryQuery : onRetry}>Retry</button>
+          ) : null}
         </div>
       ) : null}
       {!loading && !effectiveError && query.rows.length === 0 ? (
@@ -671,10 +743,19 @@ details: current.generationId === catalogGenerationId
           {virtualization
             ? virtualization.render({
                 rows: query.rows,
+                pages: virtualPages,
+                queryKey,
                 total: query.total,
                 expandedProductId,
+                hasPreviousPage: asyncQueryEngine
+                  ? previousMarketplacePageOffset(activeAsyncWindow) !== null
+                  : false,
+                hasNextPage: asyncQueryEngine
+                  ? nextMarketplacePageOffset(activeAsyncWindow) !== null
+                  : false,
                 renderRow,
                 renderExpanded: renderRow,
+                onStartReached: loadPrevious,
                 onEndReached: loadMore,
               })
             : query.rows.map(renderRow)}

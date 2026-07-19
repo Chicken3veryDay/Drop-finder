@@ -35,8 +35,15 @@ test.beforeEach(async ({ page }) => {
 
 test('loads a large catalog and keeps rendered rows bounded during endless scrolling', async ({ page }) => {
   for (let index = 0; index < 24; index += 1) {
-    await page.locator('#viewport').evaluate(element => { element.scrollTop = element.scrollHeight; element.dispatchEvent(new Event('scroll')); });
-    await page.waitForTimeout(25);
+    const beforeEnd = await page.evaluate(() => window.__platformHarness.virtual.loadedRange().endOffset);
+    await page.locator('#viewport').evaluate(element => {
+      const range = window.__platformHarness.virtual.loadedRange();
+      element.scrollTop = Math.max(0, range.endPx - element.clientHeight + 1);
+      element.dispatchEvent(new Event('scroll'));
+    });
+    await expect.poll(
+      () => page.evaluate(() => window.__platformHarness.virtual.loadedRange().endOffset),
+    ).toBeGreaterThan(beforeEnd);
   }
   const rendered = await page.locator('[data-marketplace-row]').count();
   expect(rendered).toBeGreaterThan(0);
