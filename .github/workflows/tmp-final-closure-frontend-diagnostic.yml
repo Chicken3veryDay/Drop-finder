@@ -1,7 +1,7 @@
 name: Temporary Final Closure Frontend Diagnostic
 
 on:
-  push:
+  pull_request:
     branches:
       - verification/final-closure-frontend-diagnostic
 
@@ -10,9 +10,12 @@ permissions:
 
 jobs:
   diagnose:
+    if: github.head_ref == 'trigger/final-closure-frontend-diagnostic'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: verification/final-closure-frontend-diagnostic
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
