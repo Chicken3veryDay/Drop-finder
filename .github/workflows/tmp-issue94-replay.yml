@@ -50,15 +50,22 @@ jobs:
       - name: Verify exact file boundary
         shell: bash
         run: |
-          changed=$(git diff --name-only)
-          expected=$(printf '%s\n' \
+          git diff --name-only HEAD -- \
             web/src/features/integration/register-marketplace-props.tsx \
             web/src/features/marketplace/MarketplaceFeature.tsx \
             web/src/features/marketplace/TypeAwareMarketplaceFeature.tsx \
             web/src/platform/catalog/catalog-generation-client.js \
-            web/test/catalog-generation-stale-detail.test.mjs | sort)
-          actual=$(printf '%s\n' "$changed" | grep -v '^.github/' | sort)
-          test "$actual" = "$expected"
+            web/test/catalog-generation-stale-detail.test.mjs \
+            | sort > /tmp/actual-files
+          printf '%s\n' \
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx \
+            web/src/features/marketplace/TypeAwareMarketplaceFeature.tsx \
+            web/src/platform/catalog/catalog-generation-client.js \
+            web/test/catalog-generation-stale-detail.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          test "$(git diff --name-only HEAD | grep -vc '^\.github/' || true)" -eq 5
       - name: Commit clean implementation
         shell: bash
         run: |
