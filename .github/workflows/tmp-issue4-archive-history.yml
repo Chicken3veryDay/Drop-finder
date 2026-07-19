@@ -1,4 +1,4 @@
-name: Temporary Issue 4 Archive History Recovery
+name: Temporary Issue 4 Archive History Recovery V2
 
 on:
   pull_request:
@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   recover:
-    if: github.head_ref == 'trigger/issue4-archive-history'
+    if: github.head_ref == 'trigger/issue4-archive-history-r2'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,13 +21,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Reconstruct historical archive candidates
+      - name: Reconstruct cumulative archive snapshots
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python .github/tmp/issue4_archive_history.py
       - uses: actions/upload-artifact@v4
         with:
-          name: issue4-archive-history
+          name: issue4-archive-history-v2
           path: |
             /tmp/issue4-archive-history.json
             /tmp/issue4-archive-history.md
