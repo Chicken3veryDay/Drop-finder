@@ -4,15 +4,21 @@ on:
   push:
     branches:
       - verification/pr300-python-contracts
+  pull_request:
+    branches:
+      - verification/pr300-python-contracts
 
 permissions:
   contents: read
 
 jobs:
   diagnose:
+    if: github.head_ref == 'trigger/pr300-python-contracts'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: verification/pr300-python-contracts
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
