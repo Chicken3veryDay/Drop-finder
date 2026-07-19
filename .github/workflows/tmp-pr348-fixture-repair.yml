@@ -1,0 +1,53 @@
+name: Temporary PR 348 Fixture Repair
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'fix/issue-83-bounded-cache-fallback'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/issue-83-bounded-cache-fallback
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply remaining fixture timestamps
+        run: python .github/tmp/pr348_fix_remaining_fixtures.py
+      - working-directory: web
+        run: npm ci
+      - name: Validate all affected cache and freshness contracts
+        working-directory: web
+        run: |
+          npx vitest run src/features/platform/canonical-catalog-generation-client.test.ts
+          node --test \
+            test/catalog-cache-fallback-age.test.mjs \
+            test/catalog-cache-persistence.test.mjs \
+            test/catalog-bounds.test.mjs \
+            test/catalog-generation-freshness.test.mjs \
+            test/platform.test.mjs
+          npm run typecheck
+      - name: Commit clean repair
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-pr348-fixture-repair.yml \
+            .github/workflows/tmp-pr348-frontend-diagnostic.yml \
+            .github/tmp/pr348_fix_remaining_fixtures.py
+          git add \
+            web/test/catalog-bounds.test.mjs \
+            web/test/catalog-generation-freshness.test.mjs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "test: timestamp cached fallback fixtures"
+          git push origin HEAD:fix/issue-83-bounded-cache-fallback
