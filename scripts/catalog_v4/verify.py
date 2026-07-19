@@ -45,6 +45,21 @@ def _resolve_data_path(output_root: Path, declared: str) -> Path:
     return path
 
 
+def _variant_identity(variant: dict[str, Any], *, product_id: str, detail: bool) -> tuple[float, str]:
+    variant_id = str(variant.get("variant_id") or "")
+    if not variant_id:
+        raise VerificationError(f"missing variant id: {product_id}")
+    try:
+        grams = float(variant["grams"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise VerificationError(f"invalid variant grams: {product_id} {variant_id}") from exc
+    url_field = "variant_url" if detail else "product_url"
+    variant_url = str(variant.get(url_field) or "")
+    if not variant_url:
+        raise VerificationError(f"missing variant URL: {product_id} {variant_id}")
+    return grams, variant_url
+
+
 def verify_publication(output_root: Path) -> dict[str, Any]:
     manifest_path = output_root / "catalog-v4" / "manifest.json"
     manifest = _load(manifest_path)
@@ -83,6 +98,7 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
     product_ids: set[str] = set()
     product_urls: set[tuple[str, str]] = set()
     variant_ids: set[str] = set()
+    index_variants_by_product: dict[str, dict[str, tuple[float, str]]] = {}
     allowed_lineages = {"indica", "indica_leaning_hybrid", "hybrid", "sativa_leaning_hybrid", "sativa", "unknown"}
     index_products = index.get("products")
     if not isinstance(index_products, list):
@@ -96,11 +112,11 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
         product_ids.add(product_id)
         if product.get("lineage") not in allowed_lineages:
             raise VerificationError(f"invalid lineage: {product_id}")
-        vendor_id = str(product.get("vendor_id") or "")
         variants = product.get("variants")
         if not isinstance(variants, list) or not variants:
             raise VerificationError(f"product has no variants: {product_id}")
         seen_weights: set[float] = set()
+        product_variant_identities: dict[str, tuple[float, str]] = {}
         for variant in variants:
             if not isinstance(variant, dict) or variant.get("in_stock") is not True:
                 raise VerificationError(f"non-stock variant published: {product_id}")
@@ -108,8 +124,9 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
             if not variant_id or variant_id in variant_ids:
                 raise VerificationError("missing or duplicate variant id")
             variant_ids.add(variant_id)
+            grams, variant_url = _variant_identity(variant, product_id=product_id, detail=False)
+            product_variant_identities[variant_id] = (grams, variant_url)
             try:
-                grams = float(variant["grams"])
                 current = float(variant["current_price"])
                 ppg = float(variant["price_per_gram"])
             except (KeyError, TypeError, ValueError) as exc:
@@ -131,6 +148,7 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
             if weight_key in seen_weights:
                 raise VerificationError(f"duplicate normalized variant weight: {product_id} {weight_key}")
             seen_weights.add(weight_key)
+        index_variants_by_product[product_id] = product_variant_identities
         selected = select_active_variant(variants)
         if selected is None or product.get("default_variant_id") != selected.get("variant_id"):
             raise VerificationError(f"default active variant mismatch: {product_id}")
@@ -161,9 +179,23 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
             if not product_url or url_key in product_urls:
                 raise VerificationError(f"missing or duplicate canonical product URL: {product_id}")
             product_urls.add(url_key)
-            for variant in product.get("variants") or []:
+            variants = product.get("variants")
+            if not isinstance(variants, list) or not variants:
+                raise VerificationError(f"detail product has no variants: {product_id}")
+            detail_variant_identities: dict[str, tuple[float, str]] = {}
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    raise VerificationError(f"detail variant must be an object: {product_id}")
                 if variant.get("in_stock") is not True:
                     raise VerificationError(f"detail contains non-stock variant: {product_id}")
+                variant_id = str(variant.get("variant_id") or "")
+                if not variant_id or variant_id in detail_variant_identities:
+                    raise VerificationError(f"missing or duplicate detail variant: {product_id}")
+                detail_variant_identities[variant_id] = _variant_identity(
+                    variant,
+                    product_id=product_id,
+                    detail=True,
+                )
                 documents = variant.get("documents")
                 if not isinstance(documents, list):
                     raise VerificationError(f"variant documents must be a list: {product_id}")
@@ -174,6 +206,25 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
                         raise VerificationError(f"document vendor mismatch: {product_id}")
                     if str(document.get("product_id") or "") != product_id:
                         raise VerificationError(f"document product mismatch: {product_id}")
+            index_variant_identities = index_variants_by_product.get(product_id)
+            if index_variant_identities is None:
+                raise VerificationError(f"detail product absent from index: {product_id}")
+            if set(detail_variant_identities) != set(index_variant_identities):
+                missing = sorted(set(index_variant_identities) - set(detail_variant_identities))
+                extra = sorted(set(detail_variant_identities) - set(index_variant_identities))
+                raise VerificationError(
+                    f"index/detail variant identity mismatch: {product_id} missing={missing} extra={extra}"
+                )
+            for variant_id, (detail_grams, detail_url) in detail_variant_identities.items():
+                index_grams, index_url = index_variant_identities[variant_id]
+                if abs(detail_grams - index_grams) > 0.0001:
+                    raise VerificationError(
+                        f"index/detail variant weight mismatch: {product_id} {variant_id}"
+                    )
+                if detail_url != index_url:
+                    raise VerificationError(
+                        f"index/detail variant URL mismatch: {product_id} {variant_id}"
+                    )
 
     if product_ids != detail_product_ids:
         raise VerificationError("index/detail product identity mismatch")
