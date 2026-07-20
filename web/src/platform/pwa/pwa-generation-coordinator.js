@@ -1,6 +1,7 @@
 import { PlatformError, abortError } from '../contracts.js';
 
 const DEFAULT_ACTIVATION_TIMEOUT_MS = 10_000;
+const ACTIVATION_RETRY_DELAY_MS = 100;
 let defaultCoordinator = null;
 
 function registerDefaultCoordinator(coordinator) {
@@ -147,6 +148,12 @@ export class PwaGenerationCoordinator {
           return;
         }
         if (event?.type === 'generation-error' && eventGeneration === target) {
+          if (event.code === 'generation_incomplete') {
+            activationRequested = false;
+            if (activationTimer !== null) clearTimeout(activationTimer);
+            activationTimer = setTimeout(requestActivation, ACTIVATION_RETRY_DELAY_MS);
+            return;
+          }
           fail(event.code || 'generation_activation_failed', 'Catalog generation activation failed');
         }
       };
