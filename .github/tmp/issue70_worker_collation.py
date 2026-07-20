@@ -30,8 +30,8 @@ old_sort = """  return (a, b) => direction * valueCompare(a[field], b[field])
 """
 new_sort = """  const compare = field === 'vendor' || field === 'strain' ? collator.compare.bind(collator) : valueCompare;
   return (a, b) => direction * compare(a[field], b[field])
-    || stableCompare(a.productId, b.productId)
-    || stableCompare(a.variantId, b.variantId);
+    || collator.compare(a.productId, b.productId)
+    || collator.compare(a.variantId, b.variantId);
 """
 if text.count(old_sort) != 1:
     raise SystemExit(f"worker sort anchor count: {text.count(old_sort)}")
