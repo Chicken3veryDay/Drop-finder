@@ -1,0 +1,74 @@
+name: Temporary Final Repository Cleanup
+
+on:
+  pull_request:
+    branches:
+      - cleanup/final-repository
+
+permissions:
+  actions: read
+  contents: write
+  deployments: read
+  pull-requests: write
+
+concurrency:
+  group: final-repository-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.head_ref == 'trigger/final-repository-cleanup'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: cleanup/final-repository
+          fetch-depth: 0
+          token: ${{ github.token }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Classify and delete only proven-safe branches
+        id: cleanup
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: main
+          SELF_BASE: cleanup/final-repository
+          SELF_TRIGGER: trigger/final-repository-cleanup
+          REPORT: /tmp/final-branch-cleanup.json
+        run: |
+          set +e
+          python .github/tmp/final_repository_cleanup.py | tee /tmp/final-branch-cleanup.log
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "${status}" > /tmp/final-branch-cleanup.status
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: final-repository-cleanup-evidence
+          path: |
+            /tmp/final-branch-cleanup.json
+            /tmp/final-branch-cleanup.log
+            /tmp/final-branch-cleanup.status
+          if-no-files-found: error
+          retention-days: 90
+      - name: Stop when any branch remains unexplained
+        run: test "$(cat /tmp/final-branch-cleanup.status)" -eq 0
+      - name: Close execution PR and remove its temporary branches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api --method PATCH "repos/${REPOSITORY}/pulls/${PR_NUMBER}" -f state=closed >/tmp/self-close.json
+          python - <<'PY'
+          import os, subprocess, urllib.parse
+          repo=os.environ['REPOSITORY']
+          for branch in ('trigger/final-repository-cleanup','cleanup/final-repository'):
+              ref=urllib.parse.quote(f'heads/{branch}',safe='')
+              subprocess.run(['gh','api','--method','DELETE',f'repos/{repo}/git/refs/{ref}'],check=True)
+          PY
