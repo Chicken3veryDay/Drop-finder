@@ -1,0 +1,34 @@
+name: Temporary Single Source Trace
+on:
+  pull_request:
+    branches: [verification/source-trace-one]
+permissions:
+  contents: read
+jobs:
+  trace:
+    if: github.head_ref == 'trigger/source-trace-one'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: main
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Trace Holy City Farms
+        run: |
+          python - <<'PY'
+          import sys, traceback
+          from pathlib import Path
+          sys.path.insert(0,str(Path('scripts').resolve()))
+          import autonomous_worker_v4 as wrapper
+          wrapper.install_runtime()
+          source=next(item for item in wrapper.worker.core.SOURCES if item[0]=='holy_city_farms')
+          try:
+              rows,status=wrapper.worker.scan_source(source)
+              print({'rows':len(rows),'status':status})
+          except Exception:
+              traceback.print_exc()
+              raise
+          PY
