@@ -1,6 +1,12 @@
 import { PlatformError, stableCompare } from '../contracts.js';
 
 export const LINEAGES = Object.freeze(['indica', 'indica_hybrid', 'hybrid', 'sativa_hybrid', 'sativa', 'unknown']);
+const collator = new Intl.Collator('en', {
+  sensitivity: 'base',
+  numeric: true,
+  usage: 'sort',
+});
+
 export const SORTS = Object.freeze([
   'lowest_price', 'highest_price', 'lowest_ppg', 'highest_ppg',
   'highest_total_thc', 'lowest_total_thc', 'strain_az', 'strain_za',
@@ -315,9 +321,10 @@ function sorter(sort) {
     : sort.includes('total_thc') ? 'totalThc'
     : sort.startsWith('vendor_') ? 'vendor'
     : 'strain';
-  return (a, b) => direction * valueCompare(a[field], b[field])
-    || stableCompare(a.productId, b.productId)
-    || stableCompare(a.variantId, b.variantId);
+  const compare = field === 'vendor' || field === 'strain' ? collator.compare.bind(collator) : valueCompare;
+  return (a, b) => direction * compare(a[field], b[field])
+    || collator.compare(a.productId, b.productId)
+    || collator.compare(a.variantId, b.variantId);
 }
 
 function projectRow(product, variant) {

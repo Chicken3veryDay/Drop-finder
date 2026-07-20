@@ -181,7 +181,7 @@ export interface MarketplaceFeatureProps {
   initialSort?: SortOption;
 }
 
-const collator = new Intl.Collator(undefined, {
+const collator = new Intl.Collator("en", {
   sensitivity: "base",
   numeric: true,
   usage: "sort",
