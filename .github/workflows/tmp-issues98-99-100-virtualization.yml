@@ -35,6 +35,7 @@ jobs:
           {
             git diff --name-only "$merge_base" HEAD
             git diff --name-only HEAD
+            git ls-files --others --exclude-standard
           } | grep -v '^\.github/' | sort -u > /tmp/actual-files
           printf '%s\n' \
             web/src/features/integration/register-marketplace-props.tsx \
