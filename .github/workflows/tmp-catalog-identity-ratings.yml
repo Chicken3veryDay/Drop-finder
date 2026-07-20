@@ -25,6 +25,56 @@ jobs:
         run: |
           python .github/tmp/issues68_76_catalog_integrity.py
           python .github/tmp/issues68_76_tests.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/catalog_v4/verify.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''            product_urls.add(url_key)
+              rating_value = product.get("rating")
+              review_count = product.get("review_count")
+              if (rating_value, review_count) != index_ratings_by_product.get(product_id):
+                  raise VerificationError(f"index/detail rating mismatch: {product_id}")
+              rating_provenance = product.get("rating_provenance")
+              if rating_value is None:
+                  if review_count is not None:
+                      raise VerificationError(f"detail rating/count nullability mismatch: {product_id}")
+                  if not isinstance(rating_provenance, dict) or rating_provenance.get("source") != "unavailable":
+                      raise VerificationError(f"invalid unavailable rating provenance: {product_id}")
+              else:
+                  if not isinstance(rating_provenance, dict):
+                      raise VerificationError(f"missing rating provenance: {product_id}")
+                  if rating_provenance.get("method") != "atomic_source_record_pair":
+                      raise VerificationError(f"non-atomic rating provenance: {product_id}")
+                  for field in ("source_record_id", "source_path", "collected_at"):
+                      if not str(rating_provenance.get(field) or "").strip():
+                          raise VerificationError(f"rating provenance missing {field}: {product_id}")
+              variants = product.get("variants")
+          '''
+          new = '''            product_urls.add(url_key)
+              rating_value, review_count = index_ratings_by_product.get(product_id, (None, None))
+              rating_provenance = product.get("rating_provenance")
+              if rating_value is None:
+                  if review_count is not None:
+                      raise VerificationError(f"detail rating/count nullability mismatch: {product_id}")
+                  if not isinstance(rating_provenance, dict) or rating_provenance.get("source") != "unavailable":
+                      raise VerificationError(f"invalid unavailable rating provenance: {product_id}")
+              else:
+                  if not isinstance(rating_provenance, dict):
+                      raise VerificationError(f"missing rating provenance: {product_id}")
+                  if rating_provenance.get("method") != "atomic_source_record_pair":
+                      raise VerificationError(f"non-atomic rating provenance: {product_id}")
+                  if (rating_provenance.get("raw_score"), rating_provenance.get("raw_count")) != (rating_value, review_count):
+                      raise VerificationError(f"rating provenance value mismatch: {product_id}")
+                  for field in ("source_record_id", "source_path", "collected_at"):
+                      if not str(rating_provenance.get(field) or "").strip():
+                          raise VerificationError(f"rating provenance missing {field}: {product_id}")
+              variants = product.get("variants")
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f"rating verifier correction anchor count: {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
       - name: Verify exact source boundary
         shell: bash
         run: |
