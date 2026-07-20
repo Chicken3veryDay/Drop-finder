@@ -138,7 +138,7 @@ test('failed worker activation keeps the prior complete catalog visible', async 
       queueMicrotask(() => serviceWorker.emit({
         type: 'generation-error',
         generationId: message.generationId,
-        code: 'generation_incomplete',
+        code: 'generation_corrupt',
       }));
     }
   };
@@ -146,9 +146,41 @@ test('failed worker activation keeps the prior complete catalog visible', async 
   try {
     await assert.rejects(
       client.initialize({ force: true }),
-      error => error?.code === 'generation_incomplete',
+      error => error?.code === 'generation_corrupt',
     );
     assert.equal(client.snapshot()?.generationId, 'g1');
+  } finally {
+    coordinator.dispose();
+  }
+});
+
+test('transient incomplete activation is retried within the existing deadline', async () => {
+  const worker = new FakeWorker();
+  const serviceWorker = new FakeServiceWorkerContainer(worker);
+  const coordinator = new PwaGenerationCoordinator({ navigator: { serviceWorker } });
+  let attempts = 0;
+  worker.onPostMessage = message => {
+    if (message.type === 'generation-status') {
+      queueMicrotask(() => serviceWorker.emit({ type: 'generation-status', id: 'g1' }));
+    }
+    if (message.type === 'activate-generation') {
+      attempts += 1;
+      queueMicrotask(() => serviceWorker.emit(attempts === 1 ? {
+        type: 'generation-error',
+        generationId: message.generationId,
+        code: 'generation_incomplete',
+      } : {
+        type: 'generation-active',
+        generationId: message.generationId,
+      }));
+    }
+  };
+
+  try {
+    await coordinator.register();
+    const result = await coordinator.activateWhenReady('g2', { timeoutMs: 1_000 });
+    assert.deepEqual(result, { status: 'active', generationId: 'g2' });
+    assert.equal(attempts, 2);
   } finally {
     coordinator.dispose();
   }
