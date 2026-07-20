@@ -1,1 +1,1 @@
-inspect publisher run
+inspect publisher run v2
