@@ -1,1 +1,1 @@
-inspect publisher run v2
+inspect source tracebacks
