@@ -1,0 +1,41 @@
+name: Temporary Publisher Run Inspection
+
+on:
+  pull_request:
+    branches:
+      - verification/publisher-run-inspection
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    if: github.head_ref == 'trigger/publisher-run-inspection'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Inspect final source workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: 34e172cc633b2528283b8ffcfacaaf0dc8e6f5b5
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${REPOSITORY}/actions/runs?head_sha=${SOURCE_SHA}&per_page=100" > /tmp/runs.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('/tmp/runs.json').read_text())
+          rows=[]
+          for run in data.get('workflow_runs',[]):
+              rows.append({key:run.get(key) for key in ('id','name','event','status','conclusion','head_sha','head_branch','run_number','created_at','updated_at','html_url')})
+          Path('/tmp/run-summary.json').write_text(json.dumps(rows,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(rows,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: publisher-run-inspection
+          path: |
+            /tmp/runs.json
+            /tmp/run-summary.json
+          retention-days: 7
