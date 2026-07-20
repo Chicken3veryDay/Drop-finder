@@ -26,6 +26,7 @@ function state(status: string, type: string | null) {
     page: 1,
     pages: type === "pdf" ? 1 : null,
     scale: 1,
+    renderedScale: 1,
     fitWidth: true,
     displayUrl: null,
     error: status === "error" ? { message: "failed" } : null,
@@ -43,6 +44,7 @@ function viewer(snapshot = state("ready", "pdf")) {
     goToPage: vi.fn(),
     zoomIn: vi.fn(),
     zoomOut: vi.fn(),
+    resetZoom: vi.fn(),
     setFitWidth: vi.fn(),
     handleKeyDown: vi.fn(() => false),
   };

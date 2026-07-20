@@ -83,6 +83,7 @@ type ViewerState = {
   page: number;
   pages: number | null;
   scale: number;
+  renderedScale: number;
   fitWidth: boolean;
   displayUrl: string | null;
   error: { message?: string } | null;
@@ -98,6 +99,7 @@ type PlatformDocumentViewer = {
   goToPage(page: number): void;
   zoomIn(): void;
   zoomOut(): void;
+  resetZoom(): void;
   setFitWidth(enabled?: boolean): void;
   handleKeyDown(event: KeyboardEvent, root: HTMLElement | null): boolean;
 };
@@ -535,7 +537,7 @@ const createVirtualizationAdapter
   },
 });
 
-function DocumentOverlay({
+export function DocumentOverlay({
   viewer,
   request,
   onClosed,
@@ -546,13 +548,36 @@ function DocumentOverlay({
 }) {
   const [state, setState] = useState<ViewerState>(() => viewer.snapshot());
   const dialogRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const closingRef = useRef(false);
+  const lastStageWidthRef = useRef(0);
+  const [resizeRevision, setResizeRevision] = useState(0);
   const [renderError, setRenderError] = useState<string | null>(null);
 
   useEffect(() => viewer.subscribe(setState), [viewer]);
   useEffect(() => {
     dialogRef.current?.focus();
   }, []);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || state.status !== "ready" || state.type !== "pdf" || !state.fitWidth || typeof ResizeObserver === "undefined") return;
+    lastStageWidthRef.current = Math.round(stage.getBoundingClientRect().width);
+    let scheduled = false;
+    const observer = new ResizeObserver((entries) => {
+      const width = Math.round(entries[0]?.contentRect.width ?? stage.getBoundingClientRect().width);
+      if (!width || Math.abs(width - lastStageWidthRef.current) < 2 || scheduled) return;
+      lastStageWidthRef.current = width;
+      scheduled = true;
+      queueMicrotask(() => {
+        scheduled = false;
+        setResizeRevision((value) => value + 1);
+      });
+    });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [state.fitWidth, state.sessionId, state.status, state.type]);
+
   useEffect(() => {
     if (state.status !== "ready" || state.type !== "pdf" || !canvasRef.current) return;
     let current = true;
@@ -569,11 +594,16 @@ function DocumentOverlay({
     return () => {
       current = false;
     };
-  }, [state.fitWidth, state.page, state.scale, state.sessionId, state.status, state.type, viewer]);
+  }, [resizeRevision, state.fitWidth, state.page, state.scale, state.sessionId, state.status, state.type, viewer]);
 
   const close = async () => {
-    await viewer.close();
+    if (closingRef.current) return;
+    closingRef.current = true;
+    const invoker = request.invokingElement;
+    await viewer.close({ restoreFocus: false });
     onClosed();
+    await Promise.resolve();
+    if (invoker?.isConnected) invoker.focus({ preventScroll: true });
   };
 
   const body = (
@@ -587,7 +617,15 @@ function DocumentOverlay({
         aria-modal="true"
         aria-label={request.document.title || "Lab document"}
         tabIndex={-1}
-        onKeyDown={(event) => viewer.handleKeyDown(event.nativeEvent, dialogRef.current)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            void close();
+            return;
+          }
+          viewer.handleKeyDown(event.nativeEvent, dialogRef.current);
+        }}
       >
         <header>
           <strong>{request.document.title || (request.document.kind === "coa" ? "COA" : "Terpene document")}</strong>
@@ -596,7 +634,7 @@ function DocumentOverlay({
             <button type="button" onClick={() => void close()}>Close</button>
           </span>
         </header>
-        <div className="df-platform-document-stage">
+        <div ref={stageRef} className="df-platform-document-stage">
           {state.status === "loading" ? <p role="status">Loading document</p> : null}
           {state.status === "ready" && state.type === "pdf" ? <canvas ref={canvasRef} /> : null}
           {state.status === "ready" && state.type === "image" && state.displayUrl
@@ -613,6 +651,7 @@ function DocumentOverlay({
             <button type="button" onClick={() => viewer.goToPage(state.page + 1)} disabled={state.page >= (state.pages ?? 1)}>Next</button>
             <button type="button" onClick={() => viewer.zoomOut()}>Zoom out</button>
             <button type="button" onClick={() => viewer.zoomIn()}>Zoom in</button>
+            <button type="button" onClick={() => viewer.resetZoom()}>Reset zoom</button>
             <button type="button" onClick={() => viewer.setFitWidth(true)}>Fit width</button>
           </footer>
         ) : null}

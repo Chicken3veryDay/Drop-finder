@@ -53,7 +53,8 @@ export class DocumentViewerCapability {
     };
     this.setState({
       status: 'loading', type, documentRef, context, page: 1, pages: null,
-      scale: this.options.initialScale, fitWidth: true, displayUrl: null, error: null, sessionId,
+      scale: this.options.initialScale, renderedScale: this.options.initialScale,
+      fitWidth: true, displayUrl: null, error: null, sessionId,
     });
     try {
       if (type === 'pdf') await this.openPdf(documentRef, sessionId, controller.signal);
@@ -229,6 +230,9 @@ export class DocumentViewerCapability {
       session.renderTask = renderTask;
       await renderTask.promise;
       assertCurrentRender(this, session, request.revision);
+      if (this.state.sessionId === session.id && this.state.renderedScale !== effectiveScale) {
+        this.setState({ ...this.state, renderedScale: effectiveScale });
+      }
       return { page: request.page, scale: effectiveScale, width: viewport.width, height: viewport.height };
     } catch (error) {
       if (isRenderCancellation(error) || this.session !== session || request.revision !== session.renderRevision) throw abortError();
@@ -243,11 +247,21 @@ export class DocumentViewerCapability {
     const pages = this.state.pages ?? 1;
     this.setState({ ...this.state, page: clamp(Math.trunc(page), 1, pages) });
   }
-  zoomIn() { this.setZoom(this.state.scale + 0.25); }
-  zoomOut() { this.setZoom(this.state.scale - 0.25); }
-  resetZoom() { this.setState({ ...this.state, scale: this.options.initialScale, fitWidth: false }); }
+  zoomIn() { this.setZoom((this.state.renderedScale ?? this.state.scale) + 0.25); }
+  zoomOut() { this.setZoom((this.state.renderedScale ?? this.state.scale) - 0.25); }
+  resetZoom() {
+    this.setState({
+      ...this.state,
+      scale: this.options.initialScale,
+      renderedScale: this.options.initialScale,
+      fitWidth: false,
+    });
+  }
   setFitWidth(enabled = true) { this.setState({ ...this.state, fitWidth: Boolean(enabled) }); }
-  setZoom(scale) { this.setState({ ...this.state, scale: clamp(scale, this.options.minScale, this.options.maxScale), fitWidth: false }); }
+  setZoom(scale) {
+    const nextScale = clamp(scale, this.options.minScale, this.options.maxScale);
+    this.setState({ ...this.state, scale: nextScale, renderedScale: nextScale, fitWidth: false });
+  }
 
   close({ restoreFocus = true } = {}) {
     const lifecycleRevision = ++this.lifecycleRevision;
@@ -411,6 +425,6 @@ function assertCurrentRender(viewer, session, revision) {
 function isRenderCancellation(error) {
   return error?.name === 'RenderingCancelledException' || error?.name === 'AbortException' || error?.name === 'AbortError';
 }
-function closedState() { return Object.freeze({ status: 'closed', type: null, documentRef: null, context: null, page: 1, pages: null, scale: 1, fitWidth: true, displayUrl: null, error: null, sessionId: null }); }
+function closedState() { return Object.freeze({ status: 'closed', type: null, documentRef: null, context: null, page: 1, pages: null, scale: 1, renderedScale: 1, fitWidth: true, displayUrl: null, error: null, sessionId: null }); }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function cryptoRandomId() { return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
