@@ -1,0 +1,163 @@
+name: Temporary Final Production Closure V3
+
+on:
+  pull_request:
+    branches:
+      - verification/final-production-closure-v3
+
+permissions:
+  contents: read
+
+concurrency:
+  group: final-production-closure-v3
+  cancel-in-progress: false
+
+jobs:
+  artifacts-and-endpoints:
+    if: github.head_ref == 'trigger/final-production-closure-v3'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    outputs:
+      generation_id: ${{ steps.release.outputs.generation_id }}
+      publication_commit: ${{ steps.release.outputs.publication_commit }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: verification/final-production-closure-v3
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Bind canonical receipt to exact source and refs
+        id: release
+        env:
+          EXPECTED_SOURCE: 240614d9e5b58b4a13ee88bcd84644c6bd9c8933
+          EXPECTED_GENERATED: 8ee1ca7ed9c568b960df2807fffda032506a1806
+          EXPECTED_PUBLICATION: 0f5cbef18d69152a8ec2438205a0be680a0ec9bc
+          EXPECTED_RECEIPT: 1737e015d0c7deaa5b583673985d2b9124032666
+        run: |
+          set -euo pipefail
+          git fetch --force origin main gh-pages verification/final-production-closure
+          git show origin/main:deployment/release.json > /tmp/release.json
+          PAGES_SHA="$(git rev-parse origin/gh-pages)" python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          receipt=json.loads(Path('/tmp/release.json').read_text(), parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+          assert receipt['source_commit'] == os.environ['EXPECTED_SOURCE'], receipt
+          assert (receipt.get('generated_data_commit') or receipt.get('generated_commit')) == os.environ['EXPECTED_GENERATED'], receipt
+          assert receipt['publication_commit'] == os.environ['EXPECTED_PUBLICATION'], receipt
+          assert receipt['publication_commit'] == os.environ['PAGES_SHA'], receipt
+          assert receipt['status'] == 'live', receipt
+          assert receipt['zero_degraded'] is True, receipt
+          assert receipt['continuity']['status'] == 'accepted', receipt
+          assert receipt['continuity']['override']['used'] is False, receipt
+          assert receipt['product_count'] == 498, receipt
+          assert receipt['catalog_v4_product_count'] == 139, receipt
+          assert receipt['variant_count'] == 271, receipt
+          assert receipt['active_source_count'] == 14, receipt
+          subprocess.run(['git','merge-base','--is-ancestor',os.environ['EXPECTED_GENERATED'],'origin/main'],check=True)
+          subprocess.run(['git','merge-base','--is-ancestor',os.environ['EXPECTED_RECEIPT'],'origin/main'],check=True)
+          PY
+          echo "generation_id=$(python -c "import json; print(json.load(open('/tmp/release.json'))['generation_id'])")" >> "$GITHUB_OUTPUT"
+          echo "publication_commit=$(python -c "import json; print(json.load(open('/tmp/release.json'))['publication_commit'])")" >> "$GITHUB_OUTPUT"
+          git worktree add --detach /tmp/dropfinder-main origin/main
+          git worktree add --detach /tmp/dropfinder-pages origin/gh-pages
+          git worktree add --detach /tmp/dropfinder-verifier origin/verification/final-production-closure
+      - name: Verify publication graph and live endpoints
+        run: |
+          set -euo pipefail
+          node /tmp/dropfinder-main/web/scripts/verify-publication.mjs /tmp/dropfinder-pages
+          python /tmp/dropfinder-main/web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-pages
+          PYTHONPATH=/tmp/dropfinder-main python -m scripts.catalog_v4 --input /tmp/dropfinder-main/cloud_pages/data/catalog.json --output /tmp/dropfinder-main/cloud_pages/data --verify-only
+          python /tmp/dropfinder-verifier/verification/final-production/verify_live.py --base-url https://chicken3veryday.github.io/Drop-finder/ --local-root /tmp/dropfinder-pages --receipt /tmp/release.json --output /tmp/live-endpoints.json
+      - name: Review dependency surfaces
+        run: |
+          set -euo pipefail
+          npm --prefix /tmp/dropfinder-main/web ci --no-audit --no-fund
+          set +e
+          npm --prefix /tmp/dropfinder-main/web audit --omit=dev --json > /tmp/npm-runtime-audit.json
+          runtime_status=$?
+          npm --prefix /tmp/dropfinder-main/web audit --json > /tmp/npm-full-audit.json
+          full_status=$?
+          set -e
+          RUNTIME_STATUS="$runtime_status" FULL_STATUS="$full_status" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          runtime=json.loads(Path('/tmp/npm-runtime-audit.json').read_text()); full=json.loads(Path('/tmp/npm-full-audit.json').read_text())
+          rc=(runtime.get('metadata') or {}).get('vulnerabilities') or {}; fc=(full.get('metadata') or {}).get('vulnerabilities') or {}
+          assert int(rc.get('high',0)) == 0 and int(rc.get('critical',0)) == 0, rc
+          Path('/tmp/dependency-review.json').write_text(json.dumps({'verified':True,'runtime_exit_status':int(os.environ['RUNTIME_STATUS']),'full_exit_status':int(os.environ['FULL_STATUS']),'runtime_vulnerabilities':rc,'full_vulnerabilities':fc},indent=2,sort_keys=True)+'\n')
+          PY
+          python -m pip install --disable-pip-version-check -e /tmp/dropfinder-main > /tmp/pip-install.log
+          python -m pip check | tee /tmp/pip-check.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: final-production-artifact-evidence-v3
+          path: |
+            /tmp/release.json
+            /tmp/live-endpoints.json
+            /tmp/npm-runtime-audit.json
+            /tmp/npm-full-audit.json
+            /tmp/dependency-review.json
+            /tmp/pip-check.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  live-browser-matrix:
+    if: github.head_ref == 'trigger/final-production-closure-v3'
+    needs: artifacts-and-endpoints
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    env:
+      DROPFINDER_PUBLIC_URL: https://chicken3veryday.github.io/Drop-finder/
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: verification/final-production-closure
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frozen frontend and browsers
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Run live five-project matrix
+        working-directory: web
+        run: npx playwright test --config=playwright.live.config.mjs
+      - name: Summarize browser evidence
+        working-directory: web
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('test-results/live-results.json').read_text())
+          counts={'passed':0,'failed':0,'skipped':0,'timedOut':0,'interrupted':0}; projects={}
+          def walk(suite):
+              for spec in suite.get('specs',[]):
+                  for test in spec.get('tests',[]):
+                      project=test.get('projectName','unknown'); bucket=projects.setdefault(project,dict.fromkeys(counts,0)); results=test.get('results',[]); status=results[-1].get('status','failed') if results else 'skipped'; status=status if status in counts else 'failed'; counts[status]+=1; bucket[status]+=1
+              for child in suite.get('suites',[]): walk(child)
+          for suite in data.get('suites',[]): walk(suite)
+          report={'verified':counts['failed']==0 and counts['timedOut']==0 and counts['interrupted']==0,'generation_id':'${{ needs.artifacts-and-endpoints.outputs.generation_id }}','publication_commit':'${{ needs.artifacts-and-endpoints.outputs.publication_commit }}','projects':projects,'counts':counts}
+          assert report['verified'], report
+          Path('test-results/live-summary.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: final-production-browser-evidence-v3
+          path: |
+            web/test-results
+            web/playwright-live-report
+          if-no-files-found: warn
+          retention-days: 90
