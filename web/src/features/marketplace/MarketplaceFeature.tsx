@@ -837,7 +837,11 @@ const effectiveLoading = loading || queryLoading;
       ) : null}
 
       {query.rows.length > 0 ? (
-        <div className="df-list" role="list" aria-label={`${query.total} marketplace results`}>
+        <div
+          className="df-list"
+          role={virtualization ? undefined : "list"}
+          aria-label={virtualization ? undefined : `${query.total} marketplace results`}
+        >
           {virtualization
             ? virtualization.render({
                 rows: query.rows,

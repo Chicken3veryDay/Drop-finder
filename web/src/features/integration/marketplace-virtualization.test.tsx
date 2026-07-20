@@ -27,7 +27,7 @@ describe("integrated marketplace virtualization", () => {
   it("resets on semantic query changes and preserves same-query enrichment", () => {
     const model = new FakeVirtualModel();
     const view = render(<VirtualizedMarketplace {...props(model, "query-a")} />);
-    const viewport = view.getByLabelText("Marketplace results viewport") as HTMLDivElement;
+    const viewport = view.getByRole("list", { name: "2 marketplace results" }) as HTMLDivElement;
     expect(model.replaceCalls.at(-1)?.preserveAnchor).toBe(false);
     viewport.scrollTop = 320;
     const enriched = model.currentRows.map((entry) => ({ ...entry, product: { ...entry.product, rating: 4.8, reviewCount: 25 } }));
@@ -42,7 +42,7 @@ describe("integrated marketplace virtualization", () => {
   it("bridges row focus, exposes logical position, and transfers focus before unmount", () => {
     const model = new FakeVirtualModel();
     const view = render(<VirtualizedMarketplace {...props(model, "query-a")} />);
-    const viewport = view.getByLabelText("Marketplace results viewport") as HTMLDivElement;
+    const viewport = view.getByRole("list", { name: "2 marketplace results" }) as HTMLDivElement;
     const firstButton = view.getByRole("button", { name: "p1" });
     const firstRow = firstButton.closest('[role="listitem"]');
     expect(firstRow).toHaveAttribute("aria-posinset", "1");

@@ -563,7 +563,8 @@ export function VirtualizedMarketplace({
       className="df-virtual-viewport"
       onScroll={onScroll}
       tabIndex={-1}
-      aria-label="Marketplace results viewport"
+      role="list"
+      aria-label={`${total} marketplace results`}
     >
       <div style={{ height: windowState.topSpacer }} aria-hidden="true" />
       {windowState.items.map((item) => (
