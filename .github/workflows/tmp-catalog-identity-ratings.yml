@@ -26,30 +26,36 @@ jobs:
           python .github/tmp/issues68_76_catalog_integrity.py
           python .github/tmp/issues68_76_tests.py
           python - <<'PY'
+          import re
           from pathlib import Path
 
           path = Path("scripts/catalog_v4/verify.py")
           text = path.read_text(encoding="utf-8")
-          old_pair = '''            rating_value = product.get("rating")
-              review_count = product.get("review_count")
-              if (rating_value, review_count) != index_ratings_by_product.get(product_id):
-                  raise VerificationError(f"index/detail rating mismatch: {product_id}")
-          '''
-          new_pair = '''            rating_value, review_count = index_ratings_by_product.get(product_id, (None, None))
-          '''
-          old_method = '''                if rating_provenance.get("method") != "atomic_source_record_pair":
-                      raise VerificationError(f"non-atomic rating provenance: {product_id}")
-                  for field in ("source_record_id", "source_path", "collected_at"):
-          '''
-          new_method = '''                if rating_provenance.get("method") != "atomic_source_record_pair":
-                      raise VerificationError(f"non-atomic rating provenance: {product_id}")
-                  if (rating_provenance.get("raw_score"), rating_provenance.get("raw_count")) != (rating_value, review_count):
-                      raise VerificationError(f"rating provenance value mismatch: {product_id}")
-                  for field in ("source_record_id", "source_path", "collected_at"):
-          '''
-          if text.count(old_pair) != 1 or text.count(old_method) != 1:
-              raise SystemExit(f"rating verifier correction anchors: pair={text.count(old_pair)} method={text.count(old_method)}")
-          text = text.replace(old_pair, new_pair, 1).replace(old_method, new_method, 1)
+          pair_pattern = re.compile(
+              r'(?m)^(?P<indent>\s*)rating_value = product\.get\("rating"\)\n'
+              r'(?P=indent)review_count = product\.get\("review_count"\)\n'
+              r'(?P=indent)if \(rating_value, review_count\) != index_ratings_by_product\.get\(product_id\):\n'
+              r'(?P=indent)    raise VerificationError\(f"index/detail rating mismatch: \{product_id\}"\)\n'
+          )
+          text, pair_count = pair_pattern.subn(
+              lambda match: f'{match.group("indent")}rating_value, review_count = index_ratings_by_product.get(product_id, (None, None))\n',
+              text,
+              count=1,
+          )
+          method_pattern = re.compile(
+              r'(?m)^(?P<indent>\s*)if rating_provenance\.get\("method"\) != "atomic_source_record_pair":\n'
+              r'(?P=indent)    raise VerificationError\(f"non-atomic rating provenance: \{product_id\}"\)\n'
+          )
+          def add_value_check(match: re.Match[str]) -> str:
+              indent = match.group("indent")
+              return (
+                  match.group(0)
+                  + f'{indent}if (rating_provenance.get("raw_score"), rating_provenance.get("raw_count")) != (rating_value, review_count):\n'
+                  + f'{indent}    raise VerificationError(f"rating provenance value mismatch: {{product_id}}")\n'
+              )
+          text, method_count = method_pattern.subn(add_value_check, text, count=1)
+          if pair_count != 1 or method_count != 1:
+              raise SystemExit(f"rating verifier correction anchors: pair={pair_count} method={method_count}")
           path.write_text(text, encoding="utf-8")
           PY
       - name: Verify exact source boundary
