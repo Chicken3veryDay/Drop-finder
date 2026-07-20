@@ -23,7 +23,7 @@ jobs:
           node-version: '24.18.0'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Apply shared collation repair
+      - name: Apply deterministic collation repair
         run: python .github/tmp/issue70_worker_collation.py
       - name: Verify exact source boundary
         shell: bash
@@ -38,7 +38,6 @@ jobs:
           printf '%s\n' \
             web/src/features/marketplace/marketplace-core.ts \
             web/src/features/marketplace/marketplace-sort-parity.test.ts \
-            web/src/platform/contracts.js \
             web/src/platform/workers/marketplace-query-engine.js \
             | sort > /tmp/expected-files
           diff -u /tmp/expected-files /tmp/actual-files
@@ -67,9 +66,8 @@ jobs:
           git add \
             web/src/features/marketplace/marketplace-core.ts \
             web/src/features/marketplace/marketplace-sort-parity.test.ts \
-            web/src/platform/contracts.js \
             web/src/platform/workers/marketplace-query-engine.js
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "fix: share deterministic marketplace name collation"
+          git commit -m "fix: pin deterministic marketplace name collation"
           git push origin HEAD:fix/issue-70-worker-collation
