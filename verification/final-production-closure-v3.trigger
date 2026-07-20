@@ -1,1 +1,1 @@
-inspect acceptance job 88483467626 for source 240614d9e5b58b4a13ee88bcd84644c6bd9c8933
+inspect acceptance job 88484012898 with signed redirect handling
