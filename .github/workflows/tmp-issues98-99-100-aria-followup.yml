@@ -38,6 +38,7 @@ jobs:
           printf '%s\n' \
             web/src/features/integration/marketplace-virtualization.test.tsx \
             web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx \
             web/src/platform/virtualization/virtual-marketplace-adapter.js \
             web/test/virtual-focus-anchor.test.mjs \
             | sort > /tmp/expected-files
@@ -48,7 +49,7 @@ jobs:
       - name: Validate focused and complete frontend contracts
         working-directory: web
         run: |
-          npx vitest run src/features/integration/marketplace-virtualization.test.tsx src/features/integration/marketplace-integration.test.ts
+          npx vitest run src/features/integration/marketplace-virtualization.test.tsx src/features/integration/marketplace-integration.test.ts src/features/marketplace/MarketplaceFeature.test.tsx
           node --test test/virtual-focus-anchor.test.mjs test/virtual-page-retention.test.mjs test/platform.test.mjs
           npm run lint
           npm run typecheck
@@ -92,8 +93,9 @@ jobs:
             .github/tmp/issues98_99_100_aria_followup.py
           git add \
             web/src/features/integration/marketplace-virtualization.test.tsx \
-            web/src/features/integration/register-marketplace-props.tsx
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/features/marketplace/MarketplaceFeature.tsx
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "fix: keep virtual viewport out of list accessibility tree"
+          git commit -m "fix: make the virtual viewport own the results list role"
           git push origin HEAD:fix/issues-98-99-virtualization-focus-anchor
