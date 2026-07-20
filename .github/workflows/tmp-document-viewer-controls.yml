@@ -32,45 +32,50 @@ jobs:
 
           path = Path("web/src/features/integration/document-overlay-controls.test.tsx")
           text = path.read_text(encoding="utf-8")
-          old = '''    function Harness() {
-              const [open, setOpen] = useState(true);
-              return (
+          replacements = [
+              (
+                  '    function Harness() {\n',
+                  '    const invoker = document.createElement("button");\n'
+                  '    invoker.type = "button";\n'
+                  '    invoker.textContent = "Invoker";\n'
+                  '    document.body.append(invoker);\n'
+                  '    function Harness() {\n',
+              ),
+              (
+                  '''      return (
                 <>
                   <button type="button">Invoker</button>
                   {open ? (
-                    <DocumentOverlay
-                      viewer={viewer as never}
-                      request={{ productId: "p1", variantId: "v1", document: documentRef, invokingElement: screen.queryByRole("button", { name: "Invoker" }) as HTMLElement }}
-                      onClosed={() => setOpen(false)}
-                    />
-                  ) : null}
+          ''',
+                  '''      return open ? (
+          ''',
+              ),
+              (
+                  '''                  ) : null}
                 </>
               );
-            }
-            render(<Harness />);
-            const invoker = screen.getByRole("button", { name: "Invoker" });
-          '''
-          new = '''    const invoker = document.createElement("button");
-            invoker.type = "button";
-            invoker.textContent = "Invoker";
-            document.body.append(invoker);
-            function Harness() {
-              const [open, setOpen] = useState(true);
-              return open ? (
-                <DocumentOverlay
-                  viewer={viewer as never}
-                  request={{ productId: "p1", variantId: "v1", document: documentRef, invokingElement: invoker }}
-                  onClosed={() => setOpen(false)}
-                />
-              ) : null;
-            }
-            render(<Harness />);
-          '''
-          assertion = '    expect(document.activeElement).toBe(invoker);\n'
-          replacement = '    await waitFor(() => expect(document.activeElement).toBe(invoker));\n    invoker.remove();\n'
-          if text.count(old) != 1 or text.count(assertion) != 1:
-              raise SystemExit(f"focus test anchors: harness={text.count(old)} assertion={text.count(assertion)}")
-          path.write_text(text.replace(old, new, 1).replace(assertion, replacement, 1), encoding="utf-8")
+          ''',
+                  '''                  ) : null;
+          ''',
+              ),
+              (
+                  'invokingElement: screen.queryByRole("button", { name: "Invoker" }) as HTMLElement',
+                  'invokingElement: invoker',
+              ),
+              (
+                  '    const invoker = screen.getByRole("button", { name: "Invoker" });\n',
+                  '',
+              ),
+              (
+                  '    expect(document.activeElement).toBe(invoker);\n',
+                  '    await waitFor(() => expect(document.activeElement).toBe(invoker));\n    invoker.remove();\n',
+              ),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f"focus test anchor count={text.count(old)}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding="utf-8")
           PY
       - name: Verify exact source boundary
         shell: bash
