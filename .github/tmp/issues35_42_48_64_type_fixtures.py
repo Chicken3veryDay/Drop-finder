@@ -17,6 +17,11 @@ replace_once(
 )
 replace_once(
     "web/src/features/integration/document-cache.integration.test.ts",
+    "    scale: 1,\n    fitWidth: true,\n",
+    "    scale: 1,\n    renderedScale: 1,\n    fitWidth: true,\n",
+)
+replace_once(
+    "web/src/features/integration/document-cache.integration.test.ts",
     "    zoomOut: vi.fn(),\n    setFitWidth: vi.fn(),\n",
     "    zoomOut: vi.fn(),\n    resetZoom: vi.fn(),\n    setFitWidth: vi.fn(),\n",
 )
