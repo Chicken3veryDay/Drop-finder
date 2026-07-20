@@ -1,0 +1,79 @@
+name: Temporary Issues 98 99 100 ARIA Follow-up
+
+on:
+  pull_request:
+    branches:
+      - fix/issues-98-99-virtualization-focus-anchor
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issues98-99-100-virtualization'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/issues-98-99-virtualization-focus-anchor
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply accessibility follow-up
+        run: python .github/tmp/issues98_99_100_aria_followup.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+            git ls-files --others --exclude-standard
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            web/src/features/integration/marketplace-virtualization.test.tsx \
+            web/src/features/integration/register-marketplace-props.tsx \
+            web/src/platform/virtualization/virtual-marketplace-adapter.js \
+            web/test/virtual-focus-anchor.test.mjs \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Validate focused and complete frontend contracts
+        working-directory: web
+        run: |
+          npx vitest run src/features/integration/marketplace-virtualization.test.tsx src/features/integration/marketplace-integration.test.ts
+          node --test test/virtual-focus-anchor.test.mjs test/virtual-page-retention.test.mjs test/platform.test.mjs
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run benchmark
+          npm run build
+          npm run build:platform
+          npm run analyze:chunks
+          npm run pwa:check
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Validate complete marketplace browser matrix
+        working-directory: web
+        run: npx playwright test tests/e2e/integrated-app.spec.mjs
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issues98-99-100-aria-followup.yml \
+            .github/tmp/issues98_99_100_aria_followup.py
+          git add \
+            web/src/features/integration/marketplace-virtualization.test.tsx \
+            web/src/features/integration/register-marketplace-props.tsx
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: keep virtual viewport out of list accessibility tree"
+          git push origin HEAD:fix/issues-98-99-virtualization-focus-anchor
