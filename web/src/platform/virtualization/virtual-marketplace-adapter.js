@@ -182,7 +182,10 @@ export class VirtualMarketplaceAdapter {
     return Object.freeze({
       start,
       end,
-      items: this.items.slice(start, end),
+      items: this.items.slice(start, end).map(item => ({
+        ...item,
+        logicalIndex: (this.itemByKey.get(keyOf(item))?.globalIndex ?? 0) + 1,
+      })),
       topSpacer: loaded.startPx + (this.offsets[start] ?? 0),
       bottomSpacer: Math.max(0, totalHeight - (loaded.startPx + (this.offsets[end] ?? (this.offsets.at(-1) ?? 0)))),
       totalCount: this.totalCount,
@@ -202,6 +205,13 @@ export class VirtualMarketplaceAdapter {
     else if (bottom > this.viewport.scrollTop + this.viewport.height) this.viewport.scrollTop = Math.max(0, bottom - this.viewport.height);
     this.emit('focus');
     return this.viewport.scrollTop;
+  }
+
+  blur(key = null) {
+    if (key != null && this.focusedKey !== String(key)) return;
+    if (this.focusedKey == null) return;
+    this.focusedKey = null;
+    this.emit('blur');
   }
 
   captureAnchor() {
