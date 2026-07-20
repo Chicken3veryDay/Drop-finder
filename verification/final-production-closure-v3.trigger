@@ -1,1 +1,1 @@
-inspect acceptance job 88484012898 with signed redirect handling
+run normalized-path acceptance for generation 50d09aeec0eed7b301891c360e4a6344
