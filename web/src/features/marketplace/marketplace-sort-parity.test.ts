@@ -5,7 +5,7 @@ import { DEFAULT_FILTERS, queryMarketplace, type MarketplaceProduct, type SortOp
 
 type WorkerRow = { productId: string };
 
-// Sort parity must hold for the complete result and for separately requested page windows.
+// Current-main parity must hold for the complete result and separately requested page windows.
 const names = [
   { id: "p-eclair-a", strain: "Éclair", vendor: "Vendor 10" },
   { id: "p-eclair-b", strain: "Eclair", vendor: "Vendor 2" },
