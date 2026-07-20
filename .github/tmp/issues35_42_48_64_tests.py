@@ -134,29 +134,28 @@ function fakeViewer() {
 describe("DocumentOverlay controls and ownership", () => {
   it("removes the modal once on Escape and restores focus after cleanup", async () => {
     const viewer = fakeViewer();
+    const invoker = document.createElement("button");
+    invoker.type = "button";
+    invoker.textContent = "Invoker";
+    document.body.append(invoker);
     function Harness() {
       const [open, setOpen] = useState(true);
-      return (
-        <>
-          <button type="button">Invoker</button>
-          {open ? (
-            <DocumentOverlay
-              viewer={viewer as never}
-              request={{ productId: "p1", variantId: "v1", document: documentRef, invokingElement: screen.queryByRole("button", { name: "Invoker" }) as HTMLElement }}
-              onClosed={() => setOpen(false)}
-            />
-          ) : null}
-        </>
-      );
+      return open ? (
+        <DocumentOverlay
+          viewer={viewer as never}
+          request={{ productId: "p1", variantId: "v1", document: documentRef, invokingElement: invoker }}
+          onClosed={() => setOpen(false)}
+        />
+      ) : null;
     }
     render(<Harness />);
-    const invoker = screen.getByRole("button", { name: "Invoker" });
     const dialog = screen.getByRole("dialog", { name: "Lab report" });
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Lab report" })).toBeNull());
     expect(viewer.close).toHaveBeenCalledTimes(1);
     expect(viewer.close).toHaveBeenCalledWith({ restoreFocus: false });
-    expect(document.activeElement).toBe(invoker);
+    await waitFor(() => expect(document.activeElement).toBe(invoker));
+    invoker.remove();
   });
 
   it("exposes reset zoom and rerenders fit-width PDFs after stage resize", async () => {
