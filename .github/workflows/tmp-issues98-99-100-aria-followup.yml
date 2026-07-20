@@ -61,9 +61,29 @@ jobs:
       - name: Install Playwright browsers
         working-directory: web
         run: npx playwright install --with-deps chromium firefox webkit
-      - name: Validate complete marketplace browser matrix
+      - name: Capture complete marketplace browser matrix
         working-directory: web
-        run: npx playwright test tests/e2e/integrated-app.spec.mjs
+        shell: bash
+        run: |
+          set +e
+          npx playwright test tests/e2e/integrated-app.spec.mjs > /tmp/virtualization-browser.log 2>&1
+          status=$?
+          printf '%s\n' "$status" > /tmp/virtualization-browser.status
+          tail -400 /tmp/virtualization-browser.log
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: virtualization-browser-followup
+          path: |
+            /tmp/virtualization-browser.log
+            /tmp/virtualization-browser.status
+            web/playwright-report
+            web/test-results
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Stop on browser validation failure
+        run: test "$(cat /tmp/virtualization-browser.status)" -eq 0
       - name: Commit clean implementation
         shell: bash
         run: |
