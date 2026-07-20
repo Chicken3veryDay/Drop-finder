@@ -1,0 +1,75 @@
+name: Temporary Issue 70 Worker Collation
+
+on:
+  pull_request:
+    branches:
+      - fix/issue-70-worker-collation
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/issue-70-worker-collation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/issue-70-worker-collation
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply shared collation repair
+        run: python .github/tmp/issue70_worker_collation.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+            git ls-files --others --exclude-standard
+          } | grep -v '^\.github/' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            web/src/features/marketplace/marketplace-core.ts \
+            web/src/features/marketplace/marketplace-sort-parity.test.ts \
+            web/src/platform/contracts.js \
+            web/src/platform/workers/marketplace-query-engine.js \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Install frozen frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Validate focused and complete frontend contracts
+        working-directory: web
+        run: |
+          npx vitest run src/features/marketplace/marketplace-sort-parity.test.ts
+          node --test test/platform.test.mjs
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run benchmark
+          npm run build
+          npm run build:platform
+          npm run analyze:chunks
+          npm run pwa:check
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-issue70-worker-collation.yml \
+            .github/tmp/issue70_worker_collation.py
+          git add \
+            web/src/features/marketplace/marketplace-core.ts \
+            web/src/features/marketplace/marketplace-sort-parity.test.ts \
+            web/src/platform/contracts.js \
+            web/src/platform/workers/marketplace-query-engine.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: share deterministic marketplace name collation"
+          git push origin HEAD:fix/issue-70-worker-collation
