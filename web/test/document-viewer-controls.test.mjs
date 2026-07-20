@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DocumentViewerCapability } from '../src/platform/documents/document-viewer-capability.js';
 
+// Manual zoom is owned by the rendered PDF scale, not the stale configured scale.
 function readyViewer(parentWidth) {
   const viewer = new DocumentViewerCapability({ minScale: 0.5, maxScale: 3, initialScale: 1 });
   const pdfPage = {
