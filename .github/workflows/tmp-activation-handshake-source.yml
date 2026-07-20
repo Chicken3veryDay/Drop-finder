@@ -1,0 +1,56 @@
+name: Temporary Activation Handshake Source
+
+on:
+  pull_request:
+    branches: [verification/activation-handshake-source]
+    paths:
+      - verification/activation-handshake-source.trigger
+      - .github/workflows/tmp-activation-handshake-source.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 99eac189812bc3dff763bdc4316e533416cc6eb0
+      - name: Collect generation-handshake sources
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/activation-source
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          needles=(
+              'activate-generation',
+              'generation-ready',
+              'generation-error',
+              'Catalog generation activation failed',
+              'generation-status',
+          )
+          roots=[Path('web/src'),Path('web/test'),Path('web/tests'),Path('cloud_pages')]
+          selected=[]
+          for root in roots:
+              if not root.exists(): continue
+              for path in root.rglob('*'):
+                  if not path.is_file() or path.suffix.lower() not in {'.js','.mjs','.ts','.tsx','.jsx'}: continue
+                  try: text=path.read_text(encoding='utf-8')
+                  except UnicodeDecodeError: continue
+                  if any(needle in text for needle in needles):
+                      target=Path('/tmp/activation-source')/path
+                      target.parent.mkdir(parents=True,exist_ok=True)
+                      shutil.copy2(path,target)
+                      selected.append(str(path))
+          Path('/tmp/activation-source/files.txt').write_text('\n'.join(selected)+'\n')
+          print('\n'.join(selected))
+          if not selected: raise SystemExit('no activation sources found')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: activation-handshake-sources
+          path: /tmp/activation-source
+          if-no-files-found: error
+          retention-days: 7
