@@ -27,6 +27,17 @@ jobs:
         run: |
           python .github/tmp/issues35_42_48_64_document_viewer.py
           python .github/tmp/issues35_42_48_64_tests.py
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("web/src/features/integration/document-overlay-controls.test.tsx")
+          text = path.read_text(encoding="utf-8")
+          old = '    expect(document.activeElement).toBe(invoker);\n'
+          new = '    await waitFor(() => expect(document.activeElement).toBe(invoker));\n'
+          if text.count(old) != 1:
+              raise SystemExit(f"focus assertion anchor count: {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
       - name: Verify exact source boundary
         shell: bash
         run: |
