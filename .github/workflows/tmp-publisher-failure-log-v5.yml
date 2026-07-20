@@ -1,0 +1,59 @@
+name: Temporary Publisher Failure Log V5
+
+on:
+  pull_request:
+    branches: [verification/publisher-failure-log-v5]
+    paths:
+      - verification/publisher-failure-log-v5.trigger
+      - .github/workflows/tmp-publisher-failure-log-v5.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Extract decisive publisher failure lines
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          JOB_ID: '88505649695'
+        run: |
+          set -euo pipefail
+          gh api "repos/${GH_REPO}/actions/jobs/${JOB_ID}/logs" > /tmp/publisher-job.log
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('/tmp/publisher-job.log').read_text(encoding='utf-8-sig',errors='replace')
+          needles=(
+              'ReleaseGateError',
+              'continuity',
+              'Traceback',
+              'Main advanced',
+              'refusing',
+              'large drop',
+              'failed',
+              'Error:',
+          )
+          lines=text.splitlines()
+          selected=[]
+          for index,line in enumerate(lines):
+              if any(needle.lower() in line.lower() for needle in needles):
+                  start=max(0,index-3); end=min(len(lines),index+5)
+                  selected.extend(lines[start:end])
+          dedup=[]
+          seen=set()
+          for line in selected:
+              if line in seen: continue
+              seen.add(line); dedup.append(line)
+          output='\n'.join(dedup[-240:])+'\n'
+          Path('/tmp/publisher-failure-lines.txt').write_text(output,encoding='utf-8')
+          print(output)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: publisher-failure-lines-v5
+          path: /tmp/publisher-failure-lines.txt
+          if-no-files-found: error
+          retention-days: 7
