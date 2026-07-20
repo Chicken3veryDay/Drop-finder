@@ -1,34 +1,4 @@
-from pathlib import Path
-
-
-normalization_test = Path("tests/catalog_v4/test_normalization.py")
-text = normalization_test.read_text(encoding="utf-8")
-old = '''        self.assertEqual(canonical_strain_name("Hash Burger THCA Flower"), "Hash Burger")
-        self.assertEqual(canonical_strain_name("Premium OG - Limited Drop"), "Premium OG")
-'''
-new = '''        self.assertEqual(canonical_strain_name("Hash Burger THCA Flower"), "Hash Burger")
-        self.assertEqual(canonical_strain_name("Premium OG - Limited Drop"), "Premium OG")
-        cases = {
-            "ADL | THCa Flower | Tier 1": "ADL",
-            "Fidel Runtz | THCa Flower | Tier 1": "Fidel Runtz",
-            "Candy Runtz THCa Flower Smalls": "Candy Runtz",
-            "Cherry Bordeaux THCa Flower Smalls": "Cherry Bordeaux",
-            "Canal St. Runtz Premium": "Canal St. Runtz",
-            "Cherry Cookies Greenhouse": "Cherry Cookies",
-            "Blue Nerdz THCa": "Blue Nerdz",
-        }
-        for source, expected in cases.items():
-            with self.subTest(source=source):
-                self.assertEqual(canonical_strain_name(source), expected)
-        for legitimate in ("Premium OG", "Greenhouse Effect", "Flower Power", "Tier One"):
-            with self.subTest(legitimate=legitimate):
-                self.assertEqual(canonical_strain_name(legitimate), legitimate)
-'''
-if text.count(old) != 1:
-    raise SystemExit(f"normalization test anchor count: {text.count(old)}")
-normalization_test.write_text(text.replace(old, new, 1), encoding="utf-8")
-
-Path("tests/catalog_v4/test_identity_rating_integrity.py").write_text(r'''from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -144,4 +114,3 @@ class CatalogIdentityRatingIntegrityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-''', encoding="utf-8")

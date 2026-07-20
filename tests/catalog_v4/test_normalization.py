@@ -55,6 +55,21 @@ class NormalizationTests(unittest.TestCase):
         )
         self.assertEqual(canonical_strain_name("Hash Burger THCA Flower"), "Hash Burger")
         self.assertEqual(canonical_strain_name("Premium OG - Limited Drop"), "Premium OG")
+        cases = {
+            "ADL | THCa Flower | Tier 1": "ADL",
+            "Fidel Runtz | THCa Flower | Tier 1": "Fidel Runtz",
+            "Candy Runtz THCa Flower Smalls": "Candy Runtz",
+            "Cherry Bordeaux THCa Flower Smalls": "Cherry Bordeaux",
+            "Canal St. Runtz Premium": "Canal St. Runtz",
+            "Cherry Cookies Greenhouse": "Cherry Cookies",
+            "Blue Nerdz THCa": "Blue Nerdz",
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(canonical_strain_name(source), expected)
+        for legitimate in ("Premium OG", "Greenhouse Effect", "Flower Power", "Tier One"):
+            with self.subTest(legitimate=legitimate):
+                self.assertEqual(canonical_strain_name(legitimate), legitimate)
 
     def test_all_six_lineages(self) -> None:
         expected = {
