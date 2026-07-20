@@ -54,7 +54,7 @@ type PlatformQueryEngine = {
 };
 
 type VirtualWindow = {
-  items: Array<{ productId: string; row: MarketplaceRowProjection }>;
+  items: Array<{ productId: string; row: MarketplaceRowProjection; logicalIndex: number }>;
   topSpacer: number;
   bottomSpacer: number;
   totalCount: number;
@@ -70,6 +70,8 @@ type VirtualModel = {
   }): void;
   setViewport(scrollTop: number, height: number): void;
   measure(key: string, height: number): boolean;
+  focus(key: string): number | null;
+  blur(key?: string | null): void;
   window(): VirtualWindow;
   loadedRange(): { startPx: number; endPx: number };
   subscribe(listener: () => void): () => void;
@@ -427,11 +429,17 @@ export const createMarketplaceQueryAdapter = (
 
 function MeasuredRow({
   productId,
+  logicalIndex,
+  totalCount,
   model,
+  onFocused,
   children,
 }: {
   productId: string;
+  logicalIndex: number;
+  totalCount: number;
   model: VirtualModel;
+  onFocused(productId: string): void;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -445,10 +453,24 @@ function MeasuredRow({
     observer.observe(element);
     return () => observer.disconnect();
   }, [model, productId]);
-  return <div ref={ref} data-virtual-product={productId} role="listitem">{children}</div>;
+  return (
+    <div
+      ref={ref}
+      data-virtual-product={productId}
+      role="listitem"
+      aria-posinset={logicalIndex}
+      aria-setsize={totalCount}
+      onFocusCapture={() => onFocused(productId)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) model.blur(productId);
+      }}
+    >
+      {children}
+    </div>
+  );
 }
 
-function VirtualizedMarketplace({
+export function VirtualizedMarketplace({
   model,
   rows,
   pages,
@@ -461,6 +483,7 @@ function VirtualizedMarketplace({
   onEndReached,
 }: VirtualMarketplaceAdapterProps & { model: VirtualModel }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const previousQueryKey = useRef<string | null>(null);
   const [, setRevision] = useState(0);
   const virtualPages = useMemo(
     () => (pages ?? [{ offset: 0, rows }]).map((page) => ({
@@ -471,13 +494,20 @@ function VirtualizedMarketplace({
   );
 
   useLayoutEffect(() => {
+    const preserveAnchor = previousQueryKey.current === queryKey;
+    previousQueryKey.current = queryKey;
     model.replacePages({
       pages: virtualPages,
       total,
       version: virtualPages.length,
       queryKey,
-      preserveAnchor: true,
+      preserveAnchor,
     });
+    const viewport = viewportRef.current;
+    if (!preserveAnchor && viewport) {
+      viewport.scrollTop = 0;
+      model.setViewport(0, viewport.clientHeight);
+    }
   }, [model, queryKey, total, virtualPages]);
 
   useEffect(() => model.subscribe(() => setRevision((value) => value + 1)), [model]);
@@ -494,10 +524,26 @@ function VirtualizedMarketplace({
   }, [model]);
 
   const windowState = model.window();
+  const onRowFocused = useCallback((productId: string) => {
+    const viewport = viewportRef.current;
+    const nextScrollTop = model.focus(productId);
+    if (viewport && nextScrollTop !== null && Math.abs(viewport.scrollTop - nextScrollTop) >= 0.5) {
+      viewport.scrollTop = nextScrollTop;
+      model.setViewport(nextScrollTop, viewport.clientHeight);
+    }
+  }, [model]);
   const onScroll = () => {
     const viewport = viewportRef.current;
     if (!viewport) return;
+    const activeRow = document.activeElement instanceof Element
+      ? document.activeElement.closest<HTMLElement>("[data-virtual-product]")
+      : null;
+    const activeProductId = activeRow?.dataset.virtualProduct ?? null;
     model.setViewport(viewport.scrollTop, viewport.clientHeight);
+    if (activeProductId && !model.window().items.some((item) => item.productId === activeProductId)) {
+      model.blur(activeProductId);
+      viewport.focus({ preventScroll: true });
+    }
     const range = model.loadedRange();
     if (hasPreviousPage && onStartReached && viewport.scrollTop <= range.startPx + 900) {
       onStartReached();
@@ -516,10 +562,20 @@ function VirtualizedMarketplace({
       ref={viewportRef}
       className="df-virtual-viewport"
       onScroll={onScroll}
+      tabIndex={-1}
+      role="list"
+      aria-label={`${total} marketplace results`}
     >
       <div style={{ height: windowState.topSpacer }} aria-hidden="true" />
       {windowState.items.map((item) => (
-        <MeasuredRow key={item.productId} productId={item.productId} model={model}>
+        <MeasuredRow
+          key={item.productId}
+          productId={item.productId}
+          logicalIndex={item.logicalIndex}
+          totalCount={windowState.totalCount}
+          model={model}
+          onFocused={onRowFocused}
+        >
           {renderRow(item.row)}
         </MeasuredRow>
       ))}
