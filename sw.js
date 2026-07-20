@@ -1,5 +1,5 @@
 /* DropFinder generated-snapshot service worker. Relative-path safe for gh-pages/raw.githack. */
-const SW_VERSION = 'platform-v3';
+const SW_VERSION = 'platform-v4';
 const DEPLOYMENT_URL = canonicalDeploymentUrl(
   self.registration?.scope ?? self.location?.href ?? `${self.location.origin}/`,
 );
@@ -14,6 +14,8 @@ const PREPARED_META_KEY = new URL('./__dropfinder__/prepared-generation.json', D
 const SHELL_MANIFEST = './app-shell.json';
 const FALLBACK_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './data/catalog.json', './data/status.json', './data/runtime.json'];
 const MAX_DETAIL_ENTRIES = 96;
+const MAX_DETAIL_BYTES = 2 * 1024 * 1024;
+const DETAIL_SCHEMA_VERSION = 'dropfinder-product-details-v4';
 const MAX_DOCUMENT_ENTRIES = 12;
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 const MAX_SHELL_ASSETS = 256;
@@ -55,7 +57,11 @@ self.addEventListener('message', event => {
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return;
+  if (isDevelopmentModule(url.pathname)) return;
+  if (url.origin !== self.location.origin) {
+    event.respondWith(withOpenedDocumentFallback(event.request));
+    return;
+  }
   if (event.request.mode === 'navigate') {
     event.respondWith(networkFirst(event.request, APP_CACHE, './index.html'));
     return;
@@ -72,8 +78,20 @@ self.addEventListener('fetch', event => {
     event.respondWith(generationDetail(event.request));
     return;
   }
-  event.respondWith(staleWhileRevalidate(event.request, APP_CACHE));
+  event.respondWith(withOpenedDocumentFallback(
+    event.request,
+    () => staleWhileRevalidate(event.request, APP_CACHE),
+  ));
 });
+
+async function withOpenedDocumentFallback(request, load = () => fetch(request)) {
+  let response = null;
+  try { response = await load(); } catch {}
+  if (response && (response.ok || !NAVIGATION_FALLBACK_STATUS.has(response.status))) return response;
+  const cache = await caches.open(DOCUMENT_CACHE);
+  const cached = await cache.match(request);
+  return cached || response || new Response('', { status: 503 });
+}
 
 async function cacheApplicationShell() {
   const cache = await caches.open(APP_CACHE);
@@ -241,27 +259,148 @@ async function ensureActiveGeneration() {
   return activeGeneration;
 }
 
+async function detailDescriptor(cache, request, generationId) {
+  const requestUrl = withoutSearch(request.url);
+  for (const key of await cache.keys()) {
+    const path = new URL(key.url).pathname;
+    if (!/(?:catalog-manifest-v4\.json|\/catalog-v4\/manifest\.json)$/i.test(path)) continue;
+    const manifestResponse = await cache.match(key);
+    if (!manifestResponse) continue;
+    let manifest;
+    try { manifest = await manifestResponse.json(); } catch { continue; }
+    if (manifest?.generation_id !== generationId) continue;
+    const publicationBase = catalogPublicationBase(key.url);
+    for (const descriptor of manifest.product_detail_shards || []) {
+      if (!descriptor || !(descriptor.path || descriptor.url)) continue;
+      const candidate = withoutSearch(new URL(descriptor.path ?? descriptor.url, publicationBase).href);
+      if (candidate === requestUrl) return descriptor;
+    }
+  }
+  return null;
+}
+
+async function inspectDetailResponse(response, descriptor, generationId) {
+  const contentType = response.headers.get('content-type') || '';
+  if (!/(?:application|text)\/(?:[a-z0-9.+-]*\+)?json/i.test(contentType)) return { valid: false, reason: 'content_type' };
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_DETAIL_BYTES) return { valid: false, reason: 'oversized' };
+  let bytes;
+  try { bytes = await response.clone().arrayBuffer(); } catch { return { valid: false, reason: 'body' }; }
+  if (bytes.byteLength > MAX_DETAIL_BYTES) return { valid: false, reason: 'oversized' };
+  let payload;
+  try { payload = await new Response(bytes, { headers: { 'content-type': 'application/json' } }).json(); }
+  catch { return { valid: false, reason: 'malformed' }; }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { valid: false, reason: 'shape' };
+  if (payload.schema_version !== DETAIL_SCHEMA_VERSION) return { valid: false, reason: 'schema' };
+  if (payload.generation_id !== generationId) return { valid: false, reason: 'generation', generationId: payload.generation_id };
+  if (!Array.isArray(payload.products) || !Number.isInteger(payload.product_count)
+      || payload.product_count !== payload.products.length) return { valid: false, reason: 'count' };
+  if (!descriptor?.sha256 || !/^[a-f0-9]{64}$/i.test(String(descriptor.sha256))) return { valid: false, reason: 'descriptor' };
+  let digest;
+  try { digest = await crypto.subtle.digest('SHA-256', bytes); } catch { return { valid: false, reason: 'hash_unavailable' }; }
+  const actual = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+  if (actual !== String(descriptor.sha256).toLowerCase()) return { valid: false, reason: 'hash' };
+  return { valid: true, payload };
+}
+
+function withoutSearch(value) {
+  const parsed = new URL(value);
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.href;
+}
+
+async function deleteMatchingEntry(cache, request) {
+  const target = withoutSearch(request.url);
+  for (const key of await cache.keys()) {
+    if (withoutSearch(key.url) === target) await cache.delete(key);
+  }
+}
+
 async function generationDetail(request) {
   await restorePromise;
   await ensureActiveGeneration();
-  const generation = request.headers.get('x-dropfinder-generation') || new URL(request.url).searchParams.get('generation');
-  if (activeGeneration && generation && generation !== activeGeneration.id) return new Response('', { status: 409 });
+  const requestedGeneration = request.headers.get('x-dropfinder-generation') || new URL(request.url).searchParams.get('generation');
+  if (activeGeneration && requestedGeneration && requestedGeneration !== activeGeneration.id) return new Response('', { status: 409 });
   const cache = activeGeneration ? await caches.open(activeGeneration.cacheName) : null;
+  const descriptor = cache && activeGeneration ? await detailDescriptor(cache, request, activeGeneration.id) : null;
   const hit = await cache?.match(request, { ignoreSearch: true });
-  if (hit) return hit;
+  if (hit) {
+    const inspected = descriptor && activeGeneration
+      ? await inspectDetailResponse(hit.clone(), descriptor, activeGeneration.id)
+      : { valid: false };
+    if (inspected.valid) return hit;
+    await deleteMatchingEntry(cache, request);
+  }
   try {
-    const response = await fetch(request);
+    const response = await fetch(request, { cache: 'no-store' });
     if (!response.ok) return response;
-    const identity = await readGenerationIdentity(response.clone());
-    if (activeGeneration && identity.generationId && identity.generationId !== activeGeneration.id) return new Response('', { status: 409 });
-    if (cache) {
-      await safeCachePut(cache, request, response.clone());
-      await trimCache(cache, MAX_DETAIL_ENTRIES, url => isDetailShard(new URL(url).pathname));
+    if (!cache || !activeGeneration || !descriptor) return response;
+    const inspected = await inspectDetailResponse(response.clone(), descriptor, activeGeneration.id);
+    if (!inspected.valid) {
+      if (inspected.reason === 'generation' && inspected.generationId) return new Response('', { status: 409 });
+      return response;
     }
+    await safeCachePut(cache, request, response.clone());
+    await trimCache(cache, MAX_DETAIL_ENTRIES, url => isDetailShard(new URL(url).pathname));
     return response;
   } catch {
-    return hit || new Response('', { status: 503 });
+    return new Response('', { status: 503 });
   }
+}
+
+async function readBoundedCacheResponse(response, maxBytes) {
+  const contentLength = response.headers.get('content-length');
+  const declared = contentLength === null ? null : Number(contentLength);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    try { await response.body?.cancel('Document exceeds its cache limit'); } catch {}
+    return null;
+  }
+  if (!response.body) {
+    return new Response(null, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      if (totalBytes + chunk.byteLength > maxBytes) {
+        try { await reader.cancel('Document exceeds its cache limit'); } catch {}
+        return null;
+      }
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+    }
+  } finally {
+    try { reader.releaseLock(); } catch {}
+  }
+
+  let chunkIndex = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (chunkIndex >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunks[chunkIndex]);
+      chunks[chunkIndex] = null;
+      chunkIndex += 1;
+    },
+    cancel() { chunks.length = 0; },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 async function cacheOpenedDocument(document, source) {
@@ -269,14 +408,12 @@ async function cacheOpenedDocument(document, source) {
   try {
     const request = new Request(document.url, { credentials: 'omit', referrerPolicy: 'no-referrer' });
     const response = await fetch(request);
-    const length = Number(response.headers.get('content-length'));
     const cacheControl = response.headers.get('cache-control') || '';
-    if (!response.ok || response.type === 'opaque' || /private|no-store/i.test(cacheControl)
-      || (Number.isFinite(length) && length > MAX_DOCUMENT_BYTES)) return;
-    const bytes = await response.clone().arrayBuffer();
-    if (bytes.byteLength > MAX_DOCUMENT_BYTES) return;
+    if (!response.ok || response.type === 'opaque' || /private|no-store/i.test(cacheControl)) return;
+    const bounded = await readBoundedCacheResponse(response, MAX_DOCUMENT_BYTES);
+    if (!bounded) return;
     const cache = await caches.open(DOCUMENT_CACHE);
-    await safeCachePut(cache, request, response);
+    await safeCachePut(cache, request, bounded);
     await trimCache(cache, MAX_DOCUMENT_ENTRIES, () => true);
   } catch (error) {
     if (error?.name === 'QuotaExceededError') source?.postMessage({ type: 'cache-quota', resource: 'document' });
@@ -344,12 +481,13 @@ function isOwnedGenerationCache(cacheName) {
     function generationCacheName(id) {
       return `${GENERATION_CACHE_PREFIX}${String(id).replace(/[^a-z0-9._-]/gi, '_')}`;
     }
+function isDevelopmentModule(path) { return /^(?:\/@|\/src\/|\/node_modules\/)/.test(path); }
 function isHashedAsset(path) { return /\/assets\/(?:[^/]+\/)*[^/]+-[a-z0-9_-]{8}\.[a-z0-9]+$/i.test(path); }
 function isManifestOrIndex(path) { return /(?:catalog-manifest-v4|catalog-index|vendor-profiles|catalog|status)\.json$/i.test(path) || /\/catalog-v4\/(?:manifest|index)\.json$/i.test(path); }
 function isLegacyCatalogMember(path) { return /\/(?:catalog|status)\.json$/i.test(path) && !path.includes('catalog-manifest-v4'); }
 function isDetailShard(path) { return /(?:details?|shards?)\/.*\.json$/i.test(path); }
 async function cacheFirst(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request, { ignoreSearch: true }); if (hit) return hit; const response = await fetch(request); if (response.ok) await safeCachePut(cache, request, response.clone()); return response; }
-async function staleWhileRevalidate(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request, { ignoreSearch: true }); const network = fetch(request).then(response => { if (response.ok) safeCachePut(cache, request, response.clone()); return response; }).catch(() => null); if (hit) { void network; return hit; } return (await network) || new Response('', { status: 503 }); }
+async function staleWhileRevalidate(request, cacheName) { const cache = await caches.open(cacheName); const hit = await cache.match(request); const network = fetch(request).then(response => { if (response.ok) safeCachePut(cache, request, response.clone()); return response; }).catch(() => null); if (hit) { void network; return hit; } return (await network) || new Response('', { status: 503 }); }
 async function navigationFallback(cache, request, fallback, terminal) {
   return (await cache.match(request, { ignoreSearch: true }))
     || (await cache.match(fallback, { ignoreSearch: true }))
