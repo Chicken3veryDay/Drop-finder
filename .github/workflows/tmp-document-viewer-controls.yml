@@ -27,6 +27,7 @@ jobs:
         run: |
           python .github/tmp/issues35_42_48_64_document_viewer.py
           python .github/tmp/issues35_42_48_64_tests.py
+          python .github/tmp/issues35_42_48_64_type_fixtures.py
       - name: Verify exact source boundary
         shell: bash
         run: |
@@ -38,6 +39,7 @@ jobs:
             git ls-files --others --exclude-standard
           } | grep -v '^\.github/' | sort -u > /tmp/actual-files
           printf '%s\n' \
+            web/src/features/integration/document-cache.integration.test.ts \
             web/src/features/integration/document-overlay-controls.test.tsx \
             web/src/features/integration/register-marketplace-props.tsx \
             web/src/platform/documents/document-viewer-capability.js \
@@ -55,7 +57,7 @@ jobs:
           {
             set -e
             node --test test/document-viewer-controls.test.mjs test/document-bounded-read-and-close.test.mjs test/document-viewer-generation.test.mjs
-            npx vitest run src/features/integration/document-overlay-controls.test.tsx src/features/integration/marketplace-integration.test.ts
+            npx vitest run src/features/integration/document-overlay-controls.test.tsx src/features/integration/document-cache.integration.test.ts src/features/integration/marketplace-integration.test.ts
             npm run lint
             npm run typecheck
             npm test
@@ -93,8 +95,10 @@ jobs:
           git rm \
             .github/workflows/tmp-document-viewer-controls.yml \
             .github/tmp/issues35_42_48_64_document_viewer.py \
-            .github/tmp/issues35_42_48_64_tests.py
+            .github/tmp/issues35_42_48_64_tests.py \
+            .github/tmp/issues35_42_48_64_type_fixtures.py
           git add \
+            web/src/features/integration/document-cache.integration.test.ts \
             web/src/features/integration/document-overlay-controls.test.tsx \
             web/src/features/integration/register-marketplace-props.tsx \
             web/src/platform/documents/document-viewer-capability.js \
