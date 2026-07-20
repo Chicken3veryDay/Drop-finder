@@ -250,6 +250,37 @@ def _merge_product_field(records: list[dict[str, Any]], key: str) -> Any:
     return ranked[0].get(key) if ranked else None
 
 
+def _select_rating_pair(records: list[dict[str, Any]]) -> tuple[float | None, int | None, dict[str, Any]]:
+    candidates: list[tuple[tuple[str, int, str], float, int, dict[str, Any]]] = []
+    for row in records:
+        score, count, provenance = rating(row.get("rating"), row.get("review_count"))
+        if score is None or count is None:
+            continue
+        source_record_id = clean_text(row.get("source_record_id")) or stable_digest(
+            row.get("source_id"),
+            row.get("url"),
+            row.get("source_variant_id"),
+            row.get("collected_at"),
+            length=20,
+        )
+        pair_provenance = {
+            **provenance,
+            "method": "atomic_source_record_pair",
+            "source_record_id": source_record_id,
+            "source_path": canonical_url(row.get("route_url") or row.get("url"), keep_variant=True),
+            "collected_at": clean_text(row.get("collected_at")),
+        }
+        rank = (
+            clean_text(row.get("collected_at")),
+            sum(row.get(field) not in (None, "", [], {}) for field in row),
+            source_record_id,
+        )
+        candidates.append((rank, score, count, pair_provenance))
+    if not candidates:
+        return rating(None, None)
+    _, score, count, provenance = max(candidates, key=lambda candidate: candidate[0])
+    return score, count, provenance
+
 
 def _product_preference(product: dict[str, Any]) -> tuple[int, int, int, str, str]:
     identity = product.get("provenance", {}).get("identity", {}) if isinstance(product.get("provenance"), dict) else {}
@@ -577,6 +608,7 @@ class CatalogBuilder:
                 source_title=source_title,
                 canonical_product_url=product_url,
                 product_identity_provenance=identity_provenance,
+                source_record_id=source_record_id,
             )
             grouped[product_id].append(product_seed)
             normalized_variants[product_id].append(variant)
@@ -650,10 +682,7 @@ class CatalogBuilder:
                 seed.get("description"),
             )
             effect_values, effects_provenance = effects(_merge_product_field(records_for_product, "effects"))
-            rating_value, review_count, rating_provenance = rating(
-                _merge_product_field(records_for_product, "rating"),
-                _merge_product_field(records_for_product, "review_count"),
-            )
+            rating_value, review_count, rating_provenance = _select_rating_pair(records_for_product)
             potency_candidates = [(_extract_total_thc(row), row) for row in records_for_product]
             potency_rank = {
                 "delta9_plus_thca_times_0_877": 3,
@@ -673,16 +702,17 @@ class CatalogBuilder:
                 or _merge_product_field(records_for_product, "favicon_url"),
                 keep_variant=True,
             )
+            selected_strain_name = min(
+                (clean_text(row.get("canonical_strain_name")) for row in records_for_product if clean_text(row.get("canonical_strain_name"))),
+                key=lambda value: (len(value), value.casefold()),
+            )
             products.append(
                 {
                     "product_id": product_id,
                     "vendor_id": seed["source_id"],
                     "vendor_name": seed["vendor_name"],
                     "vendor_favicon_url": favicon,
-                    "strain_name": min(
-                        (clean_text(row.get("canonical_strain_name")) for row in records_for_product if clean_text(row.get("canonical_strain_name"))),
-                        key=lambda value: (len(value), value.casefold()),
-                    ),
+                    "strain_name": selected_strain_name,
                     "source_title": seed["source_title"],
                     "canonical_product_url": seed["canonical_product_url"],
                     "lineage": lineage_value,
@@ -704,7 +734,7 @@ class CatalogBuilder:
                     "variants": variants,
                     "search": {
                         "vendor": normalized_search(seed["vendor_name"]),
-                        "strain": normalized_search(seed["canonical_strain_name"]),
+                        "strain": normalized_search(selected_strain_name),
                     },
                     "provenance": {
                         "identity": seed["product_identity_provenance"],

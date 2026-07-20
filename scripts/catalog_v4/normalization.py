@@ -55,6 +55,15 @@ MARKETING_SUFFIX = re.compile(
     r"\s*[|\-–—_:]+\s*(?:limited\s+drop|new\s+drop|best\s+seller|staff\s+pick|exotic|premium|sale)\s*$",
     re.I,
 )
+_NAME_SUFFIX_BOUNDARY = r"(?:\s*[|\-–—_:]+\s*|\s+)"
+COMPOSABLE_NAME_SUFFIXES = (
+    re.compile(_NAME_SUFFIX_BOUNDARY + r"tier\s+\d+\s*$", re.I),
+    re.compile(_NAME_SUFFIX_BOUNDARY + r"(?:smalls|minis|small\s+buds|premium\s+buds|whole\s+flower)\s*$", re.I),
+    re.compile(_NAME_SUFFIX_BOUNDARY + r"(?:indoor|outdoor|greenhouse|mixed\s+light)\s*$", re.I),
+    re.compile(_NAME_SUFFIX_BOUNDARY + r"(?:limited\s+drop|new\s+drop|best\s+seller|staff\s+pick|exotic|premium|sale)\s*$", re.I),
+    re.compile(_NAME_SUFFIX_BOUNDARY + r"(?:premium\s+)?(?:high\s+)?thc-?a(?:\s+(?:hemp\s+)?flower)?\s*$", re.I),
+    re.compile(_NAME_SUFFIX_BOUNDARY + r"(?:hemp\s+)?flower\s*$", re.I),
+)
 
 LINEAGE_MAP = {
     "indica": "indica",
@@ -269,9 +278,13 @@ def canonical_strain_name(source_title: Any, variant_label: Any = None) -> str:
     previous = None
     while title and title != previous:
         previous = title
-        for pattern in TRAILING_NAME_PATTERNS:
-            title = pattern.sub("", title).strip(" |-_–—:")
-        title = MARKETING_SUFFIX.sub("", title).strip(" |-_–—:")
+        for pattern in (*COMPOSABLE_NAME_SUFFIXES, *TRAILING_NAME_PATTERNS):
+            candidate = pattern.sub("", title).strip(" |-_–—:")
+            if candidate:
+                title = candidate
+        candidate = MARKETING_SUFFIX.sub("", title).strip(" |-_–—:")
+        if candidate:
+            title = candidate
     return title or clean_text(source_title)
 
 

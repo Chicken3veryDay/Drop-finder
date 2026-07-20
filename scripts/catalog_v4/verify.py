@@ -165,6 +165,7 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
     product_urls: set[tuple[str, str]] = set()
     variant_ids: set[str] = set()
     index_variants_by_product: dict[str, dict[str, tuple[float, str]]] = {}
+    index_ratings_by_product: dict[str, tuple[Any, Any]] = {}
     allowed_lineages = {"indica", "indica_leaning_hybrid", "hybrid", "sativa_leaning_hybrid", "sativa", "unknown"}
     index_products = index.get("products")
     if not isinstance(index_products, list):
@@ -181,6 +182,11 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
         _required_text(product.get("strain_name"), field="strain name", product_id=product_id)
         if product.get("lineage") not in allowed_lineages:
             raise VerificationError(f"invalid lineage: {product_id}")
+        rating_value = product.get("rating")
+        review_count = product.get("review_count")
+        if (rating_value is None) != (review_count is None):
+            raise VerificationError(f"rating/count nullability mismatch: {product_id}")
+        index_ratings_by_product[product_id] = (rating_value, review_count)
         variants = product.get("variants")
         if not isinstance(variants, list) or not variants:
             raise VerificationError(f"product has no variants: {product_id}")
@@ -258,6 +264,23 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
             if not product_url or url_key in product_urls:
                 raise VerificationError(f"missing or duplicate canonical product URL: {product_id}")
             product_urls.add(url_key)
+            rating_value, review_count = index_ratings_by_product.get(product_id, (None, None))
+            rating_provenance = product.get("rating_provenance")
+            if rating_value is None:
+                if review_count is not None:
+                    raise VerificationError(f"detail rating/count nullability mismatch: {product_id}")
+                if not isinstance(rating_provenance, dict) or rating_provenance.get("source") != "unavailable":
+                    raise VerificationError(f"invalid unavailable rating provenance: {product_id}")
+            else:
+                if not isinstance(rating_provenance, dict):
+                    raise VerificationError(f"missing rating provenance: {product_id}")
+                if rating_provenance.get("method") != "atomic_source_record_pair":
+                    raise VerificationError(f"non-atomic rating provenance: {product_id}")
+                if (rating_provenance.get("raw_score"), rating_provenance.get("raw_count")) != (rating_value, review_count):
+                    raise VerificationError(f"rating provenance value mismatch: {product_id}")
+                for field in ("source_record_id", "source_path", "collected_at"):
+                    if not str(rating_provenance.get(field) or "").strip():
+                        raise VerificationError(f"rating provenance missing {field}: {product_id}")
             variants = product.get("variants")
             if not isinstance(variants, list) or not variants:
                 raise VerificationError(f"detail product has no variants: {product_id}")
