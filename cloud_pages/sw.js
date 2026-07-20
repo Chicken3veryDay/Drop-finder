@@ -11,6 +11,7 @@ const DOCUMENT_CACHE = `dropfinder-opened-documents-v2-${DEPLOYMENT_NAMESPACE}`;
 const GENERATION_CACHE_PREFIX = `dropfinder-data-v2-${DEPLOYMENT_NAMESPACE}-`;
 const ACTIVE_META_KEY = new URL('./__dropfinder__/active-generation.json', DEPLOYMENT_URL).href;
 const PREPARED_META_KEY = new URL('./__dropfinder__/prepared-generation.json', DEPLOYMENT_URL).href;
+const PREPARED_META_PREFIX = new URL('./__dropfinder__/prepared-generations/', DEPLOYMENT_URL).href;
 const SHELL_MANIFEST = './app-shell.json';
 const FALLBACK_SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './data/catalog.json', './data/status.json', './data/runtime.json'];
 const MAX_DETAIL_ENTRIES = 96;
@@ -23,6 +24,7 @@ const NAVIGATION_FALLBACK_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 let activeGeneration = null;
 let preparing = null;
+let activationSequence = Promise.resolve();
 let restorePromise = restoreActiveGeneration();
 
 self.addEventListener('install', event => {
@@ -48,7 +50,7 @@ self.addEventListener('message', event => {
       event.source?.postMessage({ type: 'generation-status', ...(activeGeneration || {}) });
     }));
   } else if (message?.type === 'activate-generation') {
-    event.waitUntil(activatePreparedGeneration(message.generationId, event.source));
+    event.waitUntil(queueActivation(() => activatePreparedGeneration(message.generationId, event.source)));
   } else if (message?.type === 'cache-document') {
     event.waitUntil(cacheOpenedDocument(message.document, event.source));
   }
@@ -207,19 +209,58 @@ async function prepareGeneration(generationId, seedUrl, seedResponse, seedPayloa
   return attempt.promise;
 }
 
+function preparedMetaKey(generationId) {
+  return new URL(`${encodeURIComponent(String(generationId))}.json`, PREPARED_META_PREFIX).href;
+}
+
+function queueActivation(task) {
+  const run = activationSequence.then(task, task);
+  activationSequence = run.catch(() => {});
+  return run;
+}
+
+async function preparedCacheNames(metadata) {
+  const names = new Set();
+  for (const key of await metadata.keys()) {
+    if (key.url !== PREPARED_META_KEY && !key.url.startsWith(PREPARED_META_PREFIX)) continue;
+    const response = await metadata.match(key);
+    let candidate = null;
+    try { candidate = response ? await response.json() : null; } catch {}
+    if (!candidate || !isOwnedGenerationCache(candidate.cacheName)
+        || !(await caches.has(candidate.cacheName))) {
+      await metadata.delete(key);
+      continue;
+    }
+    names.add(candidate.cacheName);
+  }
+  return names;
+}
+
 async function markPrepared(prepared) {
   if (!isOwnedGenerationCache(prepared.cacheName)) return;
   const metadata = await caches.open(META_CACHE);
-  await metadata.put(PREPARED_META_KEY, jsonResponse(prepared));
-  if (!activeGeneration) await activatePreparedGeneration(prepared.id, null);
-  else await broadcast({ type: 'generation-ready', generationId: prepared.id });
+  await metadata.put(preparedMetaKey(prepared.id), jsonResponse(prepared));
+  await queueActivation(async () => {
+    await restorePromise;
+    await ensureActiveGeneration();
+    if (!activeGeneration) await activatePreparedGeneration(prepared.id, null);
+    else await broadcast({ type: 'generation-ready', generationId: prepared.id });
+  });
 }
 
 async function activatePreparedGeneration(generationId, source) {
   await restorePromise;
   const metadata = await caches.open(META_CACHE);
-  const preparedResponse = await metadata.match(PREPARED_META_KEY);
-  const prepared = preparedResponse ? await preparedResponse.json() : null;
+  const generationKey = preparedMetaKey(generationId);
+  let preparedResponse = await metadata.match(generationKey);
+  let legacyPrepared = null;
+  if (!preparedResponse) {
+    const legacyResponse = await metadata.match(PREPARED_META_KEY);
+    try { legacyPrepared = legacyResponse ? await legacyResponse.json() : null; } catch {}
+    if (legacyPrepared?.id === generationId) preparedResponse = legacyResponse;
+  }
+  let prepared = null;
+  try { prepared = preparedResponse ? await preparedResponse.json() : legacyPrepared; } catch {}
   if (!prepared || prepared.id !== generationId || !isOwnedGenerationCache(prepared.cacheName)
       || !(await caches.has(prepared.cacheName))) {
     source?.postMessage({ type: 'generation-error', generationId, code: 'generation_incomplete' });
@@ -228,7 +269,21 @@ async function activatePreparedGeneration(generationId, source) {
   const previous = activeGeneration;
   activeGeneration = { id: prepared.id, cacheName: prepared.cacheName, kind: prepared.kind };
   await metadata.put(ACTIVE_META_KEY, jsonResponse(activeGeneration));
-  await cleanupGenerations(new Set([activeGeneration.cacheName, previous?.cacheName].filter(Boolean)));
+  await metadata.delete(generationKey);
+  const legacyResponse = await metadata.match(PREPARED_META_KEY);
+  if (legacyResponse) {
+    try {
+      if ((await legacyResponse.json())?.id === generationId) await metadata.delete(PREPARED_META_KEY);
+    } catch {
+      await metadata.delete(PREPARED_META_KEY);
+    }
+  }
+  const retainedPrepared = await preparedCacheNames(metadata);
+  await cleanupGenerations(new Set([
+    activeGeneration.cacheName,
+    previous?.cacheName,
+    ...retainedPrepared,
+  ].filter(Boolean)));
   await broadcast({ type: 'generation-active', generationId });
 }
 
