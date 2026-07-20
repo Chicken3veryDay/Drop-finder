@@ -1,0 +1,58 @@
+name: Temporary Pin Publication Actions
+
+on:
+  pull_request:
+    branches:
+      - security/pin-publication-actions
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.head_ref == 'trigger/pin-publication-actions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: security/pin-publication-actions
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Apply immutable action pins
+        run: python .github/tmp/pin_publication_actions.py
+      - name: Verify exact source boundary
+        shell: bash
+        run: |
+          git fetch origin main
+          merge_base=$(git merge-base origin/main HEAD)
+          {
+            git diff --name-only "$merge_base" HEAD
+            git diff --name-only HEAD
+            git ls-files --others --exclude-standard
+          } | grep -v '^\.github/tmp/' | grep -v '^\.github/workflows/tmp-' | sort -u > /tmp/actual-files
+          printf '%s\n' \
+            .github/workflows/dropfinder-cloud.yml \
+            tests/test_dropfinder_cloud_workflow_permissions.py \
+            | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+      - name: Validate workflow security contracts
+        run: |
+          python -m py_compile tests/test_dropfinder_cloud_workflow_permissions.py
+          python -m unittest -v tests.test_dropfinder_cloud_workflow_permissions
+          python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Commit clean implementation
+        shell: bash
+        run: |
+          git rm \
+            .github/workflows/tmp-pin-publication-actions.yml \
+            .github/tmp/pin_publication_actions.py
+          git add \
+            .github/workflows/dropfinder-cloud.yml \
+            tests/test_dropfinder_cloud_workflow_permissions.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "security: pin publication actions to immutable commits"
+          git push origin HEAD:security/pin-publication-actions
