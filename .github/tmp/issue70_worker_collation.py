@@ -38,8 +38,11 @@ if text.count(old_sort) != 1:
 engine.write_text(text.replace(old_sort, new_sort, 1), encoding="utf-8")
 
 Path("web/src/features/marketplace/marketplace-sort-parity.test.ts").write_text('''import { describe, expect, it } from "vitest";
+// @ts-expect-error The worker engine is intentionally JavaScript and has no declaration file.
 import { executeQuery } from "../../platform/workers/marketplace-query-engine.js";
 import { DEFAULT_FILTERS, queryMarketplace, type MarketplaceProduct, type SortOption } from "./marketplace-core";
+
+type WorkerRow = { productId: string };
 
 const names = [
   { id: "p-eclair-a", strain: "Éclair", vendor: "Vendor 10" },
@@ -99,14 +102,14 @@ describe("marketplace name collation parity", () => {
   for (const sort of ["strain_az", "strain_za", "vendor_az", "vendor_za"] as const) {
     it(`keeps synchronous and worker ${sort} ordering identical`, () => {
       const featureIds = queryMarketplace(products, DEFAULT_FILTERS, sort).rows.map((row) => row.product.id);
-      const workerIds = executeQuery(compactRows, request(sort)).rows.map((row) => row.productId);
+      const workerIds = executeQuery(compactRows, request(sort)).rows.map((row: WorkerRow) => row.productId);
       expect(workerIds).toEqual(featureIds);
     });
 
     it(`keeps ${sort} stable across page boundaries`, () => {
       const featureIds = queryMarketplace(products, DEFAULT_FILTERS, sort).rows.map((row) => row.product.id);
-      const first = executeQuery(compactRows, request(sort, 0, 2)).rows.map((row) => row.productId);
-      const second = executeQuery(compactRows, request(sort, 2, 2)).rows.map((row) => row.productId);
+      const first = executeQuery(compactRows, request(sort, 0, 2)).rows.map((row: WorkerRow) => row.productId);
+      const second = executeQuery(compactRows, request(sort, 2, 2)).rows.map((row: WorkerRow) => row.productId);
       expect([...first, ...second]).toEqual(featureIds);
     });
   }
