@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import socket
 import ssl
+import sys
 import time
 import urllib.error
 
@@ -50,6 +51,32 @@ def classify_route_failure(exc: BaseException) -> dict:
     return {"error_category": category, "retryable": retryable}
 
 
+def _parse_route(payload: str, source_id: str, vendor: str, route: tuple) -> tuple[list[dict], dict]:
+    """Normalize parser-specific return contracts into rows plus diagnostics."""
+    if route[0] == "shopify":
+        parsed = core.shopify(payload, source_id, vendor, route)
+        diagnostics = {}
+    elif route[0] == "woo":
+        parsed = core.woo(payload, source_id, vendor, route)
+        if (
+            isinstance(parsed, tuple)
+            and len(parsed) == 2
+            and isinstance(parsed[1], dict)
+        ):
+            parsed, diagnostics = parsed
+        else:
+            diagnostics = {}
+    else:
+        diagnostics = {}
+        parsed = core.html_with_details(
+            payload, source_id, vendor, route, diagnostics
+        )
+
+    if not isinstance(parsed, list) or any(not isinstance(row, dict) for row in parsed):
+        raise TypeError(f"{route[0]} parser returned an invalid row collection")
+    return parsed, diagnostics
+
+
 def scan_all_routes(source):
     source_id, vendor, routes = source
     started = time.monotonic()
@@ -70,13 +97,8 @@ def scan_all_routes(source):
             result.update(http_status=status, content_type=content_type)
             if status != 200:
                 raise ValueError(f"unexpected HTTP status {status}")
-            rows = (
-                core.shopify(payload, source_id, vendor, route)
-                if route[0] == "shopify"
-                else core.woo(payload, source_id, vendor, route)
-                if route[0] == "woo"
-                else core.html_with_details(payload, source_id, vendor, route)
-            )
+            rows, diagnostics = _parse_route(payload, source_id, vendor, route)
+            result.update(diagnostics)
             result.update(
                 status="healthy" if rows else "empty",
                 products=len(rows),
@@ -123,6 +145,56 @@ def scan_all_routes(source):
     }
 
 
+def self_test() -> int:
+    """Exercise the aggregate contract without network access."""
+    original_fetch = core.fetch
+    original_woo = core.woo
+    route = (
+        "woo",
+        "https://example.test/wp-json/wc/store/v1/products?per_page=100",
+        "storewide",
+    )
+    fixture_row = {
+        "source_id": "fixture",
+        "vendor": "Fixture",
+        "name": "Fixture Product",
+        "url": "https://example.test/product/fixture",
+        "variant": "",
+        "price": 10.0,
+    }
+
+    core.fetch = lambda _target: ("{}", "application/json", 200)
+    core.woo = lambda *_args: (
+        [fixture_row],
+        {
+            "variable_parents": 1,
+            "variation_requests": 2,
+            "variation_retries": 0,
+            "variation_failures": 0,
+            "variation_failure_reasons": {},
+            "variation_rejections": 0,
+            "variation_rejection_reasons": {},
+        },
+    )
+    try:
+        rows, status = scan_all_routes(("fixture", "Fixture", [route]))
+    finally:
+        core.fetch = original_fetch
+        core.woo = original_woo
+
+    assert rows == [fixture_row]
+    assert status["products"] == 1
+    result = status["route_results"][0]
+    assert result["status"] == "healthy"
+    assert result["variable_parents"] == 1
+    assert result["variation_requests"] == 2
+    print("aggregate parser-contract self-test passed")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        core.selftest()
+        raise SystemExit(self_test())
     core.scan = scan_all_routes
     raise SystemExit(core.main())
