@@ -1,0 +1,131 @@
+name: Temporary Publisher Run Inspection V3
+
+on:
+  pull_request:
+    branches:
+      - verification/publisher-run-inspection-v3
+    paths:
+      - verification/publisher-run-inspection-v3.trigger
+      - .github/workflows/tmp-publisher-run-inspection-v3.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact main-push workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: 240614d9e5b58b4a13ee88bcd84644c6bd9c8933
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.parse
+          import urllib.request
+
+          repo = os.environ["REPOSITORY"]
+          sha = os.environ["TARGET_SHA"]
+          token = os.environ["GH_TOKEN"]
+          wanted = {"DropFinder Autonomous Cloud", "DropFinder Cloud CI"}
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "dropfinder-production-verifier",
+          }
+
+          def get(path):
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}{path}", headers=headers
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          selected = {}
+          for _ in range(160):
+              query = urllib.parse.urlencode({"head_sha": sha, "per_page": 100})
+              payload = get(f"/actions/runs?{query}")
+              runs = [
+                  run for run in payload.get("workflow_runs", [])
+                  if run.get("event") == "push" and run.get("name") in wanted
+              ]
+              selected = {run["name"]: run for run in runs}
+              states = {
+                  name: {
+                      "id": run.get("id"),
+                      "status": run.get("status"),
+                      "conclusion": run.get("conclusion"),
+                  }
+                  for name, run in selected.items()
+              }
+              print(json.dumps(states, sort_keys=True), flush=True)
+              if wanted.issubset(selected) and all(
+                  run.get("status") == "completed" for run in selected.values()
+              ):
+                  break
+              time.sleep(15)
+          else:
+              raise SystemExit("exact-source workflows did not complete before timeout")
+
+          report = {
+              "target_sha": sha,
+              "runs": {},
+          }
+          failed = []
+          for name in sorted(wanted):
+              run = selected[name]
+              jobs = get(f"/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
+              artifacts = get(f"/actions/runs/{run['id']}/artifacts?per_page=100").get("artifacts", [])
+              report["runs"][name] = {
+                  "id": run.get("id"),
+                  "run_number": run.get("run_number"),
+                  "event": run.get("event"),
+                  "status": run.get("status"),
+                  "conclusion": run.get("conclusion"),
+                  "head_sha": run.get("head_sha"),
+                  "html_url": run.get("html_url"),
+                  "jobs": [
+                      {
+                          "id": job.get("id"),
+                          "name": job.get("name"),
+                          "status": job.get("status"),
+                          "conclusion": job.get("conclusion"),
+                      }
+                      for job in jobs
+                  ],
+                  "artifacts": [
+                      {
+                          "id": artifact.get("id"),
+                          "name": artifact.get("name"),
+                          "size_in_bytes": artifact.get("size_in_bytes"),
+                          "digest": artifact.get("digest"),
+                          "expired": artifact.get("expired"),
+                      }
+                      for artifact in artifacts
+                  ],
+              }
+              if run.get("conclusion") != "success":
+                  failed.append(name)
+
+          with open("/tmp/publisher-runs.json", "w", encoding="utf-8") as handle:
+              json.dump(report, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          print(json.dumps(report, indent=2, sort_keys=True))
+          if failed:
+              raise SystemExit(f"exact-source workflows failed: {', '.join(failed)}")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: publisher-run-inspection-v3
+          path: /tmp/publisher-runs.json
+          if-no-files-found: warn
+          retention-days: 7
