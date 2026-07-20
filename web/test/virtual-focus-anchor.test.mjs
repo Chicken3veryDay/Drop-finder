@@ -4,6 +4,7 @@ import { VirtualMarketplaceAdapter } from "../src/platform/virtualization/virtua
 
 const row = (id, stableIndex) => ({ productId: id, row: { stableIndex } });
 
+// Logical positions and focus ownership must remain independent of the retained page window.
 test("virtual rows expose logical result positions", () => {
   const adapter = new VirtualMarketplaceAdapter({ estimatedRowHeight: 100 });
   adapter.replacePages({ pages: [{ offset: 120, rows: [row("p120", 120), row("p121", 121)] }], total: 1000, version: 1, queryKey: "q" });
