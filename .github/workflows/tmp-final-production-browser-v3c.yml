@@ -1,0 +1,153 @@
+name: Temporary Final Production Browser V3C
+
+on:
+  pull_request:
+    branches:
+      - verification/final-production-browser-v3c
+    paths:
+      - verification/final-production-browser-v3c.trigger
+      - .github/workflows/tmp-final-production-browser-v3c.yml
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    if: github.head_ref == 'trigger/final-production-browser-v3c'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: chromium
+            engine: chromium
+          - project: firefox
+            engine: firefox
+          - project: webkit
+            engine: webkit
+          - project: mobile-chromium
+            engine: chromium
+          - project: mobile-webkit
+            engine: webkit
+    env:
+      DROPFINDER_PUBLIC_URL: https://chicken3veryday.github.io/Drop-finder/
+      EXPECTED_GENERATION: 50d09aeec0eed7b301891c360e4a6344
+      EXPECTED_SOURCE: 240614d9e5b58b4a13ee88bcd84644c6bd9c8933
+      PROJECT: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: verification/final-production-closure
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Bind live generation
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${DROPFINDER_PUBLIC_URL}data/runtime.json?browser_v3c=${GITHUB_RUN_ID}-${PROJECT}" -o /tmp/runtime.json
+          curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${DROPFINDER_PUBLIC_URL}data/catalog-v4/manifest.json?browser_v3c=${GITHUB_RUN_ID}-${PROJECT}" -o /tmp/manifest.json
+          python - <<'PY'
+          import json, os
+          runtime=json.load(open('/tmp/runtime.json'))
+          manifest=json.load(open('/tmp/manifest.json'))
+          assert runtime['generation_id'] == os.environ['EXPECTED_GENERATION'], runtime
+          assert manifest['generation_id'] == os.environ['EXPECTED_GENERATION'], manifest
+          source=runtime.get('source_commit') or runtime.get('commit')
+          if source is not None:
+              assert source == os.environ['EXPECTED_SOURCE'], runtime
+          PY
+      - name: Install frozen frontend and project browser
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps "${{ matrix.engine }}"
+      - name: Run live project
+        working-directory: web
+        run: npx playwright test --config=playwright.live.config.mjs --project="${PROJECT}"
+      - name: Summarize project evidence
+        if: always()
+        working-directory: web
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          source=Path('test-results/live-results.json')
+          data=json.loads(source.read_text()) if source.is_file() else {'suites': []}
+          counts={'passed':0,'failed':0,'skipped':0,'timedOut':0,'interrupted':0}
+          def walk(suite):
+              for spec in suite.get('specs',[]):
+                  for test in spec.get('tests',[]):
+                      results=test.get('results',[])
+                      status=results[-1].get('status','failed') if results else 'skipped'
+                      status=status if status in counts else 'failed'
+                      counts[status]+=1
+              for child in suite.get('suites',[]): walk(child)
+          for suite in data.get('suites',[]): walk(suite)
+          report={
+              'project':os.environ['PROJECT'],
+              'generation_id':os.environ['EXPECTED_GENERATION'],
+              'source_commit':os.environ['EXPECTED_SOURCE'],
+              'verified':counts['failed']==0 and counts['timedOut']==0 and counts['interrupted']==0 and counts['passed']>0,
+              'counts':counts,
+          }
+          Path('test-results').mkdir(exist_ok=True)
+          Path(f"test-results/summary-{os.environ['PROJECT']}.json").write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: final-browser-project-${{ matrix.project }}-v3c
+          path: |
+            web/test-results
+            web/playwright-live-report
+          if-no-files-found: warn
+          retention-days: 90
+
+  aggregate:
+    if: always()
+    needs: browser
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: final-browser-project-*-v3c
+          path: /tmp/browser-v3c
+      - name: Aggregate five-project evidence
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected={'chromium','firefox','webkit','mobile-chromium','mobile-webkit'}
+          summaries=[]
+          for path in Path('/tmp/browser-v3c').rglob('summary-*.json'):
+              summaries.append(json.loads(path.read_text()))
+          projects={row['project']:row for row in summaries}
+          assert set(projects) == expected, (set(projects), expected)
+          assert all(row['verified'] for row in projects.values()), projects
+          totals={'passed':0,'failed':0,'skipped':0,'timedOut':0,'interrupted':0}
+          for row in projects.values():
+              for key in totals: totals[key]+=int(row['counts'].get(key,0))
+          report={
+              'verified':True,
+              'generation_id':'50d09aeec0eed7b301891c360e4a6344',
+              'source_commit':'240614d9e5b58b4a13ee88bcd84644c6bd9c8933',
+              'publication_commit':'0f5cbef18d69152a8ec2438205a0be680a0ec9bc',
+              'projects':projects,
+              'counts':totals,
+          }
+          Path('/tmp/final-production-browser-summary-v3c.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: final-production-browser-evidence-v3c
+          path: |
+            /tmp/final-production-browser-summary-v3c.json
+            /tmp/browser-v3c
+          if-no-files-found: error
+          retention-days: 90
