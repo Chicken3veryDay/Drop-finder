@@ -1,6 +1,6 @@
 # DropFinder OS v9.0 Autonomous Cloud
 
-DropFinder is a multi-product storefront intelligence system with real retrieval workers, product-level evidence verification, type-specific admission rules, normalized catalog data, source-health reporting, and atomic phone-app publication.
+DropFinder is a multi-product storefront intelligence system with real retrieval workers, product-level evidence verification, type-specific admission rules, normalized catalog data, bounded marketplace rendering, and atomic static-app publication.
 
 ## Live phone app
 
@@ -8,43 +8,46 @@ DropFinder is a multi-product storefront intelligence system with real retrieval
 
 This GitHub Pages address is the canonical live URL. Open it in Safari or Chrome. On iPhone, use **Share → Add to Home Screen** to install it like an app.
 
-The deployed artifact is an isolated `gh-pages` publication branch containing the product catalog, filters, sorting, favorites, source-health drawer, web-app manifest, service worker, and offline cache. It requires no user computer, VM, payment method, cloud account, API credential, SSH key, domain, personal access token, or manually supplied secret.
+The deployed artifact is an isolated `gh-pages` publication branch containing the accepted marketplace catalog, search, vendor and lineage filters, numeric ranges, deterministic sorting, bounded virtualized results, product details, document viewing, a web-app manifest, service worker, and offline cache. It requires no user computer, VM, payment method, cloud account, API credential, SSH key, domain, personal access token, or manually supplied secret.
 
 ## Product contract
 
-The current catalog supports separate, type-aware records for:
+The generated catalog supports separate, type-aware records for:
 
 - cannabis flower;
 - cannabis vape products;
 - psilocybin mushroom metadata for informational use only, with purchase links removed.
 
-Each product type has its own evidence, normalization, comparison, and publication rules. Records that cannot satisfy the applicable contract are rejected or quarantined rather than being coerced into another type. The application does not infer unsafe conversions between incompatible units such as grams and milliliters.
+Cannabis edibles are formally retired from the stable taxonomy and shopper interface. Edible-only and mixed edible offers are rejected rather than relabeled. Reintroduction requires an explicit versioned schema, evidence contract, comparison metric, UI design, migration, and publication review.
+
+Each supported product type has its own evidence, normalization, comparison, and publication rules. Records that cannot satisfy the applicable contract are rejected or quarantined rather than being coerced into another type. The application does not infer unsafe conversions between incompatible units such as grams and milliliters.
 
 ## Autonomous runtime
 
-The production workflows perform real public-storefront requests, bounded retries for transient responses, route aggregation, product-detail verification, price and stock retrieval, and type-specific classification. The publisher runs only after the configured retrieval shards complete.
+The production workflow performs real public-storefront requests, bounded retries for transient responses, route aggregation, product-detail verification, price and stock retrieval, and type-specific classification. The publisher runs only after all configured retrieval shards complete.
 
 The admission controller then:
 
 1. Admits only sources whose current workers returned products that satisfy the relevant type contract, with valid public URLs and current prices where purchasing is permitted.
 2. Requires product-level evidence rather than relying on category context alone.
-3. Rejects unsupported forms and records that fail current price, stock, identity, or type-specific evidence gates.
+3. Rejects unsupported forms and records that fail current price, stock, identity, quantity, or type-specific evidence gates.
 4. Removes purchase links from informational-only product types.
 5. Quarantines failed candidates instead of publishing them as degraded active services.
-6. Writes catalog, status, runtime, quarantine, and product-rejection records.
-7. Publishes the validated tree atomically to `gh-pages`, then verifies the published branch and zero-degraded invariant.
+6. Writes catalog, status, runtime, quarantine, product-rejection, and Catalog V4 records with strict JSON serialization.
+7. Validates one complete candidate, commits generated data to `main` by compare-and-swap, fast-forwards `gh-pages`, verifies the public generation, and records a canonical deployment receipt.
 
 ## Authoritative production state
 
-The repository publishes a new runtime snapshot autonomously, so product, source, route, quarantine, and rejection counts change more frequently than this README. The generated artifacts are the authoritative current state:
+The repository publishes new runtime snapshots autonomously, so product, source, route, quarantine, and rejection counts change more frequently than this README. The generated artifacts and deployment receipt are the authoritative current state:
 
-- [`cloud_pages/data/runtime.json`](cloud_pages/data/runtime.json) contains the generation timestamp, product counts by type, active-source count, shard count, and zero-degraded result.
+- [`cloud_pages/data/runtime.json`](cloud_pages/data/runtime.json) contains the legacy generation timestamp, product counts by type, active-source count, shard count, and zero-degraded result.
 - [`cloud_pages/data/status.json`](cloud_pages/data/status.json) contains source and route health, fallback use, current limitations, product counts by type, and aggregate rejection reasons.
-- [`cloud_pages/data/catalog-v4/manifest.json`](cloud_pages/data/catalog-v4/manifest.json) identifies the immutable catalog generation and its verified assets.
+- [`cloud_pages/data/catalog-v4/manifest.json`](cloud_pages/data/catalog-v4/manifest.json) identifies the immutable Catalog V4 generation and every hashed compact index, profile, rejection file, and detail shard.
 - [`cloud_pages/data/quarantine.json`](cloud_pages/data/quarantine.json) contains source candidates excluded from the active catalog.
 - [`cloud_pages/data/rejections.json`](cloud_pages/data/rejections.json) contains product-level rejection evidence.
+- [`deployment/release.json`](deployment/release.json) binds the source, generated-data, publication, rollback, workflow, endpoint, generation, and catalog identities for the latest verified release.
 
-Do not copy generated counts or vendor lists into hand-maintained documentation. Read the artifacts above or the live application's source-health surface when an exact current value is required.
+Do not copy generated counts or vendor lists into hand-maintained documentation. Read the artifacts above or the canonical receipt when an exact current value is required.
 
 ## Accuracy and privacy boundary
 
@@ -74,9 +77,10 @@ python -m unittest discover -s tests/app -p 'test_*.py' -v
 
 ## Deployment and maintenance records
 
+- `deployment/release.json` is the canonical atomic deployment receipt.
 - `deployment/autonomous-runtime.json` contains the latest worker runtime receipt.
-- `deployment/cdn.json` identifies the public publication and verified blob hashes.
-- `docs/REPOSITORY_MAINTENANCE.md` is the canonical future-update and rollback guide.
+- `deployment/cdn.json` is retained as historical publisher evidence where applicable.
+- `docs/REPOSITORY_MAINTENANCE.md` is the canonical future-update, verification, and rollback guide.
 - `release/source-build.json` records the supported tracked-source boundary and historical archive disposition.
 
 ## Repository
