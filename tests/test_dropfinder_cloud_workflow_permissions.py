@@ -59,6 +59,17 @@ class DropfinderCloudWorkflowPermissionTests(unittest.TestCase):
         self.assertIn("tests.test_dropfinder_cloud_workflow_permissions", self.text)
         self.assertIn("tests.test_publication_release", self.text)
 
+    def test_release_owner_changes_trigger_push_publication(self) -> None:
+        push_block = self.text.split("  push:\n", 1)[1].split("  pull_request:\n", 1)[0]
+        self.assertIn("    branches: [main]", push_block)
+        for path in (
+            '      - ".github/workflows/dropfinder-cloud.yml"',
+            '      - "tests/test_dropfinder_cloud_workflow_permissions.py"',
+            '      - "scripts/publication_release.py"',
+            '      - "web/**"',
+        ):
+            self.assertIn(path, push_block)
+
     def test_release_actions_are_immutably_pinned(self) -> None:
         expected = {
             "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5": 4,
