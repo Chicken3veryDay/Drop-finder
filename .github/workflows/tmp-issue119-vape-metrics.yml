@@ -1,0 +1,92 @@
+name: Temporary Issue 119 Vape Metrics Audit
+
+on:
+  pull_request:
+    branches:
+      - verification/issue119-vape-metrics
+    paths:
+      - verification/issue119-vape-metrics.trigger
+      - .github/workflows/tmp-issue119-vape-metrics.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: b3bca63e2b575682219495fafcd82598891980ef
+      - name: Audit current cannabis-vape quantity and comparison metrics
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          catalog = json.loads(Path('cloud_pages/data/catalog.json').read_text(encoding='utf-8'))
+          rows = [row for row in catalog.get('products', []) if row.get('primary_type') == 'cannabis_vape']
+          mass_pattern = re.compile(r'(?<![\d.])(?:0\.5|1|2|3\.5)\s*g\b', re.I)
+          mass_rows = [row for row in rows if mass_pattern.search(str(row.get('name') or ''))]
+
+          def missing_metric(row):
+              return (
+                  row.get('quantity_value') in (None, '')
+                  or row.get('quantity_unit') in (None, '')
+                  or row.get('comparison_metric') in (None, '')
+                  or row.get('comparison_price') in (None, '')
+              )
+
+          missing_all = [row for row in rows if missing_metric(row)]
+          missing_mass = [row for row in mass_rows if missing_metric(row)]
+          grams_mass = [
+              row for row in mass_rows
+              if row.get('quantity_unit') == 'g'
+              and row.get('grams') not in (None, '')
+              and row.get('comparison_metric') == 'price_per_gram'
+              and row.get('price_per_gram') not in (None, '')
+          ]
+
+          report = {
+              'source_commit': 'b3bca63e2b575682219495fafcd82598891980ef',
+              'generated_at': catalog.get('generated_at'),
+              'catalog_product_count': catalog.get('product_count'),
+              'cannabis_vape_rows': len(rows),
+              'mass_labeled_cannabis_vape_rows': len(mass_rows),
+              'mass_rows_with_gram_comparison': len(grams_mass),
+              'vape_rows_missing_quantity_or_comparison': len(missing_all),
+              'mass_rows_missing_quantity_or_comparison': len(missing_mass),
+              'missing_mass_samples': [
+                  {
+                      'id': row.get('id'),
+                      'name': row.get('name'),
+                      'quantity_value': row.get('quantity_value'),
+                      'quantity_unit': row.get('quantity_unit'),
+                      'comparison_metric': row.get('comparison_metric'),
+                      'comparison_price': row.get('comparison_price'),
+                  }
+                  for row in missing_mass[:20]
+              ],
+          }
+          Path('/tmp/issue119-vape-metrics.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(report, indent=2, sort_keys=True))
+
+          if not rows:
+              raise SystemExit('no cannabis-vape rows were present in the canonical catalog')
+          if mass_rows and len(grams_mass) != len(mass_rows):
+              raise SystemExit('mass-labeled cannabis-vape rows are missing gram comparison metrics')
+          if missing_mass:
+              raise SystemExit('mass-labeled cannabis-vape rows still lack quantity or comparison values')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: issue119-vape-metrics
+          path: /tmp/issue119-vape-metrics.json
+          if-no-files-found: error
+          retention-days: 30
