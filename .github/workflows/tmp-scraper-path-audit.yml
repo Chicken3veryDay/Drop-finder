@@ -1,0 +1,33 @@
+name: Temporary Scraper Path Audit
+
+on:
+  pull_request:
+    branches:
+      - verification/scraper-path-audit
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    if: github.head_ref == 'trigger/scraper-path-audit'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: verification/scraper-path-audit
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Audit scraper and publication paths
+        env:
+          SOURCE_COMMIT: a4c561cb1533bc0a88c812bf2ee5ac6847a2c98d
+          AUDIT_REPORT: /tmp/scraper-path-audit.json
+        run: python .github/tmp/scraper_path_audit.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: scraper-path-audit
+          path: /tmp/scraper-path-audit.json
+          if-no-files-found: error
+          retention-days: 30
