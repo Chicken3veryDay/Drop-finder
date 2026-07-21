@@ -43,6 +43,7 @@ The repository publishes a new runtime snapshot autonomously, so product, source
 - [`cloud_pages/data/catalog-v4/manifest.json`](cloud_pages/data/catalog-v4/manifest.json) identifies the immutable catalog generation and its verified assets.
 - [`cloud_pages/data/quarantine.json`](cloud_pages/data/quarantine.json) contains source candidates excluded from the active catalog.
 - [`cloud_pages/data/rejections.json`](cloud_pages/data/rejections.json) contains product-level rejection evidence.
+- [`deployment/release.json`](deployment/release.json) binds the immutable source, generated-data, publication, rollback, workflow, endpoint, and generation identities for the latest verified release.
 
 Do not copy generated counts or vendor lists into hand-maintained documentation. Read the artifacts above or the live application's source-health surface when an exact current value is required.
 
@@ -74,6 +75,8 @@ python -m unittest discover -s tests/app -p 'test_*.py' -v
 
 ## Deployment and maintenance records
 
+- [`deployment/release.json`](deployment/release.json) is the canonical machine-readable deployment receipt.
+- [`docs/FINAL_PRODUCTION_CLOSURE.md`](docs/FINAL_PRODUCTION_CLOSURE.md) records the immutable release chain, retained evidence, live activation acceptance, and rollback procedure.
 - `deployment/autonomous-runtime.json` contains the latest worker runtime receipt.
 - `deployment/cdn.json` identifies the public publication and verified blob hashes.
 - `docs/REPOSITORY_MAINTENANCE.md` is the canonical future-update and rollback guide.
