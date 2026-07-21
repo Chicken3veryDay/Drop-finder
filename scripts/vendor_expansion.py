@@ -81,7 +81,10 @@ def apply_registry(worker: Any, payload: dict[str, Any]) -> tuple[str, ...]:
     worker.PRODUCT_PATHS = tuple(product_paths)
     # The registry documents vendors; route_repair owns current canonical paths
     # and first-party product-detail extraction fallbacks.
-    from route_repair import install as install_route_repairs
+    try:
+        from route_repair import install as install_route_repairs
+    except ImportError:
+        from scripts.route_repair import install as install_route_repairs
 
     install_route_repairs(worker)
     return tuple(installed)
