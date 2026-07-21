@@ -1,0 +1,60 @@
+name: Temporary Site Refresh Monitor
+
+on:
+  pull_request:
+    branches:
+      - verification/site-refresh-monitor
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    if: github.head_ref == 'trigger/site-refresh-monitor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact refresh workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: 9f2aea62d36df79d8bb4b7e7fc1d1e6385dfe9f0
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, time, urllib.parse, urllib.request
+          repo=os.environ['REPOSITORY']; sha=os.environ['TARGET_SHA']; token=os.environ['GH_TOKEN']
+          wanted={'DropFinder Autonomous Cloud','DropFinder Cloud CI'}
+          headers={'Accept':'application/vnd.github+json','Authorization':f'Bearer {token}','X-GitHub-Api-Version':'2022-11-28','User-Agent':'dropfinder-site-refresh-monitor'}
+          def get(path):
+              req=urllib.request.Request(f'https://api.github.com/repos/{repo}{path}',headers=headers)
+              with urllib.request.urlopen(req,timeout=30) as response:return json.load(response)
+          selected={}
+          for _ in range(180):
+              query=urllib.parse.urlencode({'head_sha':sha,'per_page':100})
+              runs=[r for r in get(f'/actions/runs?{query}').get('workflow_runs',[]) if r.get('event')=='push' and r.get('name') in wanted]
+              selected={r['name']:r for r in runs}
+              states={name:{'id':r.get('id'),'status':r.get('status'),'conclusion':r.get('conclusion')} for name,r in selected.items()}
+              print(json.dumps(states,sort_keys=True),flush=True)
+              if wanted.issubset(selected) and all(r.get('status')=='completed' for r in selected.values()):break
+              time.sleep(15)
+          else:raise SystemExit('refresh workflows did not complete before timeout')
+          report={'target_sha':sha,'runs':{}}
+          failures=[]
+          for name in sorted(wanted):
+              run=selected[name]
+              jobs=get(f"/actions/runs/{run['id']}/jobs?per_page=100").get('jobs',[])
+              artifacts=get(f"/actions/runs/{run['id']}/artifacts?per_page=100").get('artifacts',[])
+              report['runs'][name]={'id':run['id'],'run_number':run.get('run_number'),'conclusion':run.get('conclusion'),'head_sha':run.get('head_sha'),'html_url':run.get('html_url'),'jobs':[{'id':j.get('id'),'name':j.get('name'),'status':j.get('status'),'conclusion':j.get('conclusion')} for j in jobs],'artifacts':[{'id':a.get('id'),'name':a.get('name'),'size_in_bytes':a.get('size_in_bytes'),'digest':a.get('digest'),'expired':a.get('expired')} for a in artifacts]}
+              if run.get('conclusion')!='success':failures.append(name)
+          with open('/tmp/site-refresh-report.json','w',encoding='utf-8') as f:json.dump(report,f,indent=2,sort_keys=True)
+          if failures:raise SystemExit('refresh workflows failed: '+', '.join(failures))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: site-refresh-monitor
+          path: /tmp/site-refresh-report.json
+          if-no-files-found: error
+          retention-days: 30
