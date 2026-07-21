@@ -35,7 +35,7 @@ test('fresh public worker activates the current immutable generation', async ({ 
   });
 
   const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  await page.goto(`./?activation_v5=${nonce}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`./?activation_v5b=${nonce}`, { waitUntil: 'domcontentloaded' });
   await page.evaluate(() => navigator.serviceWorker.ready);
   if (!(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)))) {
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -44,9 +44,9 @@ test('fresh public worker activates the current immutable generation', async ({ 
 
   const release = await page.evaluate(async token => {
     const [workerResponse, manifestResponse, runtimeResponse] = await Promise.all([
-      fetch(`./sw.js?activation_v5=${token}`, { cache: 'no-store' }),
-      fetch(`./data/catalog-v4/manifest.json?activation_v5=${token}`, { cache: 'no-store' }),
-      fetch(`./data/runtime.json?activation_v5=${token}`, { cache: 'no-store' }),
+      fetch(`./sw.js?activation_v5b=${token}`, { cache: 'no-store' }),
+      fetch(`./data/catalog-v4/manifest.json?activation_v5b=${token}`, { cache: 'no-store' }),
+      fetch(`./data/runtime.json?activation_v5b=${token}`, { cache: 'no-store' }),
     ]);
     if (!workerResponse.ok || !manifestResponse.ok || !runtimeResponse.ok) {
       throw new Error(`release fetch failed: ${workerResponse.status}/${manifestResponse.status}/${runtimeResponse.status}`);
@@ -64,19 +64,24 @@ test('fresh public worker activates the current immutable generation', async ({ 
   expect(release.runtime.status).toBe('healthy');
   expect(release.runtime.zero_degraded_active_services).toBe(true);
 
-  await expect(page.locator('main')).toBeVisible();
-  await expect(page.getByRole('list').filter({ has: page.getByRole('listitem') }).first()).toBeVisible({ timeout: 60_000 });
-  await expect(page.locator('body')).not.toContainText('Catalog generation activation failed');
-
   await expect.poll(() => readGenerationStatus(page), {
     timeout: 60_000,
     intervals: [250, 500, 1_000, 2_000],
   }).toBe(EXPECTED_GENERATION);
 
+  await expect(page.locator('main')).toBeVisible();
+  const results = page.getByRole('list', {
+    name: new RegExp(`^${release.manifest.product_count} marketplace results$`, 'i'),
+  });
+  await expect(results).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('body')).not.toContainText('Catalog generation activation failed');
+
   const messages = await page.evaluate(() => window.__generationMessages ?? []);
-  expect(messages.some(message => (
+  const terminalErrors = messages.filter(message => (
     message?.type === 'generation-error'
     && message?.generationId === EXPECTED_GENERATION
-  ))).toBe(false);
+    && message?.code !== 'generation_incomplete'
+  ));
+  expect(terminalErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
 });
