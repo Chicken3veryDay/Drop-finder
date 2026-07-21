@@ -22,11 +22,15 @@ jobs:
         run: |
           set +e
           : > route-repair-debug.txt
+          echo '===== cloud CI command =====' >> route-repair-debug.txt
+          grep -R -n -B 3 -A 40 'Compile and test Python pipelines' .github/workflows >> route-repair-debug.txt 2>&1
+          echo '===== test harness inventory =====' >> route-repair-debug.txt
+          find tests scripts -maxdepth 2 -type f \( -name '*test*.py' -o -name 'run*.py' \) | sort >> route-repair-debug.txt
           for command in \
             "python -m compileall -q scripts tests" \
             "python scripts/route_repair.py" \
             "python scripts/autonomous_worker_v4.py --self-test" \
-            "python -m pytest -q tests/test_route_repair.py"; do
+            "python -m unittest discover -s tests -p 'test_*.py' -v"; do
             echo "===== $command =====" >> route-repair-debug.txt
             bash -lc "$command" >> route-repair-debug.txt 2>&1
             echo "exit_code=$?" >> route-repair-debug.txt
