@@ -1,0 +1,132 @@
+name: Temporary Live Service Worker Activation V5
+
+on:
+  pull_request:
+    branches: [verification/live-service-worker-activation-v5]
+    paths:
+      - verification/live-service-worker-activation-v5.trigger
+      - .github/workflows/tmp-live-service-worker-activation-v5.yml
+      - web/playwright.activation.config.mjs
+      - web/tests/e2e/service-worker-activation.spec.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    if: github.head_ref == 'trigger/live-service-worker-activation-v5'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: chromium, engine: chromium }
+          - { project: firefox, engine: firefox }
+          - { project: webkit, engine: webkit }
+          - { project: mobile-chromium, engine: chromium }
+          - { project: mobile-webkit, engine: webkit }
+    env:
+      DROPFINDER_PUBLIC_URL: https://chicken3veryday.github.io/Drop-finder/
+      EXPECTED_GENERATION: d51dd07e082c696af11f14c3c6ee1f84
+      PROJECT: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: verification/live-service-worker-activation-v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frozen dependencies and browser
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps "${{ matrix.engine }}"
+      - name: Verify fresh public activation
+        working-directory: web
+        run: npx playwright test --config=playwright.activation.config.mjs --project="${PROJECT}"
+      - name: Summarize project evidence
+        if: always()
+        working-directory: web
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path=Path('test-results/activation-results.json')
+          data=json.loads(path.read_text()) if path.is_file() else {'suites': []}
+          counts={'passed':0,'failed':0,'skipped':0,'timedOut':0,'interrupted':0}
+          def walk(suite):
+              for spec in suite.get('specs',[]):
+                  for test in spec.get('tests',[]):
+                      results=test.get('results',[])
+                      status=results[-1].get('status','failed') if results else 'skipped'
+                      counts[status if status in counts else 'failed'] += 1
+              for child in suite.get('suites',[]): walk(child)
+          for suite in data.get('suites',[]): walk(suite)
+          report={
+              'project':os.environ['PROJECT'],
+              'generation_id':os.environ['EXPECTED_GENERATION'],
+              'verified':counts['passed']==1 and not any(counts[k] for k in ('failed','timedOut','interrupted')),
+              'counts':counts,
+          }
+          Path('test-results').mkdir(exist_ok=True)
+          Path(f"test-results/activation-summary-{os.environ['PROJECT']}.json").write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: live-activation-${{ matrix.project }}-v5
+          path: |
+            web/test-results
+            web/playwright-report
+          if-no-files-found: warn
+          retention-days: 90
+
+  aggregate:
+    if: always()
+    needs: browser
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: live-activation-*-v5
+          path: /tmp/live-activation-v5
+      - name: Aggregate exact-generation evidence
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected={'chromium','firefox','webkit','mobile-chromium','mobile-webkit'}
+          rows=[json.loads(path.read_text()) for path in Path('/tmp/live-activation-v5').rglob('activation-summary-*.json')]
+          projects={row['project']:row for row in rows}
+          assert set(projects) == expected, projects
+          assert all(row['verified'] for row in projects.values()), projects
+          totals={'passed':0,'failed':0,'skipped':0,'timedOut':0,'interrupted':0}
+          for row in projects.values():
+              for key in totals: totals[key] += int(row['counts'].get(key,0))
+          assert totals == {'passed':5,'failed':0,'skipped':0,'timedOut':0,'interrupted':0}, totals
+          report={
+              'verified':True,
+              'generation_id':'d51dd07e082c696af11f14c3c6ee1f84',
+              'source_commit':'6de28012090017a898be1d51f650e9ee0fc96aeb',
+              'generated_data_commit':'95d85e4b0121f1f4c69d20d1d8f3d3b614cc29b0',
+              'publication_commit':'4b98724efcce4d5c47af044ec87b95a685c5757d',
+              'receipt_commit':'71d8deb67aa89a6355049022ebdee26d45aab149',
+              'counts':totals,
+              'projects':projects,
+          }
+          Path('/tmp/live-service-worker-activation-v5.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-service-worker-activation-evidence-v5
+          path: |
+            /tmp/live-service-worker-activation-v5.json
+            /tmp/live-activation-v5
+          if-no-files-found: error
+          retention-days: 90
