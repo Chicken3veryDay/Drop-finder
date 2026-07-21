@@ -1,0 +1,34 @@
+name: Temporary Scraper Source Export
+
+on:
+  pull_request:
+    branches:
+      - verification/scraper-source-export
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.head_ref == 'trigger/scraper-source-export'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: verification/scraper-source-export
+      - name: Collect exact source files
+        run: |
+          mkdir -p /tmp/scraper-source-files/scripts/multi_product /tmp/scraper-source-files/data
+          cp scripts/cloud_scan.py /tmp/scraper-source-files/scripts/cloud_scan.py
+          cp scripts/autonomous_worker.py /tmp/scraper-source-files/scripts/autonomous_worker.py
+          cp scripts/autonomous_worker_v2.py /tmp/scraper-source-files/scripts/autonomous_worker_v2.py
+          cp scripts/autonomous_merge.py /tmp/scraper-source-files/scripts/autonomous_merge.py
+          cp scripts/multi_product/runtime.py /tmp/scraper-source-files/scripts/multi_product/runtime.py
+          cp data/vendor_expansion.json /tmp/scraper-source-files/data/vendor_expansion.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: scraper-source-files
+          path: /tmp/scraper-source-files
+          if-no-files-found: error
+          retention-days: 30
