@@ -1,0 +1,96 @@
+name: Temporary Dispatched Run State V5
+
+on:
+  pull_request:
+    branches: [verification/state-v5]
+    paths:
+      - verification/state-v5.trigger
+      - .github/workflows/tmp-dispatched-run-state-v5.yml
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for dispatched canonical run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: 6de28012090017a898be1d51f650e9ee0fc96aeb
+          CREATED_AFTER: '2026-07-21T00:05:00Z'
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import time
+          import urllib.parse
+          import urllib.request
+
+          repo=os.environ['REPOSITORY']
+          token=os.environ['GH_TOKEN']
+          target=os.environ['TARGET_SHA']
+          threshold=dt.datetime.fromisoformat(os.environ['CREATED_AFTER'].replace('Z','+00:00'))
+          headers={
+              'Accept':'application/vnd.github+json',
+              'Authorization':f'Bearer {token}',
+              'X-GitHub-Api-Version':'2022-11-28',
+              'User-Agent':'dropfinder-run-state-verifier',
+          }
+          def get(path):
+              req=urllib.request.Request(f'https://api.github.com/repos/{repo}{path}',headers=headers)
+              with urllib.request.urlopen(req,timeout=30) as response:
+                  return json.load(response)
+
+          selected=None
+          for _ in range(160):
+              query=urllib.parse.urlencode({'event':'workflow_dispatch','branch':'main','per_page':50})
+              payload=get(f'/actions/workflows/dropfinder-cloud.yml/runs?{query}')
+              candidates=[]
+              for run in payload.get('workflow_runs',[]):
+                  created=dt.datetime.fromisoformat(run['created_at'].replace('Z','+00:00'))
+                  if created >= threshold and run.get('head_sha') == target:
+                      candidates.append(run)
+              if candidates:
+                  selected=max(candidates,key=lambda run: run['id'])
+                  print(json.dumps({'id':selected['id'],'status':selected['status'],'conclusion':selected.get('conclusion')}),flush=True)
+                  if selected.get('status') == 'completed': break
+              else:
+                  print('{}',flush=True)
+              time.sleep(15)
+          else:
+              raise SystemExit('dispatched canonical run did not complete before timeout')
+
+          jobs=get(f"/actions/runs/{selected['id']}/jobs?per_page=100").get('jobs',[])
+          artifacts=get(f"/actions/runs/{selected['id']}/artifacts?per_page=100").get('artifacts',[])
+          report={
+              'target_sha':target,
+              'run':{
+                  'id':selected.get('id'),
+                  'status':selected.get('status'),
+                  'conclusion':selected.get('conclusion'),
+                  'event':selected.get('event'),
+                  'head_sha':selected.get('head_sha'),
+                  'html_url':selected.get('html_url'),
+                  'jobs':[{'id':j.get('id'),'name':j.get('name'),'status':j.get('status'),'conclusion':j.get('conclusion')} for j in jobs],
+                  'artifacts':[{'id':a.get('id'),'name':a.get('name'),'digest':a.get('digest'),'size_in_bytes':a.get('size_in_bytes'),'expired':a.get('expired')} for a in artifacts],
+              },
+          }
+          with open('/tmp/dispatched-run-state-v5.json','w',encoding='utf-8') as handle:
+              json.dump(report,handle,indent=2,sort_keys=True);handle.write('\n')
+          print(json.dumps(report,indent=2,sort_keys=True))
+          if selected.get('conclusion') != 'success':
+              raise SystemExit(f"dispatched canonical run concluded {selected.get('conclusion')}")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dispatched-run-state-v5
+          path: /tmp/dispatched-run-state-v5.json
+          if-no-files-found: warn
+          retention-days: 7
