@@ -25,9 +25,24 @@ jobs:
           SOURCE_COMMIT: a4c561cb1533bc0a88c812bf2ee5ac6847a2c98d
           AUDIT_REPORT: /tmp/scraper-path-audit.json
         run: python .github/tmp/scraper_path_audit.py
+      - name: Export exact scraper source files
+        run: |
+          mkdir -p /tmp/scraper-source-files/scripts/multi_product /tmp/scraper-source-files/data
+          cp scripts/cloud_scan.py /tmp/scraper-source-files/scripts/cloud_scan.py
+          cp scripts/autonomous_worker.py /tmp/scraper-source-files/scripts/autonomous_worker.py
+          cp scripts/autonomous_worker_v2.py /tmp/scraper-source-files/scripts/autonomous_worker_v2.py
+          cp scripts/autonomous_merge.py /tmp/scraper-source-files/scripts/autonomous_merge.py
+          cp scripts/multi_product/runtime.py /tmp/scraper-source-files/scripts/multi_product/runtime.py
+          cp data/vendor_expansion.json /tmp/scraper-source-files/data/vendor_expansion.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: scraper-path-audit
           path: /tmp/scraper-path-audit.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: scraper-source-files
+          path: /tmp/scraper-source-files
           if-no-files-found: error
           retention-days: 30
