@@ -1,0 +1,35 @@
+name: Temporary Fresh Autonomous Rescan V5
+
+on:
+  pull_request:
+    branches: [verification/fresh-autonomous-rescan-v5]
+    paths:
+      - verification/fresh-autonomous-rescan-v5.trigger
+      - .github/workflows/tmp-fresh-autonomous-rescan-v5.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Dispatch canonical workflow without continuity override
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "repos/${GH_REPO}/actions/workflows/dropfinder-cloud.yml/dispatches" \
+            -f ref=main
+          printf '{"dispatched":true,"ref":"main","override_used":false}\n' > /tmp/rescan-dispatch.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fresh-autonomous-rescan-dispatch-v5
+          path: /tmp/rescan-dispatch.json
+          if-no-files-found: error
+          retention-days: 7
