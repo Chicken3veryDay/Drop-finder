@@ -1,4 +1,4 @@
-name: Temporary Fallback Health Patch Applicator
+name: Temporary Fallback Health Follow-up Applicator
 
 on:
   pull_request:
@@ -17,26 +17,26 @@ jobs:
         with:
           ref: fix/fallback-health-accounting
           fetch-depth: 0
-      - name: Apply reviewed patch and focused regressions
+      - name: Apply reviewed follow-up and regressions
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          if git log -1 --format=%s | grep -Fxq 'fix: isolate fallback verification health'; then
-            echo 'Patch is already committed.'
+          if git log -1 --format=%s | grep -Fxq 'fix: preserve nonblocking fallback diagnostics'; then
+            echo 'Follow-up is already committed.'
             exit 0
           fi
-          git merge-base --is-ancestor e4f9265c6fc74ea26ea132a8c1caa25b112ef73d HEAD
-          gh api "repos/${REPOSITORY}/contents/.tmp/fallback-health.patch?ref=trigger/balanced-recovery-publish" --jq .content \
-            | tr -d '\n' | base64 -d > /tmp/fallback-health.patch
-          patch -p1 --forward --batch < /tmp/fallback-health.patch
+          test "$(git rev-parse HEAD)" = "e6792ecc3c20d34b4ea76d5b371ae18f79eb9518"
+          gh api "repos/${REPOSITORY}/contents/.tmp/fallback-health-followup.patch?ref=trigger/balanced-recovery-publish" --jq .content \
+            | tr -d '\n' | base64 -d > /tmp/fallback-health-followup.patch
+          patch -p1 --forward --batch < /tmp/fallback-health-followup.patch
           git diff --check
           python -m unittest tests.test_product_detail_reliability tests.catalog_v4.test_route_repair -v
+          python scripts/autonomous_merge.py --self-test
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add scripts/product_detail_reliability.py scripts/route_repair.py \
-            tests/test_product_detail_reliability.py tests/catalog_v4/test_route_repair.py
-          git commit -m 'fix: isolate fallback verification health'
+          git add scripts/autonomous_merge.py tests/test_product_detail_reliability.py
+          git commit -m 'fix: preserve nonblocking fallback diagnostics'
           git push origin HEAD:fix/fallback-health-accounting
