@@ -1,0 +1,43 @@
+name: Temporary Metadata Production Status
+
+on:
+  pull_request:
+    branches: [verification/metadata-completeness-publish]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.head_ref == 'trigger/metadata-completeness-publish'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Snapshot exact-source push runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: 760d18c73e3a09b7608ac2fa67ce262339971858
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=push&per_page=100" > raw-runs.json
+          python - <<'PY'
+          import json
+          data=json.load(open('raw-runs.json',encoding='utf-8'))
+          wanted={'DropFinder Cloud CI','DropFinder Autonomous Cloud'}
+          latest={}
+          for run in data.get('workflow_runs',[]):
+              name=run.get('name')
+              if name in wanted and (name not in latest or int(run.get('id') or 0)>int(latest[name].get('id') or 0)):
+                  latest[name]=run
+          result={name:{'id':run.get('id'),'status':run.get('status'),'conclusion':run.get('conclusion'),'head_sha':run.get('head_sha'),'event':run.get('event'),'html_url':run.get('html_url')} for name,run in sorted(latest.items())}
+          json.dump(result,open('metadata-production-status.json','w',encoding='utf-8'),indent=2,sort_keys=True)
+          print(json.dumps(result,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: metadata-production-status
+          path: metadata-production-status.json
+          if-no-files-found: error
+          retention-days: 2
