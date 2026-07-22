@@ -1,0 +1,58 @@
+name: Temporary Canonical Production Snapshot
+
+on:
+  pull_request:
+    branches: [verification/canonical-scraper-recovery-publish]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_COMMIT: c88556786bd6ebc76a11fbedbc931e5945139eef
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Capture exact-source workflow runs
+        run: |
+          python - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          from pathlib import Path
+          repo = os.environ['GITHUB_REPOSITORY']
+          source = os.environ['SOURCE_COMMIT']
+          query = urllib.parse.urlencode({'head_sha': source, 'per_page': 100})
+          req = urllib.request.Request(
+              f'https://api.github.com/repos/{repo}/actions/runs?{query}',
+              headers={
+                  'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+              },
+          )
+          with urllib.request.urlopen(req, timeout=30) as response:
+              payload = json.load(response)
+          rows = [
+              {
+                  'id': run.get('id'),
+                  'name': run.get('name'),
+                  'event': run.get('event'),
+                  'status': run.get('status'),
+                  'conclusion': run.get('conclusion'),
+                  'head_sha': run.get('head_sha'),
+                  'html_url': run.get('html_url'),
+                  'jobs_url': run.get('jobs_url'),
+              }
+              for run in payload.get('workflow_runs', [])
+              if run.get('head_sha') == source and run.get('event') == 'push'
+          ]
+          Path('canonical-production-snapshot.json').write_text(json.dumps(rows, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(rows, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: canonical-production-snapshot
+          path: canonical-production-snapshot.json
+          if-no-files-found: error
+          retention-days: 7
