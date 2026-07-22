@@ -17,14 +17,14 @@ jobs:
         with:
           ref: e4f9265c6fc74ea26ea132a8c1caa25b112ef73d
           persist-credentials: false
-      - name: Package exact diagnostic source
+      - name: Package exact repository tree
         shell: bash
         run: |
           set -euo pipefail
-          tar -czf source-snapshot.tar.gz scripts tests .github/workflows
+          tar --exclude=.git -czf repository-snapshot.tar.gz .
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: exact-source-snapshot
-          path: source-snapshot.tar.gz
+          name: exact-repository-snapshot
+          path: repository-snapshot.tar.gz
           if-no-files-found: error
           retention-days: 1
