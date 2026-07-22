@@ -1,0 +1,74 @@
+name: Temporary Balanced Recovery Publish Monitor
+
+on:
+  pull_request:
+    branches: [verification/balanced-recovery-publish]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    if: github.head_ref == 'trigger/balanced-recovery-publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact production workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: 58589d9b43dbcc2f3ff291b551ef7a56591e3911
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 120); do
+            gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=push&per_page=100" > runs.json
+            set +e
+            python - <<'PY'
+          import json, sys
+          data = json.load(open('runs.json', encoding='utf-8'))
+          wanted = {'DropFinder Cloud CI', 'DropFinder Autonomous Cloud'}
+          latest = {}
+          for run in data.get('workflow_runs', []):
+              name = run.get('name')
+              if name in wanted and name not in latest:
+                  latest[name] = run
+          payload = {
+              name: {
+                  'id': run.get('id'),
+                  'status': run.get('status'),
+                  'conclusion': run.get('conclusion'),
+                  'head_sha': run.get('head_sha'),
+                  'event': run.get('event'),
+                  'html_url': run.get('html_url'),
+              }
+              for name, run in sorted(latest.items())
+          }
+          json.dump(payload, open('balanced-recovery-publish-monitor.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)
+          print(json.dumps(payload, sort_keys=True))
+          if set(payload) != wanted or any(item['status'] != 'completed' for item in payload.values()):
+              sys.exit(2)
+          if any(item['conclusion'] != 'success' for item in payload.values()):
+              sys.exit(1)
+          PY
+            code=$?
+            set -e
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$code" -eq 1 ]; then
+              echo 'Exact-source production workflow failed.' >&2
+              exit 1
+            fi
+            sleep 20
+          done
+          echo 'Timed out waiting for exact-source production workflows.' >&2
+          exit 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: balanced-recovery-publish-monitor
+          path: balanced-recovery-publish-monitor.json
+          if-no-files-found: warn
+          retention-days: 30
