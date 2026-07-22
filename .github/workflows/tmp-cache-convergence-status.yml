@@ -1,0 +1,62 @@
+name: Temporary Cache Convergence Status
+
+on:
+  pull_request:
+    branches: [verification/cache-convergence-monitor]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.head_ref == 'trigger/cache-convergence-monitor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Snapshot exact-source push runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: 08fe39226d9d077987e067bdf875baa73c97f28c
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=push&per_page=100" > runs.json
+          python - <<'PY'
+          import json, os, subprocess
+          data = json.load(open('runs.json', encoding='utf-8'))
+          wanted = {'DropFinder Cloud CI', 'DropFinder Autonomous Cloud'}
+          latest = {}
+          for run in data.get('workflow_runs', []):
+              name = run.get('name')
+              if name in wanted and name not in latest:
+                  jobs = json.loads(subprocess.check_output([
+                      'gh', 'api', f"repos/{os.environ['REPOSITORY']}/actions/runs/{run['id']}/jobs?per_page=100"
+                  ]))
+                  latest[name] = {
+                      'id': run.get('id'),
+                      'status': run.get('status'),
+                      'conclusion': run.get('conclusion'),
+                      'head_sha': run.get('head_sha'),
+                      'created_at': run.get('created_at'),
+                      'updated_at': run.get('updated_at'),
+                      'jobs': [
+                          {
+                              'id': job.get('id'),
+                              'name': job.get('name'),
+                              'status': job.get('status'),
+                              'conclusion': job.get('conclusion'),
+                          }
+                          for job in jobs.get('jobs', [])
+                      ],
+                  }
+          json.dump(latest, open('cache-convergence-status.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)
+          print(json.dumps(latest, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cache-convergence-status
+          path: cache-convergence-status.json
+          if-no-files-found: error
+          retention-days: 1
