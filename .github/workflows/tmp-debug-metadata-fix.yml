@@ -11,13 +11,13 @@ jobs:
   debug:
     if: github.head_ref == 'fix/metadata-completeness'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: fix/metadata-completeness
           fetch-depth: 0
-      - name: Decode and check staged patch
+      - name: Reconstruct, apply, and test staged patch
         shell: bash
         run: |
           set +e
@@ -25,23 +25,45 @@ jobs:
           python - <<'PY' > metadata-debug/decode.log 2>&1
           import base64, gzip, hashlib, pathlib, re
           workflow = pathlib.Path('.github/workflows/tmp-apply-metadata-fix.yml').read_text(encoding='utf-8')
-          match = re.search(r"echo '([^']+)' \| base64", workflow)
-          if not match:
-              raise SystemExit('embedded patch payload not found')
-          encoded = match.group(1)
+          chunks = {}
+          for index in range(1, 8):
+              match = re.search(rf"PATCH_{index}: '([^']+)'", workflow)
+              if not match:
+                  raise SystemExit(f'missing PATCH_{index}')
+              chunks[index] = match.group(1)
+          encoded = ''.join(chunks.values())
           compressed = base64.b64decode(encoded, validate=True)
           patch = gzip.decompress(compressed)
           pathlib.Path('/tmp/metadata-fix.patch').write_bytes(patch)
+          print('chunk_lengths', [len(chunks[index]) for index in range(1, 8)])
           print('encoded_bytes', len(encoded))
           print('compressed_bytes', len(compressed))
           print('patch_bytes', len(patch))
           print('patch_sha256', hashlib.sha256(patch).hexdigest())
           PY
-          echo "decode_exit=$?" >> metadata-debug/status.txt
-          git apply --check --verbose /tmp/metadata-fix.patch > metadata-debug/apply-check.log 2>&1
-          echo "apply_check_exit=$?" >> metadata-debug/status.txt
-          python -m py_compile scripts/cloud_scan.py scripts/catalog_v4/builder.py scripts/multi_product/runtime.py > metadata-debug/current-compile.log 2>&1
-          echo "current_compile_exit=$?" >> metadata-debug/status.txt
+          decode_exit=$?
+          echo "decode_exit=$decode_exit" >> metadata-debug/status.txt
+          if [ "$decode_exit" -eq 0 ]; then
+            git apply --check --verbose /tmp/metadata-fix.patch > metadata-debug/apply-check.log 2>&1
+            apply_check_exit=$?
+            echo "apply_check_exit=$apply_check_exit" >> metadata-debug/status.txt
+            if [ "$apply_check_exit" -eq 0 ]; then
+              git apply /tmp/metadata-fix.patch > metadata-debug/apply.log 2>&1
+              apply_exit=$?
+              echo "apply_exit=$apply_exit" >> metadata-debug/status.txt
+              if [ "$apply_exit" -eq 0 ]; then
+                PYTHONPATH=. python -m unittest \
+                  tests.test_catalog_metadata_extraction \
+                  tests.test_cloud_scan_weights \
+                  tests.test_jsonld_offer_and_discovery \
+                  tests.test_woocommerce_variations \
+                  tests.multi_product.test_runtime -v > metadata-debug/tests.log 2>&1
+                echo "tests_exit=$?" >> metadata-debug/status.txt
+                git diff --check > metadata-debug/diff-check.log 2>&1
+                echo "diff_check_exit=$?" >> metadata-debug/status.txt
+              fi
+            fi
+          fi
           cat metadata-debug/status.txt
           exit 0
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
