@@ -21,40 +21,173 @@ jobs:
         with:
           node-version: "22"
       - name: Apply reviewed cache convergence repair
-        id: repair
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
-          set -o pipefail
-          {
-            set -eux
-            test "$(git rev-parse HEAD)" = "3e82b9edb232e31720ddd6f5abb769e0d9aba422"
-            gh api "repos/${REPOSITORY}/contents/.tmp/pages-cache-convergence.patch?ref=trigger/balanced-recovery-publish" --jq .content \
-              | tr -d '\n' | base64 -d > /tmp/pages-cache-convergence.patch
-            patch -p1 --forward --batch < /tmp/pages-cache-convergence.patch
-            git diff --check
-            cd web
-            node --test test/verify-pages-endpoint.test.mjs
-            cd ..
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add web/scripts/verify-pages-endpoint.mjs web/test/verify-pages-endpoint.test.mjs
-            git commit -m 'fix: cache-bust Pages generation verification'
-            git push origin HEAD:fix/pages-cache-convergence
-          } > pages-cache-convergence.log 2>&1
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: pages-cache-convergence-diagnostic
-          path: pages-cache-convergence.log
-          if-no-files-found: error
-          retention-days: 7
-      - name: Enforce repair result
-        if: steps.repair.outcome != 'success'
-        shell: bash
-        run: |
-          cat pages-cache-convergence.log
-          exit 1
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "3e82b9edb232e31720ddd6f5abb769e0d9aba422"
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('web/scripts/verify-pages-endpoint.mjs')
+          text = path.read_text(encoding='utf-8')
+          replacements = [
+              (
+                  'import { createHash } from "node:crypto";',
+                  'import { createHash, randomUUID } from "node:crypto";',
+              ),
+              (
+                  '};\n\nconst readBounded = async (response, label, maxBytes) => {',
+                  '''};
+
+const withVerificationNonce = (value, nonce) => {
+  const url = new URL(value);
+  url.searchParams.set("__dropfinder_verify", nonce);
+  return url;
+};
+
+const readBounded = async (response, label, maxBytes) => {''',
+              ),
+              (
+                  '''const fetchResource = async (fetchImpl, url, label, { maxBytes, timeoutMs }) => {
+  const response = await fetchImpl(url, {
+    redirect: "follow",
+    cache: "no-store",
+    signal: AbortSignal.timeout(timeoutMs),
+  });''',
+                  '''const fetchResource = async (fetchImpl, url, label, { maxBytes, timeoutMs, verificationNonce }) => {
+  const requestUrl = withVerificationNonce(url, verificationNonce);
+  const response = await fetchImpl(requestUrl, {
+    redirect: "follow",
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache, no-store, max-age=0",
+      Pragma: "no-cache",
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });''',
+              ),
+              (
+                  '''    maxBytes = DEFAULT_MAX_BYTES,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = {},
+) => {
+  if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required.");
+  const root = normalizeBaseUrl(baseUrl);
+  const options = { maxBytes, timeoutMs };''',
+                  '''    maxBytes = DEFAULT_MAX_BYTES,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    verificationNonce = randomUUID(),
+  } = {},
+) => {
+  if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required.");
+  if (typeof verificationNonce !== "string" || !verificationNonce.trim()) {
+    throw new Error("A non-empty publication verification nonce is required.");
+  }
+  const root = normalizeBaseUrl(baseUrl);
+  const options = { maxBytes, timeoutMs, verificationNonce: verificationNonce.trim() };''',
+              ),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'expected exactly one source match, found {text.count(old)}: {old[:80]!r}')
+              text = text.replace(old, new)
+          path.write_text(text, encoding='utf-8')
+          PY
+          cat > web/test/verify-pages-endpoint.test.mjs <<'EOF'
+          import assert from "node:assert/strict";
+          import { createHash } from "node:crypto";
+          import test from "node:test";
+          import { verifyPagesEndpoint } from "../scripts/verify-pages-endpoint.mjs";
+
+          const compactText = JSON.stringify({
+            generation_id: "generation-test",
+            product_count: 0,
+            in_stock_variant_count: 0,
+            products: [],
+          });
+
+          const bodies = new Map([
+            ["", '<!doctype html><link rel="manifest" href="./manifest.webmanifest"><link rel="icon" href="./icon.svg"><script src="./assets/app.js"></script>'],
+            ["index.html", '<!doctype html><link rel="manifest" href="./manifest.webmanifest"><link rel="icon" href="./icon.svg"><script src="./assets/app.js"></script>'],
+            ["manifest.webmanifest", JSON.stringify({ short_name: "DropFinder", start_url: "./", scope: "./" })],
+            ["app-shell.json", JSON.stringify({ schema_version: "dropfinder-app-shell-v1", assets: [] })],
+            ["sw.js", "index.html manifest.webmanifest data/catalog.json data/status.json"],
+            ["data/catalog.json", JSON.stringify({ product_count: 0, products: [] })],
+            ["data/status.json", JSON.stringify({
+              degraded_sources: 0,
+              healthy_sources: 1,
+              enabled_sources: 1,
+              services: { publisher: "healthy" },
+            })],
+            ["data/runtime.json", JSON.stringify({ zero_degraded_active_services: true })],
+            ["data/catalog-v4/manifest.json", JSON.stringify({
+              schema_version: "dropfinder-catalog-manifest-v4",
+              generation_id: "generation-test",
+              product_count: 0,
+              in_stock_variant_count: 0,
+              compact_index: {
+                sha256: createHash("sha256").update(compactText).digest("hex"),
+              },
+            })],
+            ["data/catalog-v4/index.json", compactText],
+          ]);
+
+          test("cache-busts every public endpoint request without changing evidence paths", async () => {
+            const requests = [];
+            const fetchImpl = async (value, options) => {
+              const url = new URL(value);
+              const prefix = "/Drop-finder/";
+              assert.ok(url.pathname.startsWith(prefix));
+              const path = url.pathname.slice(prefix.length);
+              requests.push({ url, options });
+              const body = bodies.get(path);
+              assert.notEqual(body, undefined, `unexpected endpoint path: ${path}`);
+              return new Response(body, {
+                status: 200,
+                headers: {
+                  "content-type": path.endsWith(".json") ? "application/json" : "text/plain",
+                  "cache-control": "max-age=600",
+                },
+              });
+            };
+
+            const result = await verifyPagesEndpoint("https://example.test/Drop-finder/", {
+              fetchImpl,
+              verificationNonce: "release-123",
+            });
+
+            assert.equal(result.generationId, "generation-test");
+            assert.equal(requests.length, bodies.size);
+            for (const { url, options } of requests) {
+              assert.equal(url.searchParams.get("__dropfinder_verify"), "release-123");
+              assert.equal(options.cache, "no-store");
+              assert.equal(options.headers["Cache-Control"], "no-cache, no-store, max-age=0");
+              assert.equal(options.headers.Pragma, "no-cache");
+            }
+            for (const evidence of Object.values(result.endpoints)) {
+              assert.equal(evidence.path.includes("?"), false);
+            }
+          });
+
+          test("rejects an empty publication verification nonce", async () => {
+            await assert.rejects(
+              verifyPagesEndpoint("https://example.test/Drop-finder/", {
+                fetchImpl: async () => new Response(""),
+                verificationNonce: " ",
+              }),
+              /non-empty publication verification nonce/,
+            );
+          });
+          EOF
+          git diff --check
+          cd web
+          node --test test/verify-pages-endpoint.test.mjs
+          cd ..
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add web/scripts/verify-pages-endpoint.mjs web/test/verify-pages-endpoint.test.mjs
+          git commit -m 'fix: cache-bust Pages generation verification'
+          git push origin HEAD:fix/pages-cache-convergence
