@@ -1,0 +1,215 @@
+--- drop-original/scripts/product_detail_reliability.py	2026-07-22 21:25:53.000000000 +0000
++++ drop-source/scripts/product_detail_reliability.py	2026-07-22 21:29:08.240963723 +0000
+@@ -283,12 +283,14 @@
+                 for candidate in candidates
+                 if (outcome := candidate.get(_OUTCOME_KEY, {})).get("kind") == "rejection" and outcome.get("record")
+             ]
++            accepted = extracted if not failures else []
+             result.update(
+                 http_status=http_status,
+                 content_type=content_type,
+                 status="degraded" if failures else "healthy" if extracted else "empty",
+                 candidates=len(candidates),
+                 products=len(extracted),
++                admitted_products=len(accepted),
+                 verification_failures=len(failures),
+                 verification_failure_reasons=_reason_counts(failures),
+                 verification_failure_records=failures[:_FAILURE_RECORD_LIMIT],
+@@ -296,7 +298,7 @@
+                 verification_rejection_reasons=_reason_counts(rejections),
+                 retry_attempts=sum(max(0, int((candidate.get(_OUTCOME_KEY) or {}).get("attempts") or 1) - 1) for candidate in candidates),
+             )
+-            rows.extend(extracted)
++            rows.extend(accepted)
+         except Exception as error:
+             result.update(status="error", error=f"{type(error).__name__}: {_bounded_text(error)}")
+         result["duration_seconds"] = round(time.monotonic() - started, 3)
+@@ -330,22 +332,32 @@
+         products = worker.resolve_route_overlaps([*products, *fallback])
+     admitted, reasons, quality = worker.gate(products)
+     status = dict(status)
+-    route_results = [*list(status.get("route_results") or []), verification_route, *fallback_results]
++    retrieval_routes = list(status.get("route_results") or [])
++    if (
++        not products
++        and reasons == ["no_qualifying_products"]
++        and retrieval_routes
++        and all(int(route.get("http_status") or 0) == 403 for route in retrieval_routes)
++    ):
++        reasons = ["source_access_forbidden"]
++    route_results = [*retrieval_routes, verification_route, *fallback_results]
+     total_failures = sum(int(route.get("verification_failures") or 0) for route in route_results)
++    blocking_failures = len(primary_failures)
+     total_rejections = sum(int(route.get("verification_rejections") or 0) for route in route_results)
+     quality = {
+         **quality,
+         "discovered_products": diagnostics["discovered_products"],
+         "verification_failures": total_failures,
++        "blocking_verification_failures": blocking_failures,
+         "verification_rejections": total_rejections,
+     }
+     healthy_routes = [route for route in route_results if route.get("status") == "healthy" and route.get("url")]
+     status.update(
+         admitted=admitted,
+-        status="quarantined" if not admitted else "degraded" if total_failures else "healthy",
++        status="quarantined" if not admitted else "degraded" if blocking_failures else "healthy",
+         products=len(products),
+         reason_codes=reasons,
+-        health_reason_codes=["product_detail_verification_incomplete"] if total_failures else [],
++        health_reason_codes=["product_detail_verification_incomplete"] if blocking_failures else [],
+         quality=quality,
+         worker="cloud_scan_v2+bounded_product_detail_verifier",
+         route_results=route_results,
+--- drop-original/scripts/route_repair.py	2026-07-22 21:25:53.000000000 +0000
++++ drop-source/scripts/route_repair.py	2026-07-22 21:29:08.240963723 +0000
+@@ -19,8 +19,9 @@
+ # Routes stay first-party and unauthenticated.
+ ROUTE_REPAIRS: dict[str, tuple[Route, ...]] = {
+     "arete": (
+-        ("html", "https://arete.shop/", "storewide"),
++        ("html", "https://arete.shop/l/national/products/category/thca-flower", "thca_flower"),
+         ("html", "https://arete.shop/l/national/products", "storewide"),
++        ("html", "https://arete.shop/", "storewide"),
+     ),
+     "bay_smokes": (
+         ("shopify", "https://baysmokes.com/collections/thca-flower/products.json?limit=250", "thca_flower"),
+--- drop-original/tests/test_product_detail_reliability.py	2026-07-22 21:25:53.000000000 +0000
++++ drop-source/tests/test_product_detail_reliability.py	2026-07-22 21:29:08.736963735 +0000
+@@ -189,6 +189,119 @@
+         self.assertEqual(verification_route["verification_failure_reasons"], {"product_detail_fetch_error": 1})
+         self.assertEqual(verification_route["verification_failure_records"][0]["product_id"], "remote-2")
+ 
++
++    def test_redundant_partial_fallback_is_diagnostic_only(self) -> None:
++        original_scan = self.worker.aggregate.scan_all_routes
++        original_fallback_scan = detail_reliability._fallback_scan
++        original_fallback = self.worker.FALLBACK_HTML_ROUTES.get("fixture")
++
++        def scan(_source: tuple):
++            return [self.direct_product()], {
++                "source_id": "fixture",
++                "name": "Fixture Vendor",
++                "route_results": [{
++                    "route_id": "fixture-1",
++                    "url": "https://example.test/collection",
++                    "source_type": "shopify",
++                    "status": "healthy",
++                    "http_status": 200,
++                    "products": 1,
++                }],
++            }
++
++        fallback_route = {
++            "route_id": "fixture-fallback-1",
++            "url": "https://example.test/collection",
++            "source_type": "html_card_product_detail",
++            "status": "degraded",
++            "candidates": 2,
++            "products": 1,
++            "admitted_products": 0,
++            "verification_failures": 1,
++            "verification_failure_reasons": {"product_detail_fetch_error": 1},
++            "verification_failure_records": [{
++                "product_id": "failed",
++                "url": "https://example.test/products/failed",
++                "reason": "product_detail_fetch_error",
++                "attempts": 3,
++                "retryable": True,
++            }],
++            "verification_rejections": 0,
++            "retry_attempts": 2,
++        }
++
++        self.worker.aggregate.scan_all_routes = scan
++        self.worker.FALLBACK_HTML_ROUTES["fixture"] = ["https://example.test/collection"]
++        detail_reliability._fallback_scan = lambda *_args: ([], [fallback_route])
++        try:
++            rows, status = self.worker.scan_source(("fixture", "Fixture Vendor", []))
++        finally:
++            self.worker.aggregate.scan_all_routes = original_scan
++            detail_reliability._fallback_scan = original_fallback_scan
++            if original_fallback is None:
++                self.worker.FALLBACK_HTML_ROUTES.pop("fixture", None)
++            else:
++                self.worker.FALLBACK_HTML_ROUTES["fixture"] = original_fallback
++
++        self.assertEqual([row["id"] for row in rows], ["direct"])
++        self.assertTrue(status["admitted"])
++        self.assertEqual(status["status"], "healthy")
++        self.assertEqual(status["health_reason_codes"], [])
++        self.assertEqual(status["quality"]["verification_failures"], 1)
++        self.assertEqual(status["quality"]["blocking_verification_failures"], 0)
++        self.assertEqual(status["route_results"][-1]["admitted_products"], 0)
++
++    def test_all_forbidden_retrieval_routes_use_precise_reason(self) -> None:
++        original_scan = self.worker.aggregate.scan_all_routes
++        original_fallback = self.worker.FALLBACK_HTML_ROUTES.pop("fixture", None)
++
++        def scan(_source: tuple):
++            return [], {
++                "source_id": "fixture",
++                "name": "Fixture Vendor",
++                "route_results": [
++                    {"route_id": "fixture-1", "url": "https://example.test/one", "status": "http_error", "http_status": 403},
++                    {"route_id": "fixture-2", "url": "https://example.test/two", "status": "http_error", "http_status": 403},
++                ],
++            }
++
++        self.worker.aggregate.scan_all_routes = scan
++        try:
++            rows, status = self.worker.scan_source(("fixture", "Fixture Vendor", []))
++        finally:
++            self.worker.aggregate.scan_all_routes = original_scan
++            if original_fallback is not None:
++                self.worker.FALLBACK_HTML_ROUTES["fixture"] = original_fallback
++
++        self.assertEqual(rows, [])
++        self.assertFalse(status["admitted"])
++        self.assertEqual(status["status"], "quarantined")
++        self.assertEqual(status["reason_codes"], ["source_access_forbidden"])
++
++    def test_healthy_empty_routes_remain_no_qualifying_products(self) -> None:
++        original_scan = self.worker.aggregate.scan_all_routes
++        original_fallback = self.worker.FALLBACK_HTML_ROUTES.pop("fixture", None)
++
++        def scan(_source: tuple):
++            return [], {
++                "source_id": "fixture",
++                "name": "Fixture Vendor",
++                "route_results": [
++                    {"route_id": "fixture-1", "url": "https://example.test/empty", "status": "empty", "http_status": 200},
++                ],
++            }
++
++        self.worker.aggregate.scan_all_routes = scan
++        try:
++            rows, status = self.worker.scan_source(("fixture", "Fixture Vendor", []))
++        finally:
++            self.worker.aggregate.scan_all_routes = original_scan
++            if original_fallback is not None:
++                self.worker.FALLBACK_HTML_ROUTES["fixture"] = original_fallback
++
++        self.assertEqual(rows, [])
++        self.assertEqual(status["reason_codes"], ["no_qualifying_products"])
++
+     def test_fallback_candidate_uses_the_same_retry_contract(self) -> None:
+         calls = 0
+         candidate = {
+--- drop-original/tests/catalog_v4/test_route_repair.py	2026-07-22 21:25:53.000000000 +0000
++++ drop-source/tests/catalog_v4/test_route_repair.py	2026-07-22 21:29:08.740963735 +0000
+@@ -101,6 +101,15 @@
+         bay = next(source for source in worker.core.SOURCES if source[0] == "bay_smokes")
+         self.assertTrue(all("bay-smokes.com" not in route[1] for route in bay[2]))
+ 
++
++    def test_arete_repair_prioritizes_current_flower_category(self):
++        routes = route_repair.ROUTE_REPAIRS["arete"]
++        self.assertEqual(routes[0], (
++            "html",
++            "https://arete.shop/l/national/products/category/thca-flower",
++            "thca_flower",
++        ))
++
+     def test_first_party_price_stock_and_image_enrichment(self):
+         payload = '''<script type="application/ld+json">{"@type":"Product","name":"Blue Dream THCA Flower","image":"/image.jpg","offers":{"@type":"Offer","price":"49.95","availability":"https://schema.org/InStock"}}</script><div data-product-price-without-tax-value="59.95">Add to cart</div>'''
+         values = route_repair.enrich_meta_values(Core, lambda _payload: {}, payload)
