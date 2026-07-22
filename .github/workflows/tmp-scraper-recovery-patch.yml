@@ -17,16 +17,20 @@ jobs:
         with:
           ref: trigger/scraper-recovery-patch
           fetch-depth: 0
-      - name: Apply and validate recovery patch
+      - name: Apply recovery patch
+        run: python scripts/tmp_apply_scraper_recovery.py
+      - name: Compile patched module
+        run: python -m py_compile scripts/route_repair.py
+      - name: Run route-repair unit tests
+        run: python -m unittest -v tests.catalog_v4.test_route_repair
+      - name: Run production worker self-test
+        run: python scripts/autonomous_worker_v4.py --self-test
+      - name: Commit clean permanent patch
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/tmp_apply_scraper_recovery.py
-          python -m py_compile scripts/route_repair.py
-          python -m unittest -v tests.catalog_v4.test_route_repair
-          python scripts/autonomous_worker_v4.py --self-test
           git diff --check
-          rm -f .trigger-scraper-recovery-patch .trigger-scraper-recovery-run
+          rm -f .trigger-scraper-recovery-patch .trigger-scraper-recovery-run .trigger-scraper-recovery-execute
           rm -f scripts/tmp_apply_scraper_recovery.py
           rm -f .github/workflows/tmp-run-scraper-recovery.yml
           rm -f .github/workflows/tmp-scraper-recovery-patch.yml
