@@ -1,0 +1,44 @@
+name: Temporary Metadata Publication Failure Capture
+
+on:
+  pull_request:
+    branches: [verification/metadata-completeness-publish]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  capture:
+    if: github.head_ref == 'trigger/metadata-completeness-publish'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Capture failed publisher and current public endpoints
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: '29965353786'
+        shell: bash
+        run: |
+          set +e
+          mkdir -p failure-capture
+          gh run view "$RUN_ID" --repo "$REPOSITORY" --log-failed > failure-capture/failed.log 2>&1
+          echo "$?" > failure-capture/gh-log-exit.txt
+          nonce="manual-$(date +%s)-${RANDOM}"
+          for path in data/catalog-v4/manifest.json data/catalog-v4/index.json data/status.json data/runtime.json index.html; do
+            safe="${path//\//_}"
+            curl -fsSL -D "failure-capture/${safe}.headers" \
+              -H 'Cache-Control: no-cache, no-store, max-age=0' \
+              -H 'Pragma: no-cache' \
+              "https://chicken3veryday.github.io/Drop-finder/${path}?__dropfinder_verify=${nonce}-${safe}" \
+              -o "failure-capture/${safe}" 2>"failure-capture/${safe}.curl.log"
+            echo "$?" > "failure-capture/${safe}.exit"
+          done
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: metadata-publication-failure-capture
+          path: failure-capture
+          if-no-files-found: error
+          retention-days: 7
