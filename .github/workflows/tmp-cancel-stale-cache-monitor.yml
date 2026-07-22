@@ -1,0 +1,46 @@
+name: Temporary Cancel Stale Cache Monitor
+
+on:
+  pull_request:
+    branches: [verification/cache-convergence-monitor]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel:
+    if: github.head_ref == 'trigger/cache-convergence-monitor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Cancel exact stale read-only run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          STALE_RUN_ID: "29962003982"
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=$(gh api "repos/${REPOSITORY}/actions/runs/${STALE_RUN_ID}" --jq .status)
+          if [ "$status" != "completed" ]; then
+            gh api --method POST "repos/${REPOSITORY}/actions/runs/${STALE_RUN_ID}/cancel"
+          fi
+          for attempt in $(seq 1 30); do
+            status=$(gh api "repos/${REPOSITORY}/actions/runs/${STALE_RUN_ID}" --jq .status)
+            conclusion=$(gh api "repos/${REPOSITORY}/actions/runs/${STALE_RUN_ID}" --jq '.conclusion // ""')
+            printf '{"run_id":%s,"status":"%s","conclusion":"%s"}\n' "$STALE_RUN_ID" "$status" "$conclusion" > stale-cache-monitor-cancellation.json
+            if [ "$status" = "completed" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Stale monitor did not cancel.' >&2
+          exit 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: stale-cache-monitor-cancellation
+          path: stale-cache-monitor-cancellation.json
+          if-no-files-found: warn
+          retention-days: 30
