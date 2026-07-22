@@ -168,6 +168,16 @@ class SourceRecoveryTests(unittest.TestCase):
         self.assertEqual(source_recovery.extract_first_party_price(PriceCore, wnc), 34.99)
         self.assertIsNone(source_recovery.extract_first_party_price(PriceCore, unrelated))
 
+    def test_json_price_minor_units_are_normalized_only_with_framework_evidence(self):
+        woo_minor = '<script>{"currency_minor_unit":2,"price":"2900"}</script>'
+        shopify_theme = '<script>Shopify.theme={};{"price":3750,"price_min":3750}</script>'
+        ordinary_dollars = '<script>{"price":1600}</script>'
+        explicit_decimal = '<script>{"price":"37.50"}</script>'
+        self.assertEqual(source_recovery.extract_first_party_price(PriceCore, woo_minor), 29.0)
+        self.assertEqual(source_recovery.extract_first_party_price(PriceCore, shopify_theme), 37.5)
+        self.assertEqual(source_recovery.extract_first_party_price(PriceCore, ordinary_dollars), 1600.0)
+        self.assertEqual(source_recovery.extract_first_party_price(PriceCore, explicit_decimal), 37.5)
+
     def test_route_overrides_remove_known_dead_paths(self):
         worker = RouteWorker()
         source_recovery.apply_route_overrides(worker)
