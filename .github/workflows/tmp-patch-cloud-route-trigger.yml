@@ -77,12 +77,12 @@ jobs:
           test_path.write_text(tests, encoding='utf-8')
           PY
           git diff --check
-          mkdir -p patched/.github/workflows patched/tests
-          cp .github/workflows/dropfinder-cloud.yml patched/.github/workflows/dropfinder-cloud.yml
+          mkdir -p patched/tests
+          cp .github/workflows/dropfinder-cloud.yml patched/dropfinder-cloud.yml
           cp tests/test_dropfinder_cloud_workflow_permissions.py patched/tests/test_dropfinder_cloud_workflow_permissions.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: patched-cloud-route-trigger-files
+          name: patched-cloud-route-trigger-files-v2
           path: patched
           if-no-files-found: error
           retention-days: 1
