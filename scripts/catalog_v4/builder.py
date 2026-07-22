@@ -123,7 +123,11 @@ def _extract_total_thc(raw: dict[str, Any]) -> dict[str, Any]:
     calculated: Decimal | None = None
     method = "unavailable"
     confidence = "unavailable"
-    if thca is not None and delta9 is not None:
+    if direct is not None:
+        calculated = direct
+        method = "direct_source_total_thc"
+        confidence = "source_reported_total_thc"
+    elif thca is not None and delta9 is not None:
         calculated = delta9 + (thca * TOTAL_THC_FACTOR)
         method = "delta9_plus_thca_times_0_877"
         confidence = "calculated_from_measured_inputs"
@@ -142,7 +146,7 @@ def _extract_total_thc(raw: dict[str, Any]) -> dict[str, Any]:
         "raw_thca_percent": decimal_number(thca, "0.0001"),
         "raw_delta9_thc_percent": decimal_number(delta9, "0.0001"),
         "direct_source_total_thc_percent": decimal_number(direct, "0.0001"),
-        "formula": "delta9_thc + (thca * 0.877)" if calculated is not None else "",
+        "formula": "source reported total THC" if method == "direct_source_total_thc" else "delta9_thc + (thca * 0.877)" if calculated is not None else "",
         "method": method,
         "delta9_normalization": delta9_method,
         "confidence": confidence,
@@ -437,6 +441,32 @@ def _resolve_duplicate_product_urls(products: list[dict[str, Any]]) -> list[dict
     return resolved
 
 
+
+def _metadata_coverage(products: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(products)
+    checks = {
+        "lineage": lambda product: product.get("lineage") not in (None, "", "unknown"),
+        "total_thc": lambda product: isinstance(product.get("total_thc"), dict) and product["total_thc"].get("display_percent") is not None,
+        "rating": lambda product: product.get("rating") is not None and product.get("review_count") is not None,
+        "image": lambda product: bool(product.get("image_url")),
+        "effects": lambda product: bool(product.get("effects")),
+        "grow_environment": lambda product: product.get("grow_environment") not in (None, "", "unknown"),
+        "documents": lambda product: any(variant.get("documents") for variant in product.get("variants") or [] if isinstance(variant, dict)),
+    }
+    fields = {}
+    for field, check in checks.items():
+        populated = sum(1 for product in products if check(product))
+        fields[field] = {
+            "populated": populated,
+            "missing": total - populated,
+            "coverage": round(populated / total, 6) if total else 0,
+        }
+    return {
+        "schema_version": "dropfinder-metadata-coverage-v1",
+        "product_count": total,
+        "fields": fields,
+    }
+
 def _detail_record(p):
  return {k:p[k] for k in ("product_id","vendor_id","strain_name","source_title","canonical_product_url","image_url","effects","grow_environment","total_thc","lineage_provenance","effects_provenance","environment_provenance","rating_provenance","variants","provenance")}
 
@@ -685,6 +715,7 @@ class CatalogBuilder:
             rating_value, review_count, rating_provenance = _select_rating_pair(records_for_product)
             potency_candidates = [(_extract_total_thc(row), row) for row in records_for_product]
             potency_rank = {
+                "direct_source_total_thc": 4,
                 "delta9_plus_thca_times_0_877": 3,
                 "thca_only_estimate": 2,
                 "unavailable": 0,
@@ -814,6 +845,7 @@ class CatalogBuilder:
             "product_count": len(products),
             "in_stock_variant_count": sum(len(row["variants"]) for row in products),
             "vendor_count": len(vendors["vendors"]),
+            "metadata_coverage": _metadata_coverage(products),
             "compact_index": {
                 "path": "data/catalog-v4/index.json",
                 "sha256": _sha(files["catalog-v4/index.json"]),
