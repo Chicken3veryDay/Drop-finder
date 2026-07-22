@@ -79,6 +79,23 @@ def apply_registry(worker: Any, payload: dict[str, Any]) -> tuple[str, ...]:
                 product_paths.append(value)
 
     worker.PRODUCT_PATHS = tuple(product_paths)
+    # The registry documents vendors; route_repair owns current canonical paths
+    # and first-party product-detail extraction fallbacks.
+    try:
+        from route_repair import apply_route_repairs, install as install_route_repairs
+    except ImportError:
+        from scripts.route_repair import apply_route_repairs, install as install_route_repairs
+
+    parser_capabilities = (
+        hasattr(worker, "run")
+        and hasattr(worker, "card_candidates")
+        and hasattr(worker, "product_detail_evidence")
+        and hasattr(worker.core, "meta_values")
+    )
+    if parser_capabilities:
+        install_route_repairs(worker)
+    else:
+        apply_route_repairs(worker)
     return tuple(installed)
 
 
