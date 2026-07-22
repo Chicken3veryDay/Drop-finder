@@ -162,9 +162,9 @@ def apply_registry(worker: Any, payload: dict[str, Any]) -> tuple[str, ...]:
     if parser_capabilities:
         install_route_repairs(worker)
         install_source_recovery(worker)
+        balance_sources(worker)
     else:
         apply_route_repairs(worker)
-    balance_sources(worker)
     return tuple(installed)
 
 
