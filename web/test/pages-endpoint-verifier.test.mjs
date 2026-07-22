@@ -61,7 +61,9 @@ const validBodies = () => {
 };
 
 const fetchFrom = (bodies, overrides = {}) => async (input) => {
-  const url = String(input);
+  const requestUrl = new URL(String(input));
+  assert.ok(requestUrl.searchParams.get("__dropfinder_verify"));
+  const url = `${requestUrl.origin}${requestUrl.pathname}`;
   if (url in overrides) return overrides[url];
   if (!(url in bodies)) return new Response("not found", { status: 404 });
   const contentType = url.endsWith(".json") || url.endsWith(".webmanifest")

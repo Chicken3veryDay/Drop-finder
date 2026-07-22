@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
@@ -12,6 +12,12 @@ const normalizeBaseUrl = (value) => {
   if (!url.pathname.endsWith("/")) url.pathname += "/";
   url.search = "";
   url.hash = "";
+  return url;
+};
+
+const withVerificationNonce = (value, nonce) => {
+  const url = new URL(value);
+  url.searchParams.set("__dropfinder_verify", nonce);
   return url;
 };
 
@@ -48,10 +54,20 @@ const readBounded = async (response, label, maxBytes) => {
   return bytes;
 };
 
-const fetchResource = async (fetchImpl, url, label, { maxBytes, timeoutMs }) => {
-  const response = await fetchImpl(url, {
+const fetchResource = async (
+  fetchImpl,
+  url,
+  label,
+  { maxBytes, timeoutMs, verificationNonce },
+) => {
+  const requestUrl = withVerificationNonce(url, verificationNonce);
+  const response = await fetchImpl(requestUrl, {
     redirect: "follow",
     cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache, no-store, max-age=0",
+      Pragma: "no-cache",
+    },
     signal: AbortSignal.timeout(timeoutMs),
   });
   const bytes = await readBounded(response, label, maxBytes);
@@ -102,11 +118,19 @@ export const verifyPagesEndpoint = async (
     fetchImpl = globalThis.fetch,
     maxBytes = DEFAULT_MAX_BYTES,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    verificationNonce = randomUUID(),
   } = {},
 ) => {
   if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required.");
+  if (typeof verificationNonce !== "string" || !verificationNonce.trim()) {
+    throw new Error("A non-empty publication verification nonce is required.");
+  }
   const root = normalizeBaseUrl(baseUrl);
-  const options = { maxBytes, timeoutMs };
+  const options = {
+    maxBytes,
+    timeoutMs,
+    verificationNonce: verificationNonce.trim(),
+  };
   const endpoints = [
     { key: "/", path: "", label: "/" },
     { key: "index.html", path: "index.html", label: "index.html" },
@@ -127,10 +151,14 @@ export const verifyPagesEndpoint = async (
       label: "catalog-v4 index",
     },
   ];
-  const resources = Object.fromEntries(await Promise.all(endpoints.map(async ({ key, path, label }) => [
-    key,
-    await fetchResource(fetchImpl, new URL(path, root), label, options),
-  ])));
+  const resources = Object.fromEntries(
+    await Promise.all(
+      endpoints.map(async ({ key, path, label }) => [
+        key,
+        await fetchResource(fetchImpl, new URL(path, root), label, options),
+      ]),
+    ),
+  );
 
   verifyIndex(resources["/"].text, "/");
   verifyIndex(resources["index.html"].text, "index.html");
