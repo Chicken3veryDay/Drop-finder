@@ -61,6 +61,31 @@ class CatalogIdentityRatingIntegrityTests(unittest.TestCase):
         self.assertEqual(provenance["collected_at"], "2026-01-01T00:00:00Z")
         self.assertEqual(provenance["source_path"], "https://vendor.example/api/products")
 
+    def test_verifier_accepts_source_rating_precision_after_normalization(self) -> None:
+        result = build_catalog(
+            [
+                row(
+                    variant="3.5g",
+                    price=25,
+                    collected_at="2026-01-01T00:00:00Z",
+                    rating=3.6667,
+                    review_count=3,
+                )
+            ],
+            generated_at="2026-03-01T00:00:00Z",
+            detail_shards=1,
+        )
+        index_product = payload(result.files["catalog-v4/index.json"])["products"][0]
+        self.assertEqual((index_product["rating"], index_product["review_count"]), (3.67, 3))
+        detail_product = payload(result.files["catalog-v4/details/000.json"])["products"][0]
+        self.assertEqual(detail_product["rating_provenance"]["raw_score"], 3.6667)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_result(result, root)
+            verified = verify_publication(root)
+            self.assertTrue(verified["verified"])
+
     def test_newer_complete_pair_wins_and_partial_records_never_compose(self) -> None:
         complete = build_catalog(
             [

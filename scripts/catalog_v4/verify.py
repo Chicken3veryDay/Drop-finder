@@ -13,6 +13,7 @@ from . import (
     REJECTION_SCHEMA_VERSION,
     VENDOR_SCHEMA_VERSION,
 )
+from .normalization import rating
 from .selection import select_active_variant
 from .strict_json import StrictJsonError, load_path_strict
 
@@ -276,7 +277,11 @@ def verify_publication(output_root: Path) -> dict[str, Any]:
                     raise VerificationError(f"missing rating provenance: {product_id}")
                 if rating_provenance.get("method") != "atomic_source_record_pair":
                     raise VerificationError(f"non-atomic rating provenance: {product_id}")
-                if (rating_provenance.get("raw_score"), rating_provenance.get("raw_count")) != (rating_value, review_count):
+                provenance_score, provenance_count, _ = rating(
+                    rating_provenance.get("raw_score"),
+                    rating_provenance.get("raw_count"),
+                )
+                if (provenance_score, provenance_count) != (rating_value, review_count):
                     raise VerificationError(f"rating provenance value mismatch: {product_id}")
                 for field in ("source_record_id", "source_path", "collected_at"):
                     if not str(rating_provenance.get(field) or "").strip():
