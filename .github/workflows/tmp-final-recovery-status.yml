@@ -1,4 +1,4 @@
-name: Temporary Fallback Health Production Status
+name: Temporary PR 453 Failure Log
 
 on:
   pull_request:
@@ -9,55 +9,24 @@ permissions:
   contents: read
 
 jobs:
-  snapshot:
+  capture:
     if: github.head_ref == 'trigger/balanced-recovery-publish'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Snapshot exact source workflows
+      - name: Capture failed Cloud CI output
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          TARGET_SHA: c88556786bd6ebc76a11fbedbc931e5945139eef
+          RUN_ID: "29961430235"
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=push&per_page=100" > runs.json
-          python - <<'PY'
-          import json, os, subprocess
-          data = json.load(open('runs.json', encoding='utf-8'))
-          wanted = {'DropFinder Cloud CI', 'DropFinder Autonomous Cloud'}
-          latest = {}
-          for run in data.get('workflow_runs', []):
-              name = run.get('name')
-              if name in wanted and name not in latest:
-                  jobs = json.loads(subprocess.check_output([
-                      'gh', 'api', f"repos/{os.environ['REPOSITORY']}/actions/runs/{run['id']}/jobs?per_page=100"
-                  ]))
-                  latest[name] = {
-                      'id': run.get('id'),
-                      'status': run.get('status'),
-                      'conclusion': run.get('conclusion'),
-                      'created_at': run.get('created_at'),
-                      'updated_at': run.get('updated_at'),
-                      'jobs': [
-                          {
-                              'id': job.get('id'),
-                              'name': job.get('name'),
-                              'status': job.get('status'),
-                              'conclusion': job.get('conclusion'),
-                              'started_at': job.get('started_at'),
-                              'completed_at': job.get('completed_at'),
-                          }
-                          for job in jobs.get('jobs', [])
-                      ],
-                  }
-          json.dump(latest, open('fallback-health-production-status.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)
-          print(json.dumps(latest, indent=2, sort_keys=True))
-          PY
+          gh run view "$RUN_ID" --repo "$REPOSITORY" --log-failed > pr453-failed.log
+          test -s pr453-failed.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: fallback-health-production-status
-          path: fallback-health-production-status.json
+          name: pr453-failed-log
+          path: pr453-failed.log
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
