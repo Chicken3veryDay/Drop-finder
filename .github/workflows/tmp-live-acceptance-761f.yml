@@ -1,0 +1,212 @@
+name: Temporary Live Acceptance 761f
+
+on:
+  pull_request:
+    branches: [verification/live-acceptance-761f]
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    name: ${{ matrix.profile }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: chromium-desktop
+            engine: chromium
+            device: ''
+          - profile: firefox-desktop
+            engine: firefox
+            device: ''
+          - profile: webkit-desktop
+            engine: webkit
+            device: ''
+          - profile: pixel-7
+            engine: chromium
+            device: Pixel 7
+          - profile: iphone-14
+            engine: webkit
+            device: iPhone 14
+    env:
+      PROFILE: ${{ matrix.profile }}
+      ENGINE: ${{ matrix.engine }}
+      DEVICE: ${{ matrix.device }}
+      PAGE_URL: https://chicken3veryday.github.io/Drop-finder/
+      EXPECTED_GENERATION: 761fa9cf20252f1943b47c8e2945f518
+      EXPECTED_PRODUCTS: '1806'
+      EXPECTED_V4_PRODUCTS: '443'
+      EXPECTED_VARIANTS: '941'
+      EXPECTED_SOURCES: '32'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fd291c6fc52e09a5c97aaa274cb536c1da98eb9f
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked browser dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+      - name: Install selected browser engine
+        working-directory: web
+        run: npx playwright install --with-deps "${ENGINE}"
+      - name: Verify fresh-profile live loading
+        working-directory: web
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > live-acceptance.mjs <<'JS'
+          import { chromium, firefox, webkit, devices } from '@playwright/test';
+          import { writeFile } from 'node:fs/promises';
+
+          const profile = process.env.PROFILE;
+          const engine = process.env.ENGINE;
+          const deviceName = process.env.DEVICE;
+          const pageUrl = process.env.PAGE_URL;
+          const expected = {
+            generation: process.env.EXPECTED_GENERATION,
+            products: Number(process.env.EXPECTED_PRODUCTS),
+            catalogV4Products: Number(process.env.EXPECTED_V4_PRODUCTS),
+            variants: Number(process.env.EXPECTED_VARIANTS),
+            sources: Number(process.env.EXPECTED_SOURCES),
+          };
+          const browserTypes = { chromium, firefox, webkit };
+          const browserType = browserTypes[engine];
+          if (!browserType) throw new Error(`Unsupported engine: ${engine}`);
+
+          const browser = await browserType.launch({ headless: true });
+          const contextOptions = {
+            ...(deviceName ? devices[deviceName] : { viewport: { width: 1440, height: 1000 } }),
+            serviceWorkers: 'allow',
+          };
+          const context = await browser.newContext(contextOptions);
+          const page = await context.newPage();
+          const pageErrors = [];
+          page.on('pageerror', (error) => pageErrors.push(String(error?.stack || error)));
+
+          try {
+            const response = await page.goto(`${pageUrl}?live_acceptance=${Date.now()}`, {
+              waitUntil: 'domcontentloaded',
+              timeout: 60_000,
+            });
+            if (!response || !response.ok()) {
+              throw new Error(`Initial navigation failed: ${response?.status()}`);
+            }
+            await page.waitForFunction(() => document.body?.innerText?.trim().length > 100, null, { timeout: 30_000 });
+            await page.evaluate(async () => {
+              if (!('serviceWorker' in navigator)) throw new Error('Service workers unavailable');
+              await navigator.serviceWorker.ready;
+            });
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
+            await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), null, { timeout: 30_000 });
+            await page.waitForTimeout(2_000);
+
+            const live = await page.evaluate(async () => {
+              const nonce = Date.now();
+              const fetchJson = async (path) => {
+                const response = await fetch(`${path}?acceptance=${nonce}`, { cache: 'no-store' });
+                if (!response.ok) throw new Error(`${path} returned ${response.status}`);
+                return response.json();
+              };
+              const [manifest, runtime, index] = await Promise.all([
+                fetchJson('data/catalog-v4/manifest.json'),
+                fetchJson('data/runtime.json'),
+                fetchJson('data/catalog-v4/index.json'),
+              ]);
+              const registration = await navigator.serviceWorker.ready;
+              return {
+                manifest,
+                runtime,
+                indexType: Array.isArray(index) ? 'array' : typeof index,
+                indexBytes: JSON.stringify(index).length,
+                controller: navigator.serviceWorker.controller?.scriptURL || '',
+                activeWorker: registration.active?.scriptURL || '',
+                bodyText: document.body.innerText,
+                interactiveElements: document.querySelectorAll('a,button,input,select,[role="button"],[role="listitem"],article').length,
+              };
+            });
+
+            const terminalPattern = /(unable to (?:load|activate)|generation[_ -]incomplete|catalog generation failed|terminal generation error)/i;
+            if (terminalPattern.test(live.bodyText)) throw new Error('Terminal catalog error text rendered');
+            if (live.manifest.generation_id !== expected.generation) throw new Error(`Manifest generation mismatch: ${live.manifest.generation_id}`);
+            if (Number(live.manifest.product_count) !== expected.catalogV4Products) throw new Error(`Catalog V4 product mismatch: ${live.manifest.product_count}`);
+            if (Number(live.manifest.in_stock_variant_count) !== expected.variants) throw new Error(`Variant mismatch: ${live.manifest.in_stock_variant_count}`);
+            if (Number(live.runtime.products) !== expected.products) throw new Error(`Runtime product mismatch: ${live.runtime.products}`);
+            if (Number(live.runtime.active_sources) !== expected.sources) throw new Error(`Active source mismatch: ${live.runtime.active_sources}`);
+            if (live.runtime.status !== 'healthy' || live.runtime.zero_degraded_active_services !== true) throw new Error('Runtime is not healthy and zero-degraded');
+            if (!live.controller.endsWith('/sw.js') || !live.activeWorker.endsWith('/sw.js')) throw new Error('Service worker did not control the fresh profile');
+            if (live.indexBytes < 10_000) throw new Error(`Catalog index unexpectedly small: ${live.indexBytes}`);
+            if (live.interactiveElements < 5) throw new Error(`Application did not render enough interactive content: ${live.interactiveElements}`);
+            if (pageErrors.length) throw new Error(`Uncaught page errors: ${pageErrors.join(' | ')}`);
+
+            const result = {
+              profile,
+              engine,
+              device: deviceName || 'desktop',
+              status: 'passed',
+              generationId: live.manifest.generation_id,
+              legacyProducts: live.runtime.products,
+              catalogV4Products: live.manifest.product_count,
+              variants: live.manifest.in_stock_variant_count,
+              activeSources: live.runtime.active_sources,
+              controller: live.controller,
+              activeWorker: live.activeWorker,
+              indexBytes: live.indexBytes,
+              interactiveElements: live.interactiveElements,
+              pageErrors,
+              checkedAt: new Date().toISOString(),
+            };
+            await writeFile(`live-acceptance-${profile}.json`, `${JSON.stringify(result, null, 2)}\n`);
+            console.log(JSON.stringify(result, null, 2));
+          } finally {
+            await context.close();
+            await browser.close();
+          }
+          JS
+          node live-acceptance.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-acceptance-${{ matrix.profile }}
+          path: web/live-acceptance-${{ matrix.profile }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    needs: acceptance
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: live-acceptance-*
+          path: evidence
+          merge-multiple: true
+      - name: Aggregate acceptance evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          rows = [json.loads(path.read_text()) for path in sorted(Path('evidence').glob('live-acceptance-*.json'))]
+          if len(rows) != 5 or any(row.get('status') != 'passed' for row in rows):
+              raise SystemExit('five-profile acceptance evidence is incomplete')
+          result = {
+              'schema_version': 'dropfinder-live-acceptance-v1',
+              'generation_id': '761fa9cf20252f1943b47c8e2945f518',
+              'profile_count': len(rows),
+              'status': 'passed',
+              'profiles': rows,
+          }
+          Path('live-scraper-recovery-acceptance.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(result, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-scraper-recovery-acceptance
+          path: live-scraper-recovery-acceptance.json
+          if-no-files-found: error
+          retention-days: 90
