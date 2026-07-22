@@ -80,11 +80,14 @@ def apply_registry(worker: Any, payload: dict[str, Any]) -> tuple[str, ...]:
 
     worker.PRODUCT_PATHS = tuple(product_paths)
     # The registry documents vendors; route_repair owns current canonical paths
-    # and first-party product-detail extraction fallbacks.
+    # and first-party product-detail extraction fallbacks. source_recovery adds
+    # audited current paths and defers final parser hooks until runtime composition.
     try:
         from route_repair import apply_route_repairs, install as install_route_repairs
+        from source_recovery import install as install_source_recovery
     except ImportError:
         from scripts.route_repair import apply_route_repairs, install as install_route_repairs
+        from scripts.source_recovery import install as install_source_recovery
 
     parser_capabilities = (
         hasattr(worker, "run")
@@ -94,6 +97,7 @@ def apply_registry(worker: Any, payload: dict[str, Any]) -> tuple[str, ...]:
     )
     if parser_capabilities:
         install_route_repairs(worker)
+        install_source_recovery(worker)
     else:
         apply_route_repairs(worker)
     return tuple(installed)
