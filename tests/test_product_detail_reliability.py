@@ -76,6 +76,93 @@ class ProductDetailReliabilityTests(unittest.TestCase):
             200,
         )
 
+    def authoritative_product(self, variant: str) -> dict:
+        return {
+            "id": f"structured-{variant}",
+            "source_product_id": "structured-parent",
+            "source_variant_id": variant,
+            "source_id": "fixture",
+            "vendor": "Fixture Vendor",
+            "name": "Structured THCA Flower",
+            "url": f"https://example.test/products/structured?variant={variant}",
+            "price": 35.0,
+            "variant": "3.5g",
+            "primary_type": "cannabis_flower",
+            "type_tags": ["cannabis_flower"],
+            "source_type": "shopify",
+            "classification_evidence": {
+                "evidence_source": "storefront_record",
+                "primary_type": "cannabis_flower",
+                "type_tags": ["cannabis_flower"],
+            },
+        }
+
+    def metadata_detail(self) -> tuple[str, str, int]:
+        return (
+            """
+            <script type="application/ld+json">
+            {
+              "@type": "Product",
+              "name": "Structured THCA Flower",
+              "description": "Sativa hybrid flower with 26.4% THCA in 3.5g jars.",
+              "url": "https://example.test/products/structured",
+              "aggregateRating": {"ratingValue": "4.8", "reviewCount": "73"},
+              "offers": {"@type": "Offer", "price": "35", "availability": "https://schema.org/InStock"}
+            }
+            </script>
+            """,
+            "text/html",
+            200,
+        )
+
+    def test_structured_variants_share_one_bounded_detail_enrichment(self) -> None:
+        calls: list[str] = []
+
+        def fetch(target: str):
+            calls.append(target)
+            return self.metadata_detail()
+
+        self.worker.core.fetch = fetch
+        rows, diagnostics = detail_reliability.verify_products_with_diagnostics(
+            self.worker,
+            self.reliability,
+            [self.authoritative_product("one"), self.authoritative_product("two")],
+            "fixture",
+            "Fixture Vendor",
+        )
+
+        self.assertEqual(calls, ["https://example.test/products/structured"])
+        self.assertEqual(len(rows), 2)
+        for row in rows:
+            self.assertEqual(row["thca"], 26.4)
+            self.assertEqual(row["rating"], 4.8)
+            self.assertEqual(row["review_count"], 73)
+            self.assertIn("Sativa hybrid", row["description"])
+        enrichment = diagnostics["metadata_enrichment"]
+        self.assertEqual(enrichment["eligible_targets"], 1)
+        self.assertEqual(enrichment["attempted_targets"], 1)
+        self.assertEqual(enrichment["enriched_targets"], 1)
+        self.assertEqual(enrichment["enriched_products"], 2)
+        self.assertEqual(enrichment["failures"], [])
+
+    def test_structured_detail_failure_is_diagnostic_and_preserves_rows(self) -> None:
+        self.worker.core.fetch = lambda _target: (_ for _ in ()).throw(TimeoutError("detail unavailable"))
+        source = [self.authoritative_product("one"), self.authoritative_product("two")]
+        rows, diagnostics = detail_reliability.verify_products_with_diagnostics(
+            self.worker,
+            self.reliability,
+            source,
+            "fixture",
+            "Fixture Vendor",
+        )
+
+        self.assertEqual({row["id"] for row in rows}, {"structured-one", "structured-two"})
+        self.assertEqual(diagnostics["verification_failures"], [])
+        enrichment = diagnostics["metadata_enrichment"]
+        self.assertEqual(len(enrichment["failures"]), 1)
+        self.assertEqual(enrichment["failures"][0]["reason"], "metadata_product_detail_fetch_error")
+        self.assertEqual(enrichment["failures"][0]["attempts"], 3)
+
     def test_retryable_timeout_recovers_once_and_preserves_both_products(self) -> None:
         calls = 0
 
