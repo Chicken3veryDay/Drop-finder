@@ -1,0 +1,60 @@
+name: Temporary Route Repair Publish Monitor
+
+on:
+  pull_request:
+    branches:
+      - verification/route-repair-publish
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    if: github.head_ref == 'trigger/route-repair-publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact production workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: 71c5b7e277fa24c161af887d5c7e98bd6855931e
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 2400))
+          while (( SECONDS < deadline )); do
+            payload="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SOURCE_SHA}&event=push&per_page=100")"
+            cloud="$(jq -c '[.workflow_runs[] | select(.name == "DropFinder Autonomous Cloud")] | sort_by(.created_at) | last // null' <<<"$payload")"
+            ci="$(jq -c '[.workflow_runs[] | select(.name == "DropFinder Cloud CI")] | sort_by(.created_at) | last // null' <<<"$payload")"
+            cloud_status="$(jq -r '.status // "missing"' <<<"$cloud")"
+            cloud_conclusion="$(jq -r '.conclusion // ""' <<<"$cloud")"
+            ci_status="$(jq -r '.status // "missing"' <<<"$ci")"
+            ci_conclusion="$(jq -r '.conclusion // ""' <<<"$ci")"
+            printf 'cloud=%s/%s ci=%s/%s\n' "$cloud_status" "$cloud_conclusion" "$ci_status" "$ci_conclusion"
+            if [[ "$cloud_status" == completed && "$cloud_conclusion" != success ]]; then
+              jq -n --arg source "$SOURCE_SHA" --argjson cloud "$cloud" --argjson ci "$ci" '{source_commit:$source,autonomous_cloud:$cloud,cloud_ci:$ci}' > route-repair-publish-monitor.json
+              cat route-repair-publish-monitor.json
+              exit 1
+            fi
+            if [[ "$ci_status" == completed && "$ci_conclusion" != success ]]; then
+              jq -n --arg source "$SOURCE_SHA" --argjson cloud "$cloud" --argjson ci "$ci" '{source_commit:$source,autonomous_cloud:$cloud,cloud_ci:$ci}' > route-repair-publish-monitor.json
+              cat route-repair-publish-monitor.json
+              exit 1
+            fi
+            if [[ "$cloud_status" == completed && "$cloud_conclusion" == success && "$ci_status" == completed && "$ci_conclusion" == success ]]; then
+              jq -n --arg source "$SOURCE_SHA" --argjson cloud "$cloud" --argjson ci "$ci" '{source_commit:$source,autonomous_cloud:$cloud,cloud_ci:$ci}' > route-repair-publish-monitor.json
+              cat route-repair-publish-monitor.json
+              exit 0
+            fi
+            sleep 15
+          done
+          echo 'Timed out waiting for exact production workflows' >&2
+          exit 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: route-repair-publish-monitor
+          path: route-repair-publish-monitor.json
+          if-no-files-found: warn
+          retention-days: 30
