@@ -1,4 +1,4 @@
-name: Temporary Balanced Recovery Publish Monitor
+name: Temporary Fallback Health Publish Monitor
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          TARGET_SHA: e4f9265c6fc74ea26ea132a8c1caa25b112ef73d
+          TARGET_SHA: c88556786bd6ebc76a11fbedbc931e5945139eef
         shell: bash
         run: |
           set -euo pipefail
@@ -45,7 +45,7 @@ jobs:
               }
               for name, run in sorted(latest.items())
           }
-          json.dump(payload, open('balanced-recovery-publish-monitor.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)
+          json.dump(payload, open('fallback-health-publish-monitor.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)
           print(json.dumps(payload, sort_keys=True))
           if set(payload) != wanted or any(item['status'] != 'completed' for item in payload.values()):
               sys.exit(2)
@@ -68,7 +68,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: balanced-recovery-publish-monitor
-          path: balanced-recovery-publish-monitor.json
+          name: fallback-health-publish-monitor
+          path: fallback-health-publish-monitor.json
           if-no-files-found: warn
           retention-days: 30
