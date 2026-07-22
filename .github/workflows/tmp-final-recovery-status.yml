@@ -1,63 +1,113 @@
-name: Temporary Final Recovery Status
+name: Temporary Remaining Source Route Probe
 
 on:
   pull_request:
     branches: [verification/balanced-recovery-publish]
 
 permissions:
-  actions: read
   contents: read
 
 jobs:
-  snapshot:
+  probe:
     if: github.head_ref == 'trigger/balanced-recovery-publish'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Snapshot exact source workflows
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          TARGET_SHA: e4f9265c6fc74ea26ea132a8c1caa25b112ef73d
+      - name: Probe first-party public routes
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=push&per_page=100" > runs.json
           python - <<'PY'
-          import json, os, subprocess
-          data = json.load(open('runs.json', encoding='utf-8'))
-          wanted = {'DropFinder Cloud CI', 'DropFinder Autonomous Cloud'}
-          latest = {}
-          for run in data.get('workflow_runs', []):
-              name = run.get('name')
-              if name in wanted and name not in latest:
-                  jobs = json.loads(subprocess.check_output([
-                      'gh', 'api', f"repos/{os.environ['REPOSITORY']}/actions/runs/{run['id']}/jobs?per_page=100"
-                  ]))
-                  latest[name] = {
-                      'id': run.get('id'),
-                      'status': run.get('status'),
-                      'conclusion': run.get('conclusion'),
-                      'created_at': run.get('created_at'),
-                      'updated_at': run.get('updated_at'),
-                      'jobs': [
-                          {
-                              'id': job.get('id'),
-                              'name': job.get('name'),
-                              'status': job.get('status'),
-                              'conclusion': job.get('conclusion'),
-                              'started_at': job.get('started_at'),
-                              'completed_at': job.get('completed_at'),
-                          }
-                          for job in jobs.get('jobs', [])
-                      ],
-                  }
-          json.dump(latest, open('final-recovery-status.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)
-          print(json.dumps(latest, indent=2, sort_keys=True))
+          import hashlib
+          import json
+          import re
+          import urllib.error
+          import urllib.request
+
+          user_agent = 'DropFinderCloud/9.0 (+https://github.com/Chicken3veryDay/Drop-finder)'
+          urls = [
+              'https://arete.shop/',
+              'https://arete.shop/l/national/products',
+              'https://arete.shop/l/national/products/category/thca-flower',
+              'https://arete.shop/l/national/products/category/flower?orderby=menu_order',
+              'https://arete.shop/l/national/products/tag/thca',
+              'https://arete.shop/sitemap',
+              'https://arete.shop/sitemap.xml',
+              'https://arete.shop/sitemap_index.xml',
+              'https://arete.shop/robots.txt',
+              'https://fiveleafwellness.com/shop/',
+              'https://fiveleafwellness.com/product-category/new-releases/',
+              'https://fiveleafwellness.com/product-category/top-shelf/',
+              'https://fiveleafwellness.com/product-category/mid-tier/',
+              'https://fiveleafwellness.com/wp-json/wc/store/v1/products?per_page=100&search=flower',
+              'https://fiveleafwellness.com/wp-json/wc/store/v1/products?per_page=100',
+              'https://fiveleafwellness.com/wp-json/wc/store/v1/products/categories?per_page=100',
+              'https://fiveleafwellness.com/product-sitemap.xml',
+              'https://fiveleafwellness.com/sitemap_index.xml',
+              'https://fiveleafwellness.com/wp-sitemap-posts-product-1.xml',
+              'https://fiveleafwellness.com/robots.txt',
+          ]
+          output = []
+          for url in urls:
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      'User-Agent': user_agent,
+                      'Accept': 'application/json,text/html,application/xml;q=.8,text/plain;q=.7,*/*;q=.1',
+                      'Accept-Encoding': 'identity',
+                  },
+              )
+              status = None
+              content_type = ''
+              final_url = url
+              error = ''
+              body = b''
+              try:
+                  with urllib.request.urlopen(request, timeout=18) as response:
+                      status = int(getattr(response, 'status', 200))
+                      content_type = str(response.headers.get('Content-Type') or '').split(';')[0].lower()
+                      final_url = response.geturl()
+                      body = response.read(8_000_001)
+              except urllib.error.HTTPError as exc:
+                  status = exc.code
+                  content_type = str(exc.headers.get('Content-Type') or '').split(';')[0].lower()
+                  final_url = exc.geturl()
+                  body = exc.read(200_000)
+                  error = f'HTTP {exc.code}'
+              except Exception as exc:
+                  error = f'{type(exc).__name__}: {str(exc)[:240]}'
+              text = body.decode('utf-8', 'replace')
+              json_kind = ''
+              json_count = None
+              if body and ('json' in content_type or text.lstrip().startswith(('[', '{'))):
+                  try:
+                      parsed = json.loads(text)
+                      json_kind = type(parsed).__name__
+                      json_count = len(parsed) if isinstance(parsed, (list, dict)) else None
+                  except Exception:
+                      json_kind = 'invalid'
+              output.append({
+                  'url': url,
+                  'final_url': final_url,
+                  'status': status,
+                  'content_type': content_type,
+                  'bytes': len(body),
+                  'sha256': hashlib.sha256(body).hexdigest() if body else '',
+                  'error': error,
+                  'json_kind': json_kind,
+                  'json_count': json_count,
+                  'product_link_count': len(re.findall(r'href=["\'][^"\']*(?:/product/|/l/national/product/)', text, re.I)),
+                  'thca_mentions': len(re.findall(r'\bthc-?a\b', text, re.I)),
+                  'out_of_stock_mentions': len(re.findall(r'out\s+of\s+stock|currently\s+out\s+of\s+stock', text, re.I)),
+                  'body_prefix': re.sub(r'\s+', ' ', text[:500]).strip(),
+              })
+          with open('remaining-source-route-probe.json', 'w', encoding='utf-8') as handle:
+              json.dump(output, handle, indent=2, sort_keys=True)
+          print(json.dumps(output, indent=2, sort_keys=True))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: final-recovery-status
-          path: final-recovery-status.json
+          name: remaining-source-route-probe
+          path: remaining-source-route-probe.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
