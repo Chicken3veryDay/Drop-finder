@@ -1,0 +1,30 @@
+name: Temporary Source Snapshot
+
+on:
+  pull_request:
+    branches: [verification/balanced-recovery-publish]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.head_ref == 'trigger/balanced-recovery-publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: e4f9265c6fc74ea26ea132a8c1caa25b112ef73d
+          persist-credentials: false
+      - name: Package exact diagnostic source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf source-snapshot.tar.gz scripts tests .github/workflows
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: exact-source-snapshot
+          path: source-snapshot.tar.gz
+          if-no-files-found: error
+          retention-days: 1
