@@ -1,0 +1,85 @@
+name: Temporary Cache Convergence Monitor
+
+on:
+  pull_request:
+    branches: [verification/cache-convergence-monitor]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    if: github.head_ref == 'trigger/cache-convergence-monitor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact production workflows and snapshot jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: 08fe39226d9d077987e067bdf875baa73c97f28c
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 120); do
+            gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=push&per_page=100" > runs.json
+            set +e
+            python - <<'PY'
+          import json, os, subprocess, sys
+          data = json.load(open('runs.json', encoding='utf-8'))
+          wanted = {'DropFinder Cloud CI', 'DropFinder Autonomous Cloud'}
+          latest = {}
+          for run in data.get('workflow_runs', []):
+              name = run.get('name')
+              if name in wanted and name not in latest:
+                  jobs = json.loads(subprocess.check_output([
+                      'gh', 'api', f"repos/{os.environ['REPOSITORY']}/actions/runs/{run['id']}/jobs?per_page=100"
+                  ]))
+                  latest[name] = {
+                      'id': run.get('id'),
+                      'status': run.get('status'),
+                      'conclusion': run.get('conclusion'),
+                      'head_sha': run.get('head_sha'),
+                      'event': run.get('event'),
+                      'created_at': run.get('created_at'),
+                      'updated_at': run.get('updated_at'),
+                      'jobs': [
+                          {
+                              'id': job.get('id'),
+                              'name': job.get('name'),
+                              'status': job.get('status'),
+                              'conclusion': job.get('conclusion'),
+                              'started_at': job.get('started_at'),
+                              'completed_at': job.get('completed_at'),
+                          }
+                          for job in jobs.get('jobs', [])
+                      ],
+                  }
+          json.dump(latest, open('cache-convergence-monitor.json', 'w', encoding='utf-8'), indent=2, sort_keys=True)
+          print(json.dumps(latest, indent=2, sort_keys=True))
+          if set(latest) != wanted or any(item['status'] != 'completed' for item in latest.values()):
+              sys.exit(2)
+          if any(item['conclusion'] != 'success' for item in latest.values()):
+              sys.exit(1)
+          PY
+            code=$?
+            set -e
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$code" -eq 1 ]; then
+              echo 'Exact-source production workflow failed.' >&2
+              exit 1
+            fi
+            sleep 20
+          done
+          echo 'Timed out waiting for exact-source production workflows.' >&2
+          exit 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: cache-convergence-monitor
+          path: cache-convergence-monitor.json
+          if-no-files-found: warn
+          retention-days: 30
