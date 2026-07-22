@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
-const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
+const DEFAULT_MAX_BYTES = 12 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const normalizeBaseUrl = (value) => {

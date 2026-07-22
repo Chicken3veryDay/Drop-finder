@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import time
-from collections import Counter
+import urllib.parse
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 PRODUCT_DETAIL_RETRY_DELAYS = (0.0, 1.0, 3.0)
 RETRYABLE_HTTP = {202, 408, 425, 429, 500, 502, 503, 504}
+MAX_METADATA_DETAIL_TARGETS_PER_SOURCE = 120
 _FAILURE_RECORD_LIMIT = 24
 _OUTCOME_KEY = "_product_detail_verification_outcome"
 
@@ -101,6 +103,213 @@ def _fetch_detail(worker: Any, target: str) -> dict[str, Any]:
     }
 
 
+
+def _metadata_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().casefold() not in {"", "unknown", "unavailable", "n/a", "none", "-", "—"}
+    return bool(value) if isinstance(value, (list, tuple, set, dict)) else True
+
+
+def _metadata_detail_target(value: Any) -> str:
+    target = _bounded_text(value, 1000)
+    if not target:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(target)
+    except ValueError:
+        return target
+    if not parsed.scheme or not parsed.netloc:
+        return target
+    path = parsed.path or "/"
+    if any(marker in path.casefold() for marker in ("/product/", "/products/", "/shop/")):
+        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
+
+
+def _metadata_missing_score(product: dict[str, Any]) -> int:
+    score = 0
+    if not _metadata_present(product.get("description")):
+        score += 1
+    if not any(_metadata_present(product.get(field)) for field in ("thca", "thca_percent", "delta9_thc", "direct_total_thc", "total_thc")):
+        score += 2
+    if not (_metadata_present(product.get("rating")) and _metadata_present(product.get("review_count"))):
+        score += 2
+    return score
+
+
+def _same_product_target(left: Any, right: Any) -> bool:
+    return _metadata_detail_target(left).rstrip("/").casefold() == _metadata_detail_target(right).rstrip("/").casefold()
+
+
+def _detail_row_score(product: dict[str, Any], detail: dict[str, Any]) -> tuple[int, int, int, int]:
+    rating_pair = int(_metadata_present(detail.get("rating")) and _metadata_present(detail.get("review_count")))
+    potency = int(any(_metadata_present(detail.get(field)) for field in ("thca", "thca_percent", "delta9_thc", "direct_total_thc", "total_thc")))
+    description = int(_metadata_present(detail.get("description")))
+    target_match = int(_same_product_target(product.get("url"), detail.get("url")))
+    return target_match, rating_pair, potency, description
+
+
+def _select_detail_row(worker: Any, product: dict[str, Any], payload: str, target: str) -> dict[str, Any] | None:
+    source_id = _bounded_text(product.get("source_id"), 160)
+    vendor = _bounded_text(product.get("vendor"), 200)
+    route = ("html", target, "product_detail_enrichment")
+    parser = getattr(worker.core, "html_detail", None)
+    if not callable(parser):
+        return None
+    try:
+        rows = parser(payload, source_id, vendor, route, target)
+    except Exception:
+        return None
+    candidates = [row for row in rows or [] if isinstance(row, dict)]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda row: _detail_row_score(product, row))
+
+
+def _merge_detail_metadata(product: dict[str, Any], detail: dict[str, Any], target: str) -> tuple[dict[str, Any], int]:
+    merged = dict(product)
+    changed = 0
+    for field in ("description", "thca", "thca_percent", "delta9_thc", "direct_total_thc", "total_thc"):
+        if not _metadata_present(merged.get(field)) and _metadata_present(detail.get(field)):
+            merged[field] = detail[field]
+            merged[f"{field}_source_path"] = target
+            merged[f"{field}_confidence"] = "source_exposed_product_detail"
+            changed += 1
+    if not (_metadata_present(merged.get("rating")) and _metadata_present(merged.get("review_count"))):
+        if _metadata_present(detail.get("rating")) and _metadata_present(detail.get("review_count")):
+            merged["rating"] = detail["rating"]
+            merged["review_count"] = detail["review_count"]
+            merged["rating_source_path"] = target
+            merged["review_count_source_path"] = target
+            merged["rating_confidence"] = "source_exposed_product_detail"
+            merged["review_count_confidence"] = "source_exposed_product_detail"
+            changed += 2
+    if not _metadata_present(merged.get("image")) and _metadata_present(detail.get("image")):
+        merged["image"] = detail["image"]
+        changed += 1
+    return merged, changed
+
+
+def _enrich_authoritative_group(
+    worker: Any,
+    products: list[dict[str, Any]],
+    target: str,
+) -> dict[str, Any]:
+    fetched = _fetch_detail(worker, target)
+    if fetched["kind"] == "failure":
+        return {
+            "kind": "failure",
+            "products": products,
+            "target": target,
+            "attempts": fetched["attempts"],
+            "retryable": fetched["retryable"],
+            "record": _record(products[0], f"metadata_{fetched['reason']}", fetched["attempts"], fetched["retryable"]),
+        }
+    detail = _select_detail_row(worker, products[0], fetched["payload"], target)
+    if detail is None:
+        return {
+            "kind": "empty",
+            "products": products,
+            "target": target,
+            "attempts": fetched["attempts"],
+            "record": _record(products[0], "metadata_detail_unavailable", fetched["attempts"], False),
+        }
+    enriched: list[dict[str, Any]] = []
+    changed_fields = 0
+    changed_products = 0
+    for product in products:
+        merged, changed = _merge_detail_metadata(product, detail, target)
+        enriched.append(merged)
+        changed_fields += changed
+        changed_products += int(changed > 0)
+    return {
+        "kind": "enriched" if changed_fields else "unchanged",
+        "products": enriched,
+        "target": target,
+        "attempts": fetched["attempts"],
+        "changed_fields": changed_fields,
+        "changed_products": changed_products,
+    }
+
+
+def _enrich_authoritative_products(
+    worker: Any,
+    reliability: Any,
+    products: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    passthrough: list[dict[str, Any]] = []
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for product in products:
+        if not reliability._authoritative_structured_product(product) or _metadata_missing_score(product) == 0:
+            passthrough.append(product)
+            continue
+        target = _metadata_detail_target(product.get("url"))
+        if not target:
+            passthrough.append(product)
+            continue
+        grouped[target].append(product)
+
+    ordered = sorted(
+        grouped.items(),
+        key=lambda item: (-max(_metadata_missing_score(product) for product in item[1]), item[0]),
+    )
+    selected = ordered[:MAX_METADATA_DETAIL_TARGETS_PER_SOURCE]
+    skipped = ordered[MAX_METADATA_DETAIL_TARGETS_PER_SOURCE:]
+    for _, group in skipped:
+        passthrough.extend(group)
+
+    outcomes: list[dict[str, Any]] = []
+    if selected:
+        with ThreadPoolExecutor(max_workers=min(8, len(selected))) as pool:
+            futures = {
+                pool.submit(_enrich_authoritative_group, worker, group, target): (target, group)
+                for target, group in selected
+            }
+            for future in as_completed(futures):
+                target, group = futures[future]
+                try:
+                    outcomes.append(future.result())
+                except Exception as error:
+                    retryable = _exception_retryable(worker, error)
+                    outcomes.append({
+                        "kind": "failure",
+                        "products": group,
+                        "target": target,
+                        "attempts": 1,
+                        "retryable": retryable,
+                        "record": _record(group[0], "metadata_detail_worker_error", 1, retryable),
+                    })
+
+    failures: list[dict[str, Any]] = []
+    empty: list[dict[str, Any]] = []
+    changed_fields = 0
+    changed_products = 0
+    enriched_targets = 0
+    for outcome in outcomes:
+        passthrough.extend(outcome.get("products") or [])
+        changed_fields += int(outcome.get("changed_fields") or 0)
+        changed_products += int(outcome.get("changed_products") or 0)
+        enriched_targets += int(outcome.get("kind") == "enriched")
+        if outcome.get("kind") == "failure" and outcome.get("record"):
+            failures.append(outcome["record"])
+        if outcome.get("kind") == "empty" and outcome.get("record"):
+            empty.append(outcome["record"])
+
+    return worker.core.dedupe(passthrough), {
+        "eligible_targets": len(ordered),
+        "attempted_targets": len(selected),
+        "enriched_targets": enriched_targets,
+        "enriched_products": changed_products,
+        "changed_fields": changed_fields,
+        "skipped_targets": len(skipped),
+        "failures": failures[:_FAILURE_RECORD_LIMIT],
+        "empty_results": empty[:_FAILURE_RECORD_LIMIT],
+        "retry_attempts": sum(max(0, int(outcome.get("attempts") or 0) - 1) for outcome in outcomes),
+    }
+
+
 def _verify_product(worker: Any, reliability: Any, product: dict[str, Any]) -> dict[str, Any]:
     if reliability._authoritative_structured_product(product):
         return {"kind": "verified", "product": product, "attempts": 0}
@@ -161,12 +370,17 @@ def verify_products_with_diagnostics(
     verified = [outcome["product"] for outcome in outcomes if outcome.get("kind") == "verified"]
     failures = [outcome["record"] for outcome in outcomes if outcome.get("kind") == "failure"]
     rejections = [outcome["record"] for outcome in outcomes if outcome.get("kind") == "rejection"]
-    return worker.core.dedupe(verified), {
+    enriched, enrichment = _enrich_authoritative_products(worker, reliability, verified)
+    return enriched, {
         "discovered_products": len(discovered),
-        "verified_products": len(verified),
+        "verified_products": len(enriched),
         "verification_failures": failures[:_FAILURE_RECORD_LIMIT],
         "verification_rejections": rejections[:_FAILURE_RECORD_LIMIT],
-        "retry_attempts": sum(max(0, int(outcome.get("attempts") or 0) - 1) for outcome in outcomes),
+        "retry_attempts": (
+            sum(max(0, int(outcome.get("attempts") or 0) - 1) for outcome in outcomes)
+            + int(enrichment.get("retry_attempts") or 0)
+        ),
+        "metadata_enrichment": enrichment,
     }
 
 
@@ -325,6 +539,7 @@ def _diagnostic_scan_source(worker: Any, reliability: Any, source: tuple) -> tup
         "verification_rejections": len(primary_rejections),
         "verification_rejection_reasons": _reason_counts(primary_rejections),
         "retry_attempts": diagnostics["retry_attempts"],
+        "metadata_enrichment": diagnostics.get("metadata_enrichment") or {},
     }
     fallback_results: list[dict[str, Any]] = []
     if source_id in worker.FALLBACK_HTML_ROUTES:
