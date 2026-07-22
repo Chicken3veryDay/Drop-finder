@@ -1,0 +1,173 @@
+name: Temporary Metadata Completeness Audit
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    if: github.head_ref == 'fix/metadata-completeness'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Audit catalog metadata and source paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p metadata-audit
+          find . -maxdepth 3 -type f | sort > metadata-audit/repository-files.txt
+          rg -n -i --glob '!data/**' --glob '!node_modules/**' --glob '!.git/**' \
+            'lineage|total[_ -]?thc|rating|review[_ -]?count|potency|thca|delta.?9|coa|certificate' \
+            . > metadata-audit/field-paths.txt || true
+          rg -l -i --glob '!data/**' --glob '!node_modules/**' --glob '!.git/**' \
+            'lineage|total[_ -]?thc|rating|review[_ -]?count|potency|thca|delta.?9|coa|certificate' \
+            . | sort > metadata-audit/candidate-files.txt || true
+          python - <<'PY'
+          import json
+          import math
+          import pathlib
+          import re
+          from collections import Counter, defaultdict
+
+          root = pathlib.Path('.')
+          audit = pathlib.Path('metadata-audit')
+          index_path = root / 'data/catalog-v4/index.json'
+          if not index_path.exists():
+              raise SystemExit('missing data/catalog-v4/index.json')
+
+          index_payload = json.loads(index_path.read_text(encoding='utf-8'))
+          if isinstance(index_payload, list):
+              index_products = index_payload
+          elif isinstance(index_payload, dict):
+              for key in ('products', 'items', 'records'):
+                  if isinstance(index_payload.get(key), list):
+                      index_products = index_payload[key]
+                      break
+              else:
+                  index_products = []
+          else:
+              index_products = []
+
+          detail_products = []
+          detail_files = sorted((root / 'data/catalog-v4/details').glob('*.json'))
+          for path in detail_files:
+              payload = json.loads(path.read_text(encoding='utf-8'))
+              if isinstance(payload, list):
+                  rows = payload
+              elif isinstance(payload, dict):
+                  rows = next((payload[k] for k in ('products', 'items', 'records') if isinstance(payload.get(k), list)), [])
+              else:
+                  rows = []
+              detail_products.extend(row for row in rows if isinstance(row, dict))
+
+          products = detail_products or index_products
+          if not products:
+              raise SystemExit('catalog-v4 contained no products')
+
+          def get_path(obj, path):
+              cur = obj
+              for key in path.split('.'):
+                  if not isinstance(cur, dict) or key not in cur:
+                      return None
+                  cur = cur[key]
+              return cur
+
+          def present(value):
+              if value is None:
+                  return False
+              if isinstance(value, str):
+                  return bool(value.strip()) and value.strip().lower() not in {'unknown', 'unavailable', 'n/a', 'na', 'none', '-'}
+              if isinstance(value, (list, tuple, set, dict)):
+                  return bool(value)
+              if isinstance(value, float) and math.isnan(value):
+                  return False
+              return True
+
+          candidate_paths = {
+              'lineage': ['lineage', 'strain.lineage', 'metadata.lineage', 'genetics.lineage', 'classification.lineage'],
+              'thca': ['potency.thca', 'potency.thca_percent', 'thca', 'thca_percent', 'cannabinoids.thca'],
+              'delta9_thc': ['potency.delta9_thc', 'potency.delta9_thc_percent', 'delta9_thc', 'delta9_thc_percent', 'cannabinoids.delta9_thc'],
+              'total_thc': ['potency.total_thc', 'potency.total_thc_percent', 'total_thc', 'total_thc_percent', 'cannabinoids.total_thc'],
+              'rating': ['rating', 'reviews.rating', 'review_summary.rating', 'aggregate_rating.value', 'aggregateRating.ratingValue'],
+              'review_count': ['review_count', 'reviews.count', 'review_summary.count', 'aggregate_rating.count', 'aggregateRating.reviewCount'],
+              'images': ['images', 'image_urls', 'media.images'],
+              'documents': ['documents', 'coa_documents', 'lab_documents', 'compliance.documents'],
+          }
+
+          def first_value(product, paths):
+              for path in paths:
+                  value = get_path(product, path)
+                  if present(value):
+                      return path, value
+              return None, None
+
+          counts = {}
+          resolved_paths = defaultdict(Counter)
+          missing_examples = defaultdict(list)
+          for field, paths in candidate_paths.items():
+              populated = 0
+              for product in products:
+                  path, value = first_value(product, paths)
+                  if path:
+                      populated += 1
+                      resolved_paths[field][path] += 1
+                  elif len(missing_examples[field]) < 12:
+                      missing_examples[field].append({
+                          'vendor': product.get('vendor_name') or product.get('vendor') or product.get('source_name'),
+                          'name': product.get('name') or product.get('title') or product.get('strain_name'),
+                          'id': product.get('id') or product.get('product_id'),
+                      })
+              counts[field] = {
+                  'populated': populated,
+                  'missing': len(products) - populated,
+                  'coverage': round(populated / len(products), 6),
+              }
+
+          top_keys = Counter()
+          nested_keys = Counter()
+          for product in products:
+              top_keys.update(product.keys())
+              for key, value in product.items():
+                  if isinstance(value, dict):
+                      nested_keys.update(f'{key}.{child}' for child in value.keys())
+
+          target_terms = ('plain jane', 'gold canna', 'bay smokes', 'green unicorn')
+          samples = []
+          for product in products:
+              vendor = str(product.get('vendor_name') or product.get('vendor') or product.get('source_name') or '').lower()
+              if any(term in vendor for term in target_terms):
+                  samples.append(product)
+              if len(samples) >= 24:
+                  break
+
+          summary = {
+              'schema_version': 'dropfinder-metadata-completeness-audit-v1',
+              'product_count': len(products),
+              'index_product_count': len(index_products),
+              'detail_product_count': len(detail_products),
+              'detail_file_count': len(detail_files),
+              'coverage': counts,
+              'resolved_paths': {field: dict(counter) for field, counter in resolved_paths.items()},
+              'missing_examples': dict(missing_examples),
+              'top_level_keys': dict(top_keys.most_common()),
+              'nested_keys': dict(nested_keys.most_common()),
+          }
+          (audit / 'summary.json').write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          (audit / 'sample-products.json').write_text(json.dumps(samples, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps(summary['coverage'], indent=2, sort_keys=True))
+          PY
+          if [ -s metadata-audit/candidate-files.txt ]; then
+            tar -czf metadata-audit/candidate-source-files.tar.gz -T metadata-audit/candidate-files.txt
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: metadata-completeness-audit
+          path: metadata-audit
+          if-no-files-found: error
+          retention-days: 30
