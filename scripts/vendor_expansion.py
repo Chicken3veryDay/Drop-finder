@@ -9,6 +9,70 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = ROOT / "data" / "vendor_expansion.json"
 SUPPORTED_ROUTE_TYPES = frozenset({"shopify", "woo", "html"})
 MINIMUM_EXPANSION_VENDORS = 20
+PRODUCTION_SHARD_COUNT = 6
+
+# Relative live-CI costs observed from repeated bounded production scans. The
+# values are only scheduling hints. They never change source routes, parsers,
+# evidence gates, or publication semantics.
+SOURCE_COST_HINTS = {
+    "hello_mary": 180,
+    "cali_canna": 160,
+    "five_leaf_wellness": 130,
+    "bay_smokes": 110,
+    "dr_ganja": 90,
+    "exhale_wellness": 80,
+    "wnc_cbd": 80,
+    "eight_horses_hemp": 70,
+    "green_unicorn_farms": 70,
+    "holy_city_farms": 60,
+    "hemp_hop": 60,
+    "veteran_grown_hemp": 50,
+}
+
+
+def _source_cost(worker: Any, source: tuple[Any, Any, Any]) -> int:
+    source_id, _vendor, routes = source
+    route_count = len(routes) if isinstance(routes, (list, tuple)) else 0
+    fallback_count = len(worker.FALLBACK_HTML_ROUTES.get(str(source_id), []))
+    return SOURCE_COST_HINTS.get(str(source_id), 10 + route_count * 8 + fallback_count * 5)
+
+
+def balance_sources(worker: Any, shard_count: int = PRODUCTION_SHARD_COUNT) -> tuple[tuple[str, ...], ...]:
+    """Reorder sources so index-modulo sharding spreads expensive storefronts.
+
+    The worker's stable shard contract selects ``index % shard_count``. This
+    builds capacity-bounded greedy bins, then interleaves those bins so each
+    modulo partition receives one source per row. Every source appears exactly
+    once and source identity remains unchanged.
+    """
+    sources = list(worker.core.SOURCES)
+    if shard_count < 1:
+        raise ValueError("shard_count must be positive")
+    if len(sources) < 2:
+        return tuple((str(source[0]),) for source in sources)
+
+    quotient, remainder = divmod(len(sources), shard_count)
+    capacities = [quotient + (1 if index < remainder else 0) for index in range(shard_count)]
+    bins: list[list[tuple[Any, Any, Any]]] = [[] for _ in range(shard_count)]
+    loads = [0] * shard_count
+
+    ordered = sorted(
+        sources,
+        key=lambda source: (-_source_cost(worker, source), str(source[0])),
+    )
+    for source in ordered:
+        candidates = [index for index in range(shard_count) if len(bins[index]) < capacities[index]]
+        target = min(candidates, key=lambda index: (loads[index], len(bins[index]), index))
+        bins[target].append(source)
+        loads[target] += _source_cost(worker, source)
+
+    interleaved: list[tuple[Any, Any, Any]] = []
+    for row in range(max(capacities, default=0)):
+        for index in range(shard_count):
+            if row < len(bins[index]):
+                interleaved.append(bins[index][row])
+    worker.core.SOURCES[:] = interleaved
+    return tuple(tuple(str(source[0]) for source in bucket) for bucket in bins)
 
 
 def load_registry(path: str | Path = DEFAULT_REGISTRY) -> dict[str, Any]:
@@ -98,6 +162,7 @@ def apply_registry(worker: Any, payload: dict[str, Any]) -> tuple[str, ...]:
     if parser_capabilities:
         install_route_repairs(worker)
         install_source_recovery(worker)
+        balance_sources(worker)
     else:
         apply_route_repairs(worker)
     return tuple(installed)
