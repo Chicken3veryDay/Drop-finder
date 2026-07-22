@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   patch:
@@ -16,47 +16,35 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: fix/cloud-route-trigger
-          fetch-depth: 0
-      - name: Patch autonomous workflow triggers and regression
-        id: patch
+      - name: Build patched workflow files
         shell: bash
         run: |
-          set +e
-          (
+          set -euo pipefail
           python - <<'PY'
           from pathlib import Path
 
           workflow = Path('.github/workflows/dropfinder-cloud.yml')
           text = workflow.read_text(encoding='utf-8')
-
           path_anchor = '      - "scripts/autonomous_merge.py"\n'
           if '      - "scripts/route_repair.py"\n' not in text:
-              count = text.count(path_anchor)
-              if count != 2:
-                  raise SystemExit(f'expected two path anchors, found {count}')
+              assert text.count(path_anchor) == 2
               text = text.replace(
                   path_anchor,
                   path_anchor
                   + '      - "scripts/route_repair.py"\n'
                   + '      - "scripts/vendor_expansion.py"\n',
               )
-
           compile_anchor = '            scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \\\n'
           if '            scripts/route_repair.py scripts/vendor_expansion.py \\\n' not in text:
-              count = text.count(compile_anchor)
-              if count != 1:
-                  raise SystemExit(f'expected one compile anchor, found {count}')
+              assert text.count(compile_anchor) == 1
               text = text.replace(
                   compile_anchor,
                   compile_anchor + '            scripts/route_repair.py scripts/vendor_expansion.py \\\n',
                   1,
               )
-
           unittest_anchor = '            tests.test_vendor_document_publication \\\n'
           if '            tests.catalog_v4.test_route_repair \\\n' not in text:
-              count = text.count(unittest_anchor)
-              if count != 1:
-                  raise SystemExit(f'expected one unittest anchor, found {count}')
+              assert text.count(unittest_anchor) == 1
               text = text.replace(
                   unittest_anchor,
                   unittest_anchor + '            tests.catalog_v4.test_route_repair \\\n',
@@ -68,9 +56,7 @@ jobs:
           tests = test_path.read_text(encoding='utf-8')
           tuple_anchor = '            \'      - "scripts/publication_release.py"\',\n'
           if '            \'      - "scripts/route_repair.py"\',\n' not in tests:
-              count = tests.count(tuple_anchor)
-              if count != 1:
-                  raise SystemExit(f'expected one test tuple anchor, found {count}')
+              assert tests.count(tuple_anchor) == 1
               tests = tests.replace(
                   tuple_anchor,
                   tuple_anchor
@@ -78,12 +64,9 @@ jobs:
                   + '            \'      - "scripts/vendor_expansion.py"\',\n',
                   1,
               )
-
           assertion_anchor = '        self.assertIn("tests.test_publication_release", self.text)\n'
           if 'self.assertIn("tests.catalog_v4.test_route_repair", self.text)' not in tests:
-              count = tests.count(assertion_anchor)
-              if count != 1:
-                  raise SystemExit(f'expected one assertion anchor, found {count}')
+              assert tests.count(assertion_anchor) == 1
               tests = tests.replace(
                   assertion_anchor,
                   assertion_anchor
@@ -94,27 +77,12 @@ jobs:
           test_path.write_text(tests, encoding='utf-8')
           PY
           git diff --check
-          if git diff --quiet -- .github/workflows/dropfinder-cloud.yml tests/test_dropfinder_cloud_workflow_permissions.py; then
-            echo 'Patch already present.'
-          else
-            git config user.name 'dropfinder-maintenance-bot'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add .github/workflows/dropfinder-cloud.yml tests/test_dropfinder_cloud_workflow_permissions.py
-            git commit -m 'fix: trigger autonomous scans for route changes'
-            git push origin HEAD:fix/cloud-route-trigger
-          fi
-          ) >patch-output.txt 2>&1
-          rc=$?
-          cat patch-output.txt
-          echo "rc=${rc}" >> "${GITHUB_OUTPUT}"
-          exit 0
+          mkdir -p patched/.github/workflows patched/tests
+          cp .github/workflows/dropfinder-cloud.yml patched/.github/workflows/dropfinder-cloud.yml
+          cp tests/test_dropfinder_cloud_workflow_permissions.py patched/tests/test_dropfinder_cloud_workflow_permissions.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
         with:
-          name: cloud-route-trigger-patch-log
-          path: patch-output.txt
+          name: patched-cloud-route-trigger-files
+          path: patched
           if-no-files-found: error
           retention-days: 1
-      - name: Fail on patch error
-        if: steps.patch.outputs.rc != '0'
-        run: exit 1
