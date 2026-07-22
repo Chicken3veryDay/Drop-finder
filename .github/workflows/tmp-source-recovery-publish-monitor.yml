@@ -1,0 +1,58 @@
+name: Temporary Source Recovery Publish Monitor
+
+on:
+  pull_request:
+    branches:
+      - verification/source-recovery-publish
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    if: github.head_ref == 'trigger/source-recovery-publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact production workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: 59586a4ec9b9f387a3313e107b5d740e3b379ac7
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 2400))
+          while (( SECONDS < deadline )); do
+            payload="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SOURCE_SHA}&event=push&per_page=100")"
+            cloud="$(jq -c '[.workflow_runs[] | select(.name == "DropFinder Autonomous Cloud")] | sort_by(.created_at) | last // null' <<<"$payload")"
+            ci="$(jq -c '[.workflow_runs[] | select(.name == "DropFinder Cloud CI")] | sort_by(.created_at) | last // null' <<<"$payload")"
+            cloud_status="$(jq -r '.status // "missing"' <<<"$cloud")"
+            cloud_conclusion="$(jq -r '.conclusion // ""' <<<"$cloud")"
+            ci_status="$(jq -r '.status // "missing"' <<<"$ci")"
+            ci_conclusion="$(jq -r '.conclusion // ""' <<<"$ci")"
+            printf 'cloud=%s/%s ci=%s/%s\n' "$cloud_status" "$cloud_conclusion" "$ci_status" "$ci_conclusion"
+            if [[ "$cloud_status" == completed && "$cloud_conclusion" != success ]]; then
+              jq -n --arg source "$SOURCE_SHA" --argjson cloud "$cloud" --argjson ci "$ci" '{source_commit:$source,autonomous_cloud:$cloud,cloud_ci:$ci}' > source-recovery-publish-monitor.json
+              exit 1
+            fi
+            if [[ "$ci_status" == completed && "$ci_conclusion" != success ]]; then
+              jq -n --arg source "$SOURCE_SHA" --argjson cloud "$cloud" --argjson ci "$ci" '{source_commit:$source,autonomous_cloud:$cloud,cloud_ci:$ci}' > source-recovery-publish-monitor.json
+              exit 1
+            fi
+            if [[ "$cloud_status" == completed && "$cloud_conclusion" == success && "$ci_status" == completed && "$ci_conclusion" == success ]]; then
+              jq -n --arg source "$SOURCE_SHA" --argjson cloud "$cloud" --argjson ci "$ci" '{source_commit:$source,autonomous_cloud:$cloud,cloud_ci:$ci}' > source-recovery-publish-monitor.json
+              cat source-recovery-publish-monitor.json
+              exit 0
+            fi
+            sleep 15
+          done
+          echo 'Timed out waiting for exact production workflows' >&2
+          exit 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: source-recovery-publish-monitor
+          path: source-recovery-publish-monitor.json
+          if-no-files-found: warn
+          retention-days: 30
