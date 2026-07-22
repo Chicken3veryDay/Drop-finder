@@ -325,6 +325,64 @@ class ProductDetailReliabilityTests(unittest.TestCase):
         self.assertEqual(candidate[detail_reliability._OUTCOME_KEY]["kind"], "verified")
         self.assertEqual(candidate[detail_reliability._OUTCOME_KEY]["attempts"], 2)
 
+
+    def test_partial_fallback_route_is_atomic(self) -> None:
+        original_fallback = self.worker.FALLBACK_HTML_ROUTES.get("fixture")
+        self.worker.FALLBACK_HTML_ROUTES["fixture"] = ["https://example.test/collection"]
+        collection = """
+        <a href="/products/good">Blue Dream THCA Flower</a>
+        <a href="/products/bad">Mystery Product</a>
+        """
+
+        def fetch(target: str):
+            if target.endswith("/collection"):
+                return collection, "text/html", 200
+            if target.endswith("/good"):
+                return self.qualifying_detail()
+            raise TimeoutError("persistent fallback timeout")
+
+        self.worker.core.fetch = fetch
+        try:
+            rows, attempts = detail_reliability._fallback_scan(
+                self.worker,
+                self.reliability,
+                ("fixture", "Fixture Vendor", []),
+            )
+        finally:
+            if original_fallback is None:
+                self.worker.FALLBACK_HTML_ROUTES.pop("fixture", None)
+            else:
+                self.worker.FALLBACK_HTML_ROUTES["fixture"] = original_fallback
+
+        self.assertEqual(rows, [])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["status"], "degraded")
+        self.assertEqual(attempts[0]["products"], 1)
+        self.assertEqual(attempts[0]["admitted_products"], 0)
+        self.assertEqual(attempts[0]["verification_failures"], 1)
+
+    def test_merge_keeps_nonblocking_fallback_failures_diagnostic(self) -> None:
+        public = autonomous_merge._source_status({
+            "source_id": "fixture",
+            "name": "Fixture Vendor",
+            "status": "healthy",
+            "quality": {"products": 1, "blocking_verification_failures": 0},
+            "route_results": [{
+                "route_id": "fixture-fallback-1",
+                "source_type": "html_card_product_detail",
+                "status": "degraded",
+                "products": 1,
+                "admitted_products": 0,
+                "verification_failures": 1,
+                "verification_failure_reasons": {"product_detail_fetch_error": 1},
+            }],
+        }, 1, 0)
+
+        self.assertEqual(public["status"], "healthy")
+        self.assertEqual(public["verification_failures"], 1)
+        self.assertEqual(public["blocking_verification_failures"], 0)
+        self.assertEqual(public["route_results"][0]["admitted_products"], 0)
+
     def test_merge_preserves_degraded_health_and_public_failure_records(self) -> None:
         public = autonomous_merge._source_status({
             "source_id": "fixture",

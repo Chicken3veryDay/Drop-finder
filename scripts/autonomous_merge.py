@@ -29,6 +29,7 @@ _PUBLIC_ROUTE_FIELDS = (
     "retry_attempt",
     "retry_attempts",
     "verification_rejections",
+    "admitted_products",
 )
 _ERROR_LIMIT = 300
 _VERIFICATION_REASON = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
@@ -147,6 +148,15 @@ def _source_status(row: dict[str, Any], accepted_count: int, rejected_count: int
         sum(int(route.get("verification_failures") or 0) for route in route_results),
         _MAX_VERIFICATION_FAILURES,
     )
+    try:
+        blocking_verification_failures = int(
+            quality.get("blocking_verification_failures", verification_failures)
+        )
+    except (TypeError, ValueError):
+        blocking_verification_failures = verification_failures
+    blocking_verification_failures = max(
+        0, min(blocking_verification_failures, _MAX_VERIFICATION_FAILURES)
+    )
     active_route = str(row.get("active_route") or "")
     fallback_active = any(
         route.get("status") == "healthy"
@@ -159,7 +169,11 @@ def _source_status(row: dict[str, Any], accepted_count: int, rejected_count: int
     )
 
     source_status = str(row.get("status") or "")
-    public_status = "degraded" if verification_failures > 0 or source_status == "degraded" else "healthy"
+    public_status = (
+        "degraded"
+        if blocking_verification_failures > 0 or source_status == "degraded"
+        else "healthy"
+    )
 
     return {
         "source_id": row.get("source_id"),
@@ -172,6 +186,7 @@ def _source_status(row: dict[str, Any], accepted_count: int, rejected_count: int
         "healthy_routes": healthy_routes,
         "non_healthy_routes": non_healthy_routes,
         "verification_failures": verification_failures,
+        "blocking_verification_failures": blocking_verification_failures,
         "fallback_active": fallback_active,
         "retry_attempts": max(
             (int(route.get("retry_attempt") or 1) for route in route_results),
@@ -191,6 +206,19 @@ def merge(input_dir: Path, output_dir: Path, min_active: int, min_products: int)
     status["healthy_routes"] = sum(int(source.get("healthy_routes") or 0) for source in sources)
     status["non_healthy_routes"] = sum(int(source.get("non_healthy_routes") or 0) for source in sources)
     status["active_verification_failures"] = min(
+        sum(
+            int(
+                source.get(
+                    "blocking_verification_failures",
+                    source.get("verification_failures") or 0,
+                )
+                or 0
+            )
+            for source in sources
+        ),
+        _MAX_VERIFICATION_FAILURES,
+    )
+    status["diagnostic_verification_failures"] = min(
         sum(int(source.get("verification_failures") or 0) for source in sources),
         _MAX_VERIFICATION_FAILURES,
     )
