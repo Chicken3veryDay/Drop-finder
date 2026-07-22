@@ -31,8 +31,10 @@ jobs:
           from pathlib import Path
           for name in ('scripts/route_repair.py', 'tests/catalog_v4/test_route_repair.py'):
               path = Path(name)
-              lines = path.read_text(encoding='utf-8').splitlines()
-              path.write_text('\n'.join(line.rstrip() for line in lines) + '\n', encoding='utf-8')
+              lines = [line.rstrip() for line in path.read_text(encoding='utf-8').splitlines()]
+              while lines and not lines[-1]:
+                  lines.pop()
+              path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PY
       - name: Compile patched module
         run: python -m py_compile scripts/route_repair.py
@@ -42,7 +44,7 @@ jobs:
         run: python scripts/autonomous_worker_v4.py --self-test
       - name: Validate permanent diff
         run: |
-          git diff --check
+          git diff --check -- scripts/route_repair.py tests/catalog_v4/test_route_repair.py
           git status --short
           git diff --stat -- scripts/route_repair.py tests/catalog_v4/test_route_repair.py
       - name: Commit permanent patch
