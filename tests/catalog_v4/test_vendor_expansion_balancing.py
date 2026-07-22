@@ -64,7 +64,7 @@ class VendorExpansionBalancingTests(unittest.TestCase):
             for shard, bucket in enumerate(bins)
             for source_id in bucket
         }
-        largest = ("hello_mary", "cali_canna", "five_leaf_wellness", "bay_smokes")
+        largest = ("wnc_cbd", "hello_mary", "cali_canna", "five_leaf_wellness")
         self.assertEqual(len({location[source_id] for source_id in largest}), len(largest))
 
     def test_invalid_shard_count_fails_closed(self):

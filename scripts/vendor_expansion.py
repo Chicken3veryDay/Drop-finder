@@ -21,7 +21,7 @@ SOURCE_COST_HINTS = {
     "bay_smokes": 110,
     "dr_ganja": 90,
     "exhale_wellness": 80,
-    "wnc_cbd": 80,
+    "wnc_cbd": 300,
     "eight_horses_hemp": 70,
     "green_unicorn_farms": 70,
     "holy_city_farms": 60,
