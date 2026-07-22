@@ -1,0 +1,210 @@
+name: Temporary Scraper Recovery Patch
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/scraper-recovery-closure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/scraper-recovery-closure
+          fetch-depth: 0
+      - name: Apply bounded scraper recovery fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/route_repair.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '# SCRAPER_RECOVERY_CLOSURE_V1'
+          if marker not in text:
+              extension = r'''
+
+# SCRAPER_RECOVERY_CLOSURE_V1
+# Recover current first-party storefront paths and retain valid siblings when a
+# bounded number of malformed records appear in otherwise authoritative output.
+_RECOVERY_ROUTE_EXTENSIONS: dict[str, tuple[Route, ...]] = {
+    "beleafer": (
+        ("html", "https://beleafer.com/product-category/hemp-flower/", "storewide"),
+        ("html", "https://beleafer.com/product-category/hemp-flower/indoor/", "storewide"),
+    ),
+    "five_leaf_wellness": (
+        ("html", "https://fiveleafwellness.com/product-category/new-releases/", "storewide"),
+        ("html", "https://fiveleafwellness.com/product-category/top-shelf/", "storewide"),
+        ("html", "https://fiveleafwellness.com/product-category/mid-tier/", "storewide"),
+        ("html", "https://fiveleafwellness.com/", "storewide"),
+    ),
+    "veteran_grown_hemp": (
+        ("html", "https://www.veterangrownhemp.com/flower", "thca_flower"),
+        ("html", "https://www.veterangrownhemp.com/shop", "storewide"),
+        ("html", "https://www.veterangrownhemp.com/", "storewide"),
+    ),
+    "wnc_cbd": (
+        ("html", "https://wnc-cbd.com/sitemap.php", "storewide"),
+        ("html", "https://wnc-cbd.com/", "storewide"),
+    ),
+}
+for _source_id, _routes in _RECOVERY_ROUTE_EXTENSIONS.items():
+    ROUTE_REPAIRS[_source_id] = tuple(
+        _dedupe_routes([*_routes, *ROUTE_REPAIRS.get(_source_id, ())])
+    )
+    FALLBACK_REPAIRS[_source_id] = tuple(
+        route[1] for route in ROUTE_REPAIRS[_source_id] if route[0] == "html"
+    )
+
+_WOO_PRICE_WINDOW = re.compile(
+    r'class=["\'][^"\']*(?:woocommerce-Price-amount|amount)[^"\']*["\'][^>]*>.{0,420}',
+    re.I | re.S,
+)
+_WIX_FORMATTED_PRICE = re.compile(
+    r'"(?:formattedPrice|formattedDiscountedPrice)"\s*:\s*"\$\s*([0-9]{1,5}(?:\.[0-9]{1,2})?)"',
+    re.I,
+)
+_VISIBLE_LABELED_PRICE = re.compile(
+    r'(?:\bNow\s*:|\bPrice\s*:?)\s*\$\s*([0-9]{1,5}(?:\.[0-9]{1,2})?)',
+    re.I,
+)
+_DOLLAR_PRICE = re.compile(r'\$\s*([0-9]{1,5}(?:\.[0-9]{1,2})?)')
+_BASE_ENRICH_META_VALUES = enrich_meta_values
+
+
+def _recover_first_party_price(core: Any, payload: str) -> float | None:
+    for match in _WOO_PRICE_WINDOW.finditer(payload):
+        visible = core.text(_TAG.sub(" ", match.group(0)))
+        price_match = _DOLLAR_PRICE.search(visible)
+        parsed = core.num(price_match.group(1)) if price_match else None
+        if parsed is not None:
+            return parsed
+    for pattern in (_WIX_FORMATTED_PRICE, _VISIBLE_LABELED_PRICE):
+        match = pattern.search(payload)
+        parsed = core.num(match.group(1)) if match else None
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def enrich_meta_values(core: Any, original: Any, payload: str) -> dict[str, str]:
+    values = _BASE_ENRICH_META_VALUES(core, original, payload)
+    if "product:price:amount" not in values:
+        recovered = _recover_first_party_price(core, payload)
+        if recovered is not None:
+            values["product:price:amount"] = str(recovered)
+    return values
+
+
+def _consistent_product_evidence(row: dict[str, Any]) -> bool:
+    evidence = row.get("classification_evidence")
+    primary = str(row.get("primary_type") or "")
+    return bool(
+        primary
+        and isinstance(evidence, dict)
+        and str(evidence.get("primary_type") or "") == primary
+    )
+
+
+def _install_invalid_sibling_pruning(worker: Any) -> None:
+    if getattr(worker, "_invalid_sibling_pruning_installed", False):
+        return
+    original_gate = getattr(worker, "gate", None)
+    if not callable(original_gate):
+        return
+
+    def pruning_gate(products: list[dict[str, Any]]):
+        original_count = len(products)
+        products[:] = [row for row in products if _consistent_product_evidence(row)]
+        admitted, reasons, quality = original_gate(products)
+        quality = dict(quality)
+        quality["discarded_invalid_rows"] = original_count - len(products)
+        return admitted, reasons, quality
+
+    worker.gate = pruning_gate
+    worker._invalid_sibling_pruning_installed = True
+
+
+_BASE_INSTALL = install
+
+
+def install(worker: Any) -> dict[str, int]:
+    state = _BASE_INSTALL(worker)
+    for marker in ("/product-page/", "/products/"):
+        if marker not in worker.PRODUCT_PATHS:
+            worker.PRODUCT_PATHS = (*worker.PRODUCT_PATHS, marker)
+    if getattr(worker, "_scraper_recovery_closure_installed", False):
+        return {**state, "recovery_installed": 1}
+    original_run = worker.run
+
+    def recovery_run(*args: Any, **kwargs: Any):
+        apply_route_repairs(worker)
+        _install_invalid_sibling_pruning(worker)
+        return original_run(*args, **kwargs)
+
+    worker.run = recovery_run
+    worker._scraper_recovery_closure_installed = True
+    return {**state, "recovery_installed": 1}
+'''
+              path.write_text(text.rstrip() + extension + '\n', encoding='utf-8')
+
+          test_path = Path('tests/catalog_v4/test_route_repair.py')
+          tests = test_path.read_text(encoding='utf-8')
+          test_marker = '    def test_recovery_routes_price_and_invalid_sibling_pruning(self):\n'
+          if test_marker not in tests:
+              insertion = r'''
+    def test_recovery_routes_price_and_invalid_sibling_pruning(self):
+        self.assertIn(
+            "https://wnc-cbd.com/sitemap.php",
+            [route[1] for route in route_repair.ROUTE_REPAIRS["wnc_cbd"]],
+        )
+        self.assertIn(
+            "https://www.veterangrownhemp.com/flower",
+            [route[1] for route in route_repair.ROUTE_REPAIRS["veteran_grown_hemp"]],
+        )
+        payload = '<span class="woocommerce-Price-amount amount"><bdi><span>$</span>34.95</bdi></span>'
+        values = route_repair.enrich_meta_values(Core, lambda _payload: {}, payload)
+        self.assertEqual(values["product:price:amount"], "34.95")
+
+        class GateWorker:
+            @staticmethod
+            def gate(products):
+                return bool(products), [] if products else ["empty"], {"products": len(products)}
+
+        worker = GateWorker()
+        route_repair._install_invalid_sibling_pruning(worker)
+        rows = [
+            {"primary_type": "cannabis_flower", "classification_evidence": {"primary_type": "cannabis_flower"}},
+            {"primary_type": "cannabis_flower", "classification_evidence": {}},
+        ]
+        admitted, reasons, quality = worker.gate(rows)
+        self.assertTrue(admitted)
+        self.assertEqual(reasons, [])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(quality["discarded_invalid_rows"], 1)
+
+'''
+              anchor = '\n\nif __name__ == "__main__":\n'
+              assert anchor in tests
+              tests = tests.replace(anchor, '\n' + insertion + anchor, 1)
+              test_path.write_text(tests, encoding='utf-8')
+          PY
+          python -m py_compile scripts/route_repair.py
+          python -m unittest -v tests.catalog_v4.test_route_repair
+          python scripts/autonomous_worker_v4.py --self-test
+          git diff --check
+          git config user.name 'dropfinder-maintenance-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/route_repair.py tests/catalog_v4/test_route_repair.py
+          if git diff --cached --quiet; then
+            echo 'Recovery patch already present.'
+            exit 0
+          fi
+          git commit -m 'fix: recover remaining scraper data paths'
+          git push origin HEAD:fix/scraper-recovery-closure
