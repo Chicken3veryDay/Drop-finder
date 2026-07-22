@@ -1,0 +1,128 @@
+name: Temporary Metadata Production Monitor
+
+on:
+  pull_request:
+    branches: [verification/metadata-completeness-publish]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    if: github.head_ref == 'trigger/metadata-completeness-publish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Wait for exact publication and audit live metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: 760d18c73e3a09b7608ac2fa67ce262339971858
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 150); do
+            gh api "repos/${REPOSITORY}/actions/runs?head_sha=${TARGET_SHA}&event=push&per_page=100" > runs.json
+            python - <<'PY'
+          import json
+          data=json.load(open('runs.json',encoding='utf-8'))
+          wanted={'DropFinder Cloud CI','DropFinder Autonomous Cloud'}
+          latest={}
+          for run in data.get('workflow_runs',[]):
+              name=run.get('name')
+              if name in wanted and (name not in latest or int(run.get('id') or 0)>int(latest[name].get('id') or 0)):
+                  latest[name]=run
+          payload={name:{'id':run.get('id'),'status':run.get('status'),'conclusion':run.get('conclusion'),'head_sha':run.get('head_sha'),'event':run.get('event'),'html_url':run.get('html_url')} for name,run in sorted(latest.items())}
+          json.dump(payload,open('workflow-status.json','w',encoding='utf-8'),indent=2,sort_keys=True)
+          print(json.dumps(payload,sort_keys=True))
+          PY
+            if python - <<'PY'
+          import json,sys
+          payload=json.load(open('workflow-status.json',encoding='utf-8'))
+          wanted={'DropFinder Cloud CI','DropFinder Autonomous Cloud'}
+          if set(payload)!=wanted:
+              sys.exit(2)
+          if any(item['status']=='completed' and item['conclusion']!='success' for item in payload.values()):
+              sys.exit(1)
+          if any(item['status']!='completed' for item in payload.values()):
+              sys.exit(2)
+          PY
+            then
+              set +e
+              gh api "repos/${REPOSITORY}/contents/data/deployment-receipt.json?ref=main" --jq .content | tr -d '\n' | base64 -d > receipt.json
+              receipt_code=$?
+              gh api "repos/${REPOSITORY}/contents/cloud_pages/data/catalog-v4/manifest.json?ref=main" --jq .content | tr -d '\n' | base64 -d > manifest.json
+              manifest_code=$?
+              gh api "repos/${REPOSITORY}/contents/cloud_pages/data/catalog-v4/index.json?ref=main" --jq .content | tr -d '\n' | base64 -d > index.json
+              index_code=$?
+              set -e
+              if [ "$receipt_code" -eq 0 ] && [ "$manifest_code" -eq 0 ] && [ "$index_code" -eq 0 ]; then
+                set +e
+                TARGET_SHA="$TARGET_SHA" python - <<'PY'
+          import json,os,sys
+          target=os.environ['TARGET_SHA']
+          receipt=json.load(open('receipt.json',encoding='utf-8'))
+          manifest=json.load(open('manifest.json',encoding='utf-8'))
+          index=json.load(open('index.json',encoding='utf-8'))
+          if receipt.get('source_commit')!=target or receipt.get('status')!='live' or receipt.get('endpoint_verification',{}).get('status')!='verified':
+              sys.exit(2)
+          products=index.get('products',[]) if isinstance(index,dict) else []
+          def present(value):
+              return value not in (None,'','unknown','unavailable','—','-')
+          measured={
+              'lineage':sum(present(row.get('lineage')) for row in products),
+              'total_thc':sum(row.get('total_thc_display_percent') is not None for row in products),
+              'rating':sum(row.get('rating') is not None and row.get('review_count') is not None for row in products),
+          }
+          names={'plain jane','gold canna','bay smokes','green unicorn farms'}
+          samples=[]
+          for row in products:
+              vendor=str(row.get('vendor_name') or '').casefold()
+              if vendor in names and len(samples)<40:
+                  samples.append({key:row.get(key) for key in ('vendor_name','strain_name','lineage','total_thc_display_percent','rating','review_count','canonical_product_url')})
+          coverage=manifest.get('metadata_coverage') or {}
+          result={
+              'schema_version':'dropfinder-metadata-production-verification-v1',
+              'source_commit':target,
+              'generation_id':receipt.get('generation_id'),
+              'product_count':len(products),
+              'baseline':{'lineage':5,'total_thc':44,'rating':0},
+              'measured':measured,
+              'manifest_metadata_coverage':coverage,
+              'target_vendor_samples':samples,
+              'receipt':receipt,
+              'workflows':json.load(open('workflow-status.json',encoding='utf-8')),
+          }
+          json.dump(result,open('metadata-production-verification.json','w',encoding='utf-8'),indent=2,sort_keys=True)
+          print(json.dumps({'generation_id':result['generation_id'],'product_count':len(products),'measured':measured,'coverage':coverage},indent=2,sort_keys=True))
+          PY
+                audit_code=$?
+                set -e
+                if [ "$audit_code" -eq 0 ]; then
+                  exit 0
+                fi
+              fi
+            else
+              code=$?
+              if [ "$code" -eq 1 ]; then
+                echo 'Exact-source production workflow failed.' >&2
+                exit 1
+              fi
+            fi
+            sleep 20
+          done
+          echo 'Timed out waiting for verified metadata publication.' >&2
+          exit 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: metadata-production-verification
+          path: |
+            metadata-production-verification.json
+            workflow-status.json
+            receipt.json
+            manifest.json
+            index.json
+          if-no-files-found: warn
+          retention-days: 30
