@@ -31,14 +31,13 @@ jobs:
         run: python -m unittest -v tests.catalog_v4.test_route_repair
       - name: Run production worker self-test
         run: python scripts/autonomous_worker_v4.py --self-test
-      - name: Commit clean permanent patch
+      - name: Commit permanent patch only
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
-          rm -f .github/workflows/tmp-scraper-recovery-patch.yml
           git config user.name 'dropfinder-maintenance-bot'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add scripts/route_repair.py tests/catalog_v4/test_route_repair.py
           git commit -m 'fix: recover remaining scraper data paths'
           git push origin HEAD:fix/scraper-recovery-closure
