@@ -58,8 +58,9 @@ class DropfinderCloudWorkflowPermissionTests(unittest.TestCase):
         self.assertEqual(self.text.count(path_entry), 2)
         self.assertIn("tests.test_dropfinder_cloud_workflow_permissions", self.text)
         self.assertIn("tests.test_publication_release", self.text)
-        self.assertIn("scripts/route_repair.py scripts/vendor_expansion.py", self.text)
+        self.assertIn("scripts/route_repair.py scripts/source_recovery.py scripts/vendor_expansion.py", self.text)
         self.assertIn("tests.catalog_v4.test_route_repair", self.text)
+        self.assertIn("tests.catalog_v4.test_source_recovery", self.text)
 
     def test_release_owner_changes_trigger_push_publication(self) -> None:
         push_block = self.text.split("  push:\n", 1)[1].split("  pull_request:\n", 1)[0]
@@ -69,6 +70,7 @@ class DropfinderCloudWorkflowPermissionTests(unittest.TestCase):
             '      - "tests/test_dropfinder_cloud_workflow_permissions.py"',
             '      - "scripts/publication_release.py"',
             '      - "scripts/route_repair.py"',
+            '      - "scripts/source_recovery.py"',
             '      - "scripts/vendor_expansion.py"',
             '      - "web/**"',
         ):
