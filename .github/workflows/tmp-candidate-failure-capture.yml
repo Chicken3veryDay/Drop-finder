@@ -1,0 +1,33 @@
+name: Temporary Candidate Failure Capture
+
+on:
+  pull_request:
+    branches: [verification/detail-enrichment-publish]
+
+permissions:
+  actions: read
+
+jobs:
+  capture:
+    if: github.head_ref == 'trigger/detail-enrichment-publish'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Capture failed production log
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: '29966579183'
+        shell: bash
+        run: |
+          set +e
+          mkdir -p candidate-failure
+          gh run view "$RUN_ID" --repo "$REPOSITORY" --log-failed > candidate-failure/failed.log 2>&1
+          echo "$?" > candidate-failure/exit-code.txt
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: candidate-failure-capture
+          path: candidate-failure
+          if-no-files-found: error
+          retention-days: 7
