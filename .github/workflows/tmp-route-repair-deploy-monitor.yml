@@ -1,0 +1,57 @@
+name: Temporary Route Repair Deploy Monitor
+
+on:
+  pull_request:
+    branches:
+      - verification/route-repair-deploy
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    if: github.head_ref == 'trigger/route-repair-deploy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact source workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: 936aac4fd9c2762cd45475f832bf4c12931b12df
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 2400))
+          while (( SECONDS < deadline )); do
+            payload="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SOURCE_SHA}&event=push&per_page=100")"
+            cloud="$(jq -c '[.workflow_runs[] | select(.name == "DropFinder Autonomous Cloud")] | sort_by(.created_at) | last // null' <<<"$payload")"
+            ci="$(jq -c '[.workflow_runs[] | select(.name == "DropFinder Cloud CI")] | sort_by(.created_at) | last // null' <<<"$payload")"
+            cloud_status="$(jq -r '.status // "missing"' <<<"$cloud")"
+            cloud_conclusion="$(jq -r '.conclusion // ""' <<<"$cloud")"
+            ci_status="$(jq -r '.status // "missing"' <<<"$ci")"
+            ci_conclusion="$(jq -r '.conclusion // ""' <<<"$ci")"
+            printf 'cloud=%s/%s ci=%s/%s\n' "$cloud_status" "$cloud_conclusion" "$ci_status" "$ci_conclusion"
+            if [[ "$cloud_status" == completed && "$cloud_conclusion" != success ]]; then
+              echo "Autonomous Cloud failed: $cloud" >&2
+              exit 1
+            fi
+            if [[ "$ci_status" == completed && "$ci_conclusion" != success ]]; then
+              echo "Cloud CI failed: $ci" >&2
+              exit 1
+            fi
+            if [[ "$cloud_status" == completed && "$cloud_conclusion" == success && "$ci_status" == completed && "$ci_conclusion" == success ]]; then
+              jq -n --arg source "$SOURCE_SHA" --argjson cloud "$cloud" --argjson ci "$ci" '{source_commit:$source, autonomous_cloud:$cloud, cloud_ci:$ci}' > route-repair-deploy-monitor.json
+              cat route-repair-deploy-monitor.json
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for exact-source workflows" >&2
+          exit 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: route-repair-deploy-monitor
+          path: route-repair-deploy-monitor.json
+          if-no-files-found: error
+          retention-days: 30
