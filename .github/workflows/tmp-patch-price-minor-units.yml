@@ -1,0 +1,122 @@
+name: Temporary Patch Price Minor Units
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/price-minor-units'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/price-minor-units
+          fetch-depth: 0
+      - name: Patch first-party JSON minor-unit normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('scripts/source_recovery.py')
+          text = source.read_text(encoding='utf-8')
+          anchor = '''_JSON_PRICE = re.compile(
+              r'["\\'](?:price|lowPrice|salePrice|priceValue|priceAmount)["\\']\\s*:\\s*'
+              r'["\\']?([0-9]{1,5}(?:\\.[0-9]{1,2})?)',
+              re.I,
+          )
+          '''
+          replacement = anchor + '''_MINOR_UNIT = re.compile(
+              r'["\\'](?:currency_minor_unit|currencyMinorUnit)["\\']\\s*:\\s*["\\']?([0-4])',
+              re.I,
+          )
+          _SHOPIFY_CENT_STATE = re.compile(
+              r'(?:Shopify|["\\']price_(?:min|max|varies)["\\']|["\\']compare_at_price["\\'])',
+              re.I,
+          )
+          '''
+          if '_MINOR_UNIT = re.compile(' not in text:
+              if text.count(anchor) != 1:
+                  raise SystemExit(f'expected one JSON price anchor, found {text.count(anchor)}')
+              text = text.replace(anchor, replacement, 1)
+
+          valid_anchor = '''def _valid_price(core: Any, value: Any) -> float | None:
+              parsed = core.num(value)
+              if parsed is None or parsed < 1 or parsed > 10000:
+                  return None
+              return parsed
+
+
+          '''
+          valid_replacement = valid_anchor + '''def _json_price(core: Any, raw: str, payload: str) -> float | None:
+              parsed = _valid_price(core, raw)
+              if parsed is None:
+                  return None
+              raw_text = str(raw).strip()
+              if "." in raw_text or parsed < 1000:
+                  return parsed
+              document = payload[:1_500_000]
+              minor_match = _MINOR_UNIT.search(document)
+              minor_unit = int(minor_match.group(1)) if minor_match else None
+              if minor_unit == 2 or _SHOPIFY_CENT_STATE.search(document):
+                  normalized = round(parsed / 100, 4)
+                  return normalized if normalized >= 1 else None
+              return parsed
+
+
+          '''
+          if 'def _json_price(' not in text:
+              if text.count(valid_anchor) != 1:
+                  raise SystemExit(f'expected one valid-price anchor, found {text.count(valid_anchor)}')
+              text = text.replace(valid_anchor, valid_replacement, 1)
+
+          old_loop = '''        for raw in _JSON_PRICE.findall(payload[:1_500_000]):
+              parsed = _valid_price(core, raw)
+              if parsed is not None:
+                  candidates.append(parsed)
+          '''
+          new_loop = '''        for raw in _JSON_PRICE.findall(payload[:1_500_000]):
+              parsed = _json_price(core, raw, payload)
+              if parsed is not None:
+                  candidates.append(parsed)
+          '''
+          if new_loop not in text:
+              if text.count(old_loop) != 1:
+                  raise SystemExit(f'expected one JSON price loop, found {text.count(old_loop)}')
+              text = text.replace(old_loop, new_loop, 1)
+          source.write_text(text, encoding='utf-8')
+
+          test_path = Path('tests/catalog_v4/test_source_recovery.py')
+          tests = test_path.read_text(encoding='utf-8')
+          marker = '''        self.assertIsNone(source_recovery.extract_first_party_price(PriceCore, unrelated))
+          '''
+          addition = marker + '''
+              def test_json_price_minor_units_are_normalized_only_with_framework_evidence(self):
+                  woo_minor = '<script>{"currency_minor_unit":2,"price":"2900"}</script>'
+                  shopify_theme = '<script>Shopify.theme={};{"price":3750,"price_min":3750}</script>'
+                  ordinary_dollars = '<script>{"price":1600}</script>'
+                  explicit_decimal = '<script>{"price":"37.50"}</script>'
+                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, woo_minor), 29.0)
+                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, shopify_theme), 37.5)
+                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, ordinary_dollars), 1600.0)
+                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, explicit_decimal), 37.5)
+          '''
+          if 'test_json_price_minor_units_are_normalized_only_with_framework_evidence' not in tests:
+              if tests.count(marker) != 1:
+                  raise SystemExit(f'expected one price-test marker, found {tests.count(marker)}')
+              tests = tests.replace(marker, addition, 1)
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+          git diff --check
+          python -m unittest -v tests.catalog_v4.test_source_recovery
+          git config user.name 'dropfinder-maintenance-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/source_recovery.py tests/catalog_v4/test_source_recovery.py
+          git commit -m 'fix: normalize first-party JSON price minor units'
+          git push origin HEAD:fix/price-minor-units
