@@ -1,0 +1,110 @@
+name: Temporary Recover Canonical Receipt
+
+on:
+  pull_request:
+    branches: [verification/receipt-recovery-c885]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  recover:
+    if: github.head_ref == 'trigger/receipt-recovery-c885'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PAGE_URL: https://chicken3veryday.github.io/Drop-finder/
+      SOURCE_COMMIT: c88556786bd6ebc76a11fbedbc931e5945139eef
+      GENERATED_COMMIT: 3e82b9edb232e31720ddd6f5abb769e0d9aba422
+      ROLLBACK_COMMIT: 25bbcd73166f899a4e849b509254529014488507
+      ORIGINAL_RUN_ID: '29960079448'
+      EXPECTED_GENERATION: 761fa9cf20252f1943b47c8e2945f518
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Verify published branch and live endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main gh-pages
+          test "$(git rev-parse origin/main)" = "${GENERATED_COMMIT}" || {
+            echo '::error::Main advanced beyond the generated candidate; refusing stale receipt recovery.'
+            exit 1
+          }
+          rm -rf /tmp/dropfinder-pages /tmp/original-evidence
+          git worktree add --detach /tmp/dropfinder-pages origin/gh-pages
+          test "$(python -c "import json; print(json.load(open('/tmp/dropfinder-pages/data/catalog-v4/manifest.json'))['generation_id'])")" = "${EXPECTED_GENERATION}"
+          node web/scripts/verify-publication.mjs /tmp/dropfinder-pages
+          python web/scripts/publication_gate.py verify-published --root /tmp/dropfinder-pages
+          verified=false
+          for attempt in $(seq 1 60); do
+            if node web/scripts/verify-pages-endpoint.mjs "${PAGE_URL}" >/tmp/pages-verification.json 2>/tmp/pages-verification.err; then
+              if EXPECTED="${EXPECTED_GENERATION}" ENDPOINT=/tmp/pages-verification.json python - <<'PY'
+          import json, os
+          endpoint = json.load(open(os.environ['ENDPOINT']))
+          if endpoint.get('generationId') != os.environ['EXPECTED']:
+              raise SystemExit('public endpoint still serves a different generation')
+          PY
+              then
+                verified=true
+                break
+              fi
+            fi
+            sleep 10
+          done
+          test "${verified}" = true || {
+            cat /tmp/pages-verification.err >&2 || true
+            exit 1
+          }
+          gh run download "${ORIGINAL_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "atomic-publication-evidence-${ORIGINAL_RUN_ID}" \
+            --dir /tmp/original-evidence
+          continuity="$(find /tmp/original-evidence -name publication-continuity.json -print -quit)"
+          test -n "${continuity}" && test -f "${continuity}"
+          echo "CONTINUITY_FILE=${continuity}" >> "${GITHUB_ENV}"
+          echo "PUBLICATION_COMMIT=$(git rev-parse origin/gh-pages)" >> "${GITHUB_ENV}"
+      - name: Record recovered canonical receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/publication_release.py record-receipt /tmp/dropfinder-pages \
+            --source-commit "${SOURCE_COMMIT}" \
+            --generated-commit "${GENERATED_COMMIT}" \
+            --publication-commit "${PUBLICATION_COMMIT}" \
+            --rollback-commit "${ROLLBACK_COMMIT}" \
+            --workflow-name "DropFinder Autonomous Cloud" \
+            --workflow-run-id "${ORIGINAL_RUN_ID}" \
+            --public-url "${PAGE_URL}" \
+            --continuity "${CONTINUITY_FILE}" \
+            --endpoint-verification /tmp/pages-verification.json \
+            --output deployment/release.json
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "${GENERATED_COMMIT}" || {
+            echo '::error::Main advanced before receipt commit; refusing to rewrite history.'
+            exit 1
+          }
+          git config user.name 'dropfinder-publication-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add deployment/release.json
+          git commit -m 'chore: recover verified atomic deployment receipt [skip ci]'
+          git push origin HEAD:main
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: canonical-receipt-recovery-evidence
+          path: |
+            /tmp/pages-verification.json
+            deployment/release.json
+          if-no-files-found: warn
+          retention-days: 90
