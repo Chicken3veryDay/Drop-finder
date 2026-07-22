@@ -1,0 +1,36 @@
+name: Temporary Run Scraper Recovery
+
+on:
+  push:
+    branches: [trigger/scraper-recovery-patch]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: trigger/scraper-recovery-patch
+          fetch-depth: 0
+      - name: Apply and validate recovery patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/tmp_apply_scraper_recovery.py
+          python -m py_compile scripts/route_repair.py
+          python -m unittest -v tests.catalog_v4.test_route_repair
+          python scripts/autonomous_worker_v4.py --self-test
+          git diff --check
+          rm -f .trigger-scraper-recovery-patch
+          rm -f scripts/tmp_apply_scraper_recovery.py
+          rm -f .github/workflows/tmp-run-scraper-recovery.yml
+          rm -f .github/workflows/tmp-scraper-recovery-patch.yml
+          git config user.name 'dropfinder-maintenance-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: recover remaining scraper data paths'
+          git push origin HEAD:fix/scraper-recovery-closure
