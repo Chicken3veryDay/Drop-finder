@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   patch:
@@ -16,22 +16,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: fix/price-minor-units
-          fetch-depth: 0
-      - name: Patch first-party JSON minor-unit normalization
+      - name: Build and validate patched files
         shell: bash
         run: |
-          set -euo pipefail
-          python - <<'PY'
+          set +e
+          mkdir -p patched/scripts patched/tests/catalog_v4
+          {
+            python - <<'PY'
           from pathlib import Path
 
           source = Path('scripts/source_recovery.py')
           text = source.read_text(encoding='utf-8')
-
           if '_MINOR_UNIT = re.compile(' not in text:
               marker = '_DOLLAR = re.compile'
               index = text.find(marker)
-              if index < 0:
-                  raise SystemExit('dollar-regex insertion marker missing')
+              assert index >= 0, 'dollar-regex insertion marker missing'
               addition = '''_MINOR_UNIT = re.compile(
               r'["\\'](?:currency_minor_unit|currencyMinorUnit)["\\']\\s*:\\s*["\\']?([0-4])',
               re.I,
@@ -42,12 +41,10 @@ jobs:
           )
           '''
               text = text[:index] + addition + text[index:]
-
           if 'def _json_price(' not in text:
               marker = 'def extract_first_party_price('
               index = text.find(marker)
-              if index < 0:
-                  raise SystemExit('price-function insertion marker missing')
+              assert index >= 0, 'price-function insertion marker missing'
               addition = '''def _json_price(core: Any, raw: str, payload: str) -> float | None:
               parsed = _valid_price(core, raw)
               if parsed is None:
@@ -66,19 +63,14 @@ jobs:
 
           '''
               text = text[:index] + addition + text[index:]
-
-          old = '''    if not candidates:
-              for raw in _JSON_PRICE.findall(payload[:1_500_000]):
-                  parsed = _valid_price(core, raw)
-          '''
-          new = '''    if not candidates:
-              for raw in _JSON_PRICE.findall(payload[:1_500_000]):
-                  parsed = _json_price(core, raw, payload)
-          '''
-          if new not in text:
-              if text.count(old) != 1:
-                  raise SystemExit(f'expected one JSON fallback loop, found {text.count(old)}')
-              text = text.replace(old, new, 1)
+          old = '            parsed = _valid_price(core, raw)\n'
+          new = '            parsed = _json_price(core, raw, payload)\n'
+          json_loop = text.find('for raw in _JSON_PRICE.findall')
+          assert json_loop >= 0, 'JSON fallback loop missing'
+          line_index = text.find(old, json_loop)
+          assert line_index >= 0, 'JSON fallback parse line missing'
+          if new not in text[json_loop:json_loop + 300]:
+              text = text[:line_index] + new + text[line_index + len(old):]
           source.write_text(text, encoding='utf-8')
 
           test_path = Path('tests/catalog_v4/test_source_recovery.py')
@@ -86,8 +78,7 @@ jobs:
           if 'test_json_price_minor_units_are_normalized_only_with_framework_evidence' not in tests:
               marker = '    def test_route_overrides_remove_known_dead_paths(self):\n'
               index = tests.find(marker)
-              if index < 0:
-                  raise SystemExit('source-recovery test insertion marker missing')
+              assert index >= 0, 'source-recovery test insertion marker missing'
               addition = '''    def test_json_price_minor_units_are_normalized_only_with_framework_evidence(self):
               woo_minor = '<script>{"currency_minor_unit":2,"price":"2900"}</script>'
               shopify_theme = '<script>Shopify.theme={};{"price":3750,"price_min":3750}</script>'
@@ -102,11 +93,22 @@ jobs:
               tests = tests[:index] + addition + tests[index:]
           test_path.write_text(tests, encoding='utf-8')
           PY
-          git diff --check
-          python -m py_compile scripts/source_recovery.py
-          python -m unittest -v tests.catalog_v4.test_source_recovery
-          git config user.name 'dropfinder-maintenance-bot'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add scripts/source_recovery.py tests/catalog_v4/test_source_recovery.py
-          git commit -m 'fix: normalize first-party JSON price minor units'
-          git push origin HEAD:fix/price-minor-units
+            patch_exit=$?
+            echo patch_exit=$patch_exit
+            python -m py_compile scripts/source_recovery.py
+            echo compile_exit=$?
+            python -m unittest -v tests.catalog_v4.test_source_recovery
+            echo focused_test_exit=$?
+            cp scripts/source_recovery.py patched/scripts/source_recovery.py
+            cp tests/catalog_v4/test_source_recovery.py patched/tests/catalog_v4/test_source_recovery.py
+          } > minor-unit-patch.log 2>&1
+          cat minor-unit-patch.log
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: minor-unit-patch-export
+          path: |
+            patched
+            minor-unit-patch.log
+          if-no-files-found: error
+          retention-days: 1
