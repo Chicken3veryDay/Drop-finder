@@ -39,7 +39,20 @@ WORD_POUND=re.compile(r'\b(quarter|half|one|two|four)\s+pounds?\b',re.I)
 OUNCE=re.compile(r'(?<![\d.])(1/8|1/4|1/2|1|2|4)(?:st|nd|rd|th)?\s*(?:oz|ounces?)\b',re.I)
 BARE_FRACTION_OUNCE=re.compile(r'(?<![\d.])(1/8|1/4|1/2)(?:st|nd|rd|th)?\b',re.I)
 WORD_WEIGHT=re.compile(r'\b(eighth|quarter|half\s+ounce|half[- ]?oz|ounce|one\s+ounce|zip)\b(?!\s*(?:lb|lbs|pounds?)\b)',re.I)
-POTENCY=re.compile(r'\bTHC-?A\s*[:\-]?\s*(\d{1,2}(?:\.\d+)?)\s*%',re.I)
+DESCRIPTION_LIMIT=2400
+THCA_PATTERNS=(
+ re.compile(r'\b(?:total\s+)?thc-?a(?:\s+(?:content|potency))?\s*[:\-]?\s*(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)(?!\w)',re.I),
+ re.compile(r'\b(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)\s*(?:total\s+)?thc-?a\b',re.I),
+)
+DELTA9_PATTERNS=(
+ re.compile(r'\b(?:delta\s*[- ]?9|d9)(?:\s*thc)?(?:\s+(?:content|potency))?\s*[:\-]?\s*(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)(?!\w)',re.I),
+ re.compile(r'\b(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)\s*(?:delta\s*[- ]?9|d9)(?:\s*thc)?\b',re.I),
+)
+TOTAL_THC_PATTERNS=(
+ re.compile(r'\btotal\s+thc(?!-?a)(?:\s+(?:content|potency))?\s*[:\-]?\s*(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)(?!\w)',re.I),
+ re.compile(r'\b(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)\s*total\s+thc(?!-?a)\b',re.I),
+)
+POTENCY=THCA_PATTERNS[0]
 LD=re.compile(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',re.I|re.S); TAG=re.compile(r'<[^>]+>'); WS=re.compile(r'\s+')
 ANCHOR=re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',re.I|re.S)
 META=re.compile(r'<meta\b([^>]+)>',re.I); ATTR=re.compile(r'([:\w-]+)\s*=\s*["\']([^"\']*)["\']',re.I)
@@ -55,6 +68,42 @@ def num(v):
  try: n=float(str(v).replace(',','').replace('$','').strip())
  except (TypeError,ValueError): return None
  return round(n,4) if math.isfinite(n) and 0<n<100000 else None
+
+def bounded_number(v,minimum,maximum):
+ try:n=float(str(v).replace(',','').replace('$','').strip())
+ except (TypeError,ValueError):return None
+ return round(n,4) if math.isfinite(n) and minimum<=n<=maximum else None
+def percent_number(v):return bounded_number(v,0.0001,100)
+def percent_from_text(value,patterns):
+ source=text(value);values=[]
+ for pattern in patterns:
+  values.extend(percent_number(match) for match in pattern.findall(source))
+ return max((value for value in values if value is not None),default=None)
+def rating_pair(score,count):
+ score_value=bounded_number(score,0.01,5);count_value=bounded_number(count,1,100000000)
+ if score_value is None or count_value is None or not float(count_value).is_integer():return None,None
+ return score_value,int(count_value)
+def joined_text(value):
+ if isinstance(value,dict):return ' '.join(text(item) for item in value.values() if item not in (None,''))
+ if isinstance(value,(list,tuple,set)):return ' '.join(joined_text(item) for item in value if item not in (None,''))
+ return text(value)
+def structured_rating(value):
+ candidates=value if isinstance(value,list) else [value]
+ for item in candidates:
+  if not isinstance(item,dict):continue
+  score=item.get('ratingValue') if item.get('ratingValue') not in (None,'') else item.get('rating')
+  count=next((item.get(key) for key in ('reviewCount','ratingCount','count') if item.get(key) not in (None,'')),None)
+  pair=rating_pair(score,count)
+  if pair!=(None,None):return pair
+ return None,None
+def metadata_text(value):
+ if not isinstance(value,dict):return ''
+ parts=[]
+ for item in value.get('additionalProperty',[]) if isinstance(value.get('additionalProperty'),list) else [value.get('additionalProperty')]:
+  if isinstance(item,dict):parts.append(f"{joined_text(item.get('name'))} {joined_text(item.get('value'))}")
+ for key in ('category','keywords','material','slogan'):
+  if value.get(key) not in (None,''):parts.append(joined_text(value.get(key)))
+ return text(' '.join(parts))
 def weight(s):
  m=GRAM.search(s)
  if m:return num(m.group(1)),text(m.group(0))
@@ -87,14 +136,14 @@ def availability(v):
  if s=='false' or NEGATIVE_STOCK.search(s):return 'out_of_stock'
  if s=='true' or POSITIVE_STOCK.search(s):return 'in_stock'
  return 'unknown'
-def record(sid,vendor,route,name,target,desc='',price=None,stock='',image='',variant=''):
- name=text(name);desc=text(desc);target=url(target,route[1]);combined=f'{name} {desc}'
+def record(sid,vendor,route,name,target,desc='',price=None,stock='',image='',variant='',rating=None,review_count=None,delta9_thc=None,direct_total_thc=None):
+ name=text(name);desc=text(desc)[:DESCRIPTION_LIMIT];target=url(target,route[1]);combined=f'{name} {desc}'
  if not name or not target or HARD_EXCLUDE.search(combined) or not FLOWER.search(combined) or not (THCA.search(combined) or 'thca' in route[1].lower()):return None
  ambiguous=AMBIGUOUS_FORM.search(combined)
  if ambiguous and FORM_CONTEXT.search(combined) and not EXPLICIT_FLOWER.search(name):return None
- p=num(price);g,weight_label=weight(combined);pots=[num(x) for x in POTENCY.findall(combined)];pot=max([x for x in pots if x and x<=100],default=None);stock_state=availability(stock)
+ p=num(price);g,weight_label=weight(combined);thca=percent_from_text(combined,THCA_PATTERNS);delta9=percent_number(delta9_thc) or percent_from_text(combined,DELTA9_PATTERNS);total=percent_number(direct_total_thc) or percent_from_text(combined,TOTAL_THC_PATTERNS);rating_value,review_value=rating_pair(rating,review_count);stock_state=availability(stock)
  stock_method='explicit_boolean' if isinstance(stock,bool) else 'explicit_source_state' if stock_state!='unknown' else 'unknown'
- return {'id':hashlib.sha256(f'{sid}|{target}|{variant}'.encode()).hexdigest()[:24],'source_id':sid,'vendor':vendor,'name':name,'url':target,'image':url(image,route[1]) if image else '', 'price':p,'grams':g,'source_weight_label':weight_label,'weight_provenance':'explicit_text' if weight_label else 'unavailable','price_per_gram':round(p/g,4) if p and g else None,'thca':pot,'availability':stock_state,'availability_raw':stock,'availability_normalization':stock_method,'variant':text(variant),'source_type':route[0],'route_url':route[1],'collected_at':now()}
+ return {'id':hashlib.sha256(f'{sid}|{target}|{variant}'.encode()).hexdigest()[:24],'source_id':sid,'vendor':vendor,'name':name,'description':desc,'url':target,'image':url(image,route[1]) if image else '', 'price':p,'grams':g,'source_weight_label':weight_label,'weight_provenance':'explicit_text' if weight_label else 'unavailable','price_per_gram':round(p/g,4) if p and g else None,'thca':thca,'delta9_thc':delta9,'direct_total_thc':total,'rating':rating_value,'review_count':review_value,'availability':stock_state,'availability_raw':stock,'availability_normalization':stock_method,'variant':text(variant),'source_type':route[0],'route_url':route[1],'collected_at':now()}
 def record_identity(row,source_product_id='',source_variant_id='',regular_price=None):
  if not row:return None
  row=dict(row);row['source_product_id']=text(source_product_id);row['source_variant_id']=text(source_variant_id);regular=num(regular_price);current=num(row.get('price'));row['original_price']=regular if regular and current and regular>current else None
@@ -105,11 +154,13 @@ def shopify(payload,sid,vendor,route):
  for item in data.get('products',[]) if isinstance(data,dict) else []:
   if not isinstance(item,dict):continue
   product_url=f"{base}/products/{item.get('handle')}";images=item.get('images') or [];image=(images[0].get('src','') if images and isinstance(images[0],dict) else '')
+  description=f"{item.get('body_html','')} {joined_text(item.get('tags'))} {joined_text(item.get('product_type'))} {joined_text(item.get('vendor'))}"
+  rating_value=next((item.get(key) for key in ('average_rating','rating') if item.get(key) not in (None,'')),None);review_value=next((item.get(key) for key in ('review_count','reviews_count','rating_count') if item.get(key) not in (None,'')),None)
   variants=item.get('variants') or [{}]
   for v in variants:
    if not isinstance(v,dict):continue
    vt=text(v.get('title'));name=item.get('title');name=f'{name} {vt}' if vt and vt.lower()!='default title' else name
-   r=record_identity(record(sid,vendor,route,name,f"{product_url}?variant={v.get('id')}" if v.get('id') else product_url,item.get('body_html',''),v.get('price'),v.get('available'),image,vt),item.get('id'),v.get('id'),v.get('compare_at_price'))
+   r=record_identity(record(sid,vendor,route,name,f"{product_url}?variant={v.get('id')}" if v.get('id') else product_url,description,v.get('price'),v.get('available'),image,vt,rating_value,review_value),item.get('id'),v.get('id'),v.get('compare_at_price'))
    if r:rows.append(r)
  return rows
 def woo_price(item):
@@ -180,7 +231,7 @@ def woo(payload,sid,vendor,route):
   elif item.get('has_options') is True or str(item.get('type') or '').lower()=='variable':
    diagnostics['variable_parents']+=1;variations,extra=woo_fetch_variations(item,route);merge_diag(extra);parent=item
   else:
-   p,regular=woo_price(item);images=item.get('images') or [];image=images[0].get('src','') if images and isinstance(images[0],dict) else '';cats=' '.join(text(x.get('name')) for x in item.get('categories',[]) if isinstance(x,dict));r=record_identity(record(sid,vendor,route,item.get('name'),item.get('permalink'),f"{item.get('short_description','')} {item.get('description','')} {cats}",p,item.get('stock_status') or item.get('is_in_stock'),image,''),item.get('id'),'',regular)
+   p,regular=woo_price(item);images=item.get('images') or [];image=images[0].get('src','') if images and isinstance(images[0],dict) else '';cats=' '.join(text(x.get('name')) for x in item.get('categories',[]) if isinstance(x,dict));tags=' '.join(text(x.get('name')) for x in item.get('tags',[]) if isinstance(x,dict));attrs=' '.join(f"{text(x.get('name'))} {joined_text(x.get('terms') or x.get('value'))}" for x in item.get('attributes',[]) if isinstance(x,dict));desc=f"{item.get('short_description','')} {item.get('description','')} {cats} {tags} {attrs}";r=record_identity(record(sid,vendor,route,item.get('name'),item.get('permalink'),desc,p,item.get('stock_status') or item.get('is_in_stock'),image,'',item.get('average_rating') or item.get('rating'),item.get('review_count') or item.get('rating_count')),item.get('id'),'',regular)
    if r:rows.append(r)
    continue
   for variation in variations:
@@ -188,8 +239,8 @@ def woo(payload,sid,vendor,route):
    if availability(stock)!='in_stock':reject('variation_not_explicitly_in_stock');continue
    label=woo_variant_label(variation,parent)
    if not label or grams(label) is None:reject('variation_weight_missing');continue
-   p,regular=woo_price(variation);parent_name=parent.get('name') or variation.get('name');parent_id=parent.get('id') or variation.get('parent');variation_id=variation.get('id');parent_url=parent.get('permalink') or variation.get('permalink');target=f"{parent_url}{'&' if '?' in str(parent_url) else '?'}variant={variation_id}" if variation_id else parent_url;images=variation.get('images') or parent.get('images') or [];image=images[0].get('src','') if images and isinstance(images[0],dict) else '';cats=' '.join(text(x.get('name')) for x in parent.get('categories',[]) if isinstance(x,dict));desc=f"{variation.get('description','')} {cats}";name=f'{parent_name} {label}'
-   r=record_identity(record(sid,vendor,route,name,target,desc,p,stock,image,label),parent_id,variation_id,regular)
+   p,regular=woo_price(variation);parent_name=parent.get('name') or variation.get('name');parent_id=parent.get('id') or variation.get('parent');variation_id=variation.get('id');parent_url=parent.get('permalink') or variation.get('permalink');target=f"{parent_url}{'&' if '?' in str(parent_url) else '?'}variant={variation_id}" if variation_id else parent_url;images=variation.get('images') or parent.get('images') or [];image=images[0].get('src','') if images and isinstance(images[0],dict) else '';cats=' '.join(text(x.get('name')) for x in parent.get('categories',[]) if isinstance(x,dict));tags=' '.join(text(x.get('name')) for x in parent.get('tags',[]) if isinstance(x,dict));attrs=' '.join(f"{text(x.get('name'))} {joined_text(x.get('terms') or x.get('value'))}" for x in parent.get('attributes',[]) if isinstance(x,dict));desc=f"{parent.get('short_description','')} {parent.get('description','')} {variation.get('description','')} {cats} {tags} {attrs}";name=f'{parent_name} {label}';rating_value=variation.get('average_rating') or variation.get('rating') or parent.get('average_rating') or parent.get('rating');review_value=variation.get('review_count') or variation.get('rating_count') or parent.get('review_count') or parent.get('rating_count')
+   r=record_identity(record(sid,vendor,route,name,target,desc,p,stock,image,label,rating_value,review_value),parent_id,variation_id,regular)
    if r:rows.append(r)
  return dedupe(rows),diagnostics
 def objects(v):
@@ -232,7 +283,7 @@ def html_products(payload,sid,vendor,route):
    kind=product.get('@type');types={str(x).lower() for x in (kind if isinstance(kind,list) else [kind])}
    if 'product' not in types:continue
    image=product.get('image');image=image[0] if isinstance(image,list) and image else image;image=(image.get('url') or image.get('contentUrl')) if isinstance(image,dict) else image
-   parent_url=product.get('url') or product.get('@id');parent_id=text(product.get('sku') or product.get('productID') or product.get('@id') or parent_url)
+   parent_url=product.get('url') or product.get('@id');parent_id=text(product.get('sku') or product.get('productID') or product.get('@id') or parent_url);rating_value,review_value=structured_rating(product.get('aggregateRating'));product_desc=f"{text(product.get('description'))} {metadata_text(product)}".strip()
    offers=_structured_offers(product.get('offers'));package=[]
    for offer in offers:
     label=text(offer.get('name') or offer.get('size') or offer.get('sku'));identity=_offer_identifier(offer);target=offer.get('url') or parent_url
@@ -241,8 +292,8 @@ def html_products(payload,sid,vendor,route):
     if not target and identity and parent_url:target=f"{parent_url}{'&' if '?' in str(parent_url) else '?'}variant={urllib.parse.quote(identity)}"
     offer_host=urllib.parse.urlsplit(url(target,route[1])).netloc;parent_host=urllib.parse.urlsplit(url(parent_url,route[1])).netloc
     if offer_host and parent_host and offer_host!=parent_host:continue
-    name=f"{text(product.get('name'))} {label}".strip();desc=f"{text(product.get('description'))} {text(offer.get('description'))}".strip()
-    row=record_identity(record(sid,vendor,route,name,target,desc,offer.get('price') or offer.get('lowPrice'),offer.get('availability'),offer.get('image') or image,label),parent_id,identity)
+    name=f"{text(product.get('name'))} {label}".strip();desc=f"{product_desc} {text(offer.get('description'))} {metadata_text(offer)}".strip()
+    row=record_identity(record(sid,vendor,route,name,target,desc,offer.get('price') or offer.get('lowPrice'),offer.get('availability'),offer.get('image') or image,label,rating_value,review_value),parent_id,identity)
     if row:row['discovery_method']='json_ld_product_offer';package.append(row)
    if package:
     chosen={}
@@ -250,7 +301,7 @@ def html_products(payload,sid,vendor,route):
     rows.extend(chosen.values());continue
    candidates=offers or [{}];selected=min(candidates,key=lambda o:(_offer_identifier(o),str(o.get('url') or '')))
    target=selected.get('url') or parent_url;identity=_offer_identifier(selected)
-   row=record_identity(record(sid,vendor,route,product.get('name'),target,product.get('description'),selected.get('price') or selected.get('lowPrice'),selected.get('availability'),selected.get('image') or image,''),parent_id,identity)
+   row=record_identity(record(sid,vendor,route,product.get('name'),target,f"{product_desc} {metadata_text(selected)}",selected.get('price') or selected.get('lowPrice'),selected.get('availability'),selected.get('image') or image,'',rating_value,review_value),parent_id,identity)
    if row:row['discovery_method']='json_ld_product';rows.append(row)
  return dedupe(rows)
 
@@ -265,8 +316,8 @@ def html_detail(payload,sid,vendor,route,target):
  if rows:return rows
  meta=meta_values(payload);title=meta.get('og:title') or meta.get('twitter:title');m=TITLE.search(payload)
  if not title and m:title=text(m.group(1)).split('|')[0].strip()
- desc=meta.get('og:description') or meta.get('description') or '';price=meta.get('product:price:amount') or meta.get('og:price:amount');stock=meta.get('product:availability') or '';image=meta.get('og:image') or meta.get('twitter:image') or ''
- row=record(sid,vendor,route,title,target,desc,price,stock,image)
+ desc=meta.get('og:description') or meta.get('description') or '';price=meta.get('product:price:amount') or meta.get('og:price:amount');stock=meta.get('product:availability') or '';image=meta.get('og:image') or meta.get('twitter:image') or '';rating_value=next((meta.get(key) for key in ('product:rating:value','rating','og:rating') if meta.get(key)),None);review_value=next((meta.get(key) for key in ('product:rating:count','review_count','rating_count') if meta.get(key)),None)
+ row=record(sid,vendor,route,title,target,desc,price,stock,image,'',rating_value,review_value)
  return [row] if row else []
 def product_links(payload,route):
  base=urllib.parse.urlsplit(route[1]);seen=[]

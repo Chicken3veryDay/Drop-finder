@@ -125,9 +125,13 @@ def install_multi_product_runtime(reliability: Any) -> dict[str, Any]:
         stock: Any = "",
         image: Any = "",
         variant: Any = "",
+        rating: Any = None,
+        review_count: Any = None,
+        delta9_thc: Any = None,
+        direct_total_thc: Any = None,
     ) -> dict[str, Any] | None:
         clean_name = core.text(name)
-        clean_description = core.text(description)
+        clean_description = core.text(description)[: getattr(core, "DESCRIPTION_LIMIT", 2400)]
         clean_variant = core.text(variant)
         normalized_url = core.url(target, route[1])
         combined = normalized_text(clean_name, clean_description, clean_variant, normalized_url, route[2])
@@ -143,14 +147,25 @@ def install_multi_product_runtime(reliability: Any) -> dict[str, Any]:
         quantity = quantity_fields(combined, classification.primary_type)
         price_fields = comparison_price(current_price, quantity)
         type_fields = type_specific_fields(combined, classification.primary_type)
-        thca_values = [core.num(value) for value in core.POTENCY.findall(combined)]
-        thca = max((value for value in thca_values if value is not None and value <= 100), default=None)
+        if hasattr(core, "percent_from_text") and hasattr(core, "THCA_PATTERNS"):
+            thca = core.percent_from_text(combined, core.THCA_PATTERNS)
+            parsed_delta9 = core.percent_number(delta9_thc) or core.percent_from_text(combined, core.DELTA9_PATTERNS)
+            parsed_total = core.percent_number(direct_total_thc) or core.percent_from_text(combined, core.TOTAL_THC_PATTERNS)
+            rating_value, review_value = core.rating_pair(rating, review_count)
+        else:
+            thca_values = [core.num(value) for value in core.POTENCY.findall(combined)]
+            thca = max((value for value in thca_values if value is not None and value <= 100), default=None)
+            parsed_delta9 = None
+            parsed_total = None
+            rating_value = None
+            review_value = None
         row: dict[str, Any] = {
             "id": hashlib.sha256(f"{source_id}|{normalized_url}|{clean_variant}".encode()).hexdigest()[:24],
             "source_id": source_id,
             "vendor": vendor,
             "name": clean_name,
             "source_title": clean_name,
+            "description": clean_description,
             "url": normalized_url,
             "public_purchase_url": normalized_url if classification.permits_public_purchase_link else None,
             "image": core.url(image, route[1]) if image else "",
@@ -158,6 +173,10 @@ def install_multi_product_runtime(reliability: Any) -> dict[str, Any]:
             **quantity,
             **price_fields,
             "thca": thca if classification.primary_type == "cannabis_flower" else None,
+            "delta9_thc": parsed_delta9 if classification.primary_type == "cannabis_flower" else None,
+            "direct_total_thc": parsed_total if classification.primary_type == "cannabis_flower" else None,
+            "rating": rating_value,
+            "review_count": review_value,
             "availability": core.availability(stock),
             "variant": clean_variant,
             "source_type": route[0],
