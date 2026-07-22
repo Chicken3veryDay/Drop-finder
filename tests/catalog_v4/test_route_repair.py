@@ -101,6 +101,15 @@ class RouteRepairTests(unittest.TestCase):
         bay = next(source for source in worker.core.SOURCES if source[0] == "bay_smokes")
         self.assertTrue(all("bay-smokes.com" not in route[1] for route in bay[2]))
 
+
+    def test_arete_repair_prioritizes_current_flower_category(self):
+        routes = route_repair.ROUTE_REPAIRS["arete"]
+        self.assertEqual(routes[0], (
+            "html",
+            "https://arete.shop/l/national/products/category/thca-flower",
+            "thca_flower",
+        ))
+
     def test_first_party_price_stock_and_image_enrichment(self):
         payload = '''<script type="application/ld+json">{"@type":"Product","name":"Blue Dream THCA Flower","image":"/image.jpg","offers":{"@type":"Offer","price":"49.95","availability":"https://schema.org/InStock"}}</script><div data-product-price-without-tax-value="59.95">Add to cart</div>'''
         values = route_repair.enrich_meta_values(Core, lambda _payload: {}, payload)

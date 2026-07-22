@@ -189,6 +189,119 @@ class ProductDetailReliabilityTests(unittest.TestCase):
         self.assertEqual(verification_route["verification_failure_reasons"], {"product_detail_fetch_error": 1})
         self.assertEqual(verification_route["verification_failure_records"][0]["product_id"], "remote-2")
 
+
+    def test_redundant_partial_fallback_is_diagnostic_only(self) -> None:
+        original_scan = self.worker.aggregate.scan_all_routes
+        original_fallback_scan = detail_reliability._fallback_scan
+        original_fallback = self.worker.FALLBACK_HTML_ROUTES.get("fixture")
+
+        def scan(_source: tuple):
+            return [self.direct_product()], {
+                "source_id": "fixture",
+                "name": "Fixture Vendor",
+                "route_results": [{
+                    "route_id": "fixture-1",
+                    "url": "https://example.test/collection",
+                    "source_type": "shopify",
+                    "status": "healthy",
+                    "http_status": 200,
+                    "products": 1,
+                }],
+            }
+
+        fallback_route = {
+            "route_id": "fixture-fallback-1",
+            "url": "https://example.test/collection",
+            "source_type": "html_card_product_detail",
+            "status": "degraded",
+            "candidates": 2,
+            "products": 1,
+            "admitted_products": 0,
+            "verification_failures": 1,
+            "verification_failure_reasons": {"product_detail_fetch_error": 1},
+            "verification_failure_records": [{
+                "product_id": "failed",
+                "url": "https://example.test/products/failed",
+                "reason": "product_detail_fetch_error",
+                "attempts": 3,
+                "retryable": True,
+            }],
+            "verification_rejections": 0,
+            "retry_attempts": 2,
+        }
+
+        self.worker.aggregate.scan_all_routes = scan
+        self.worker.FALLBACK_HTML_ROUTES["fixture"] = ["https://example.test/collection"]
+        detail_reliability._fallback_scan = lambda *_args: ([], [fallback_route])
+        try:
+            rows, status = self.worker.scan_source(("fixture", "Fixture Vendor", []))
+        finally:
+            self.worker.aggregate.scan_all_routes = original_scan
+            detail_reliability._fallback_scan = original_fallback_scan
+            if original_fallback is None:
+                self.worker.FALLBACK_HTML_ROUTES.pop("fixture", None)
+            else:
+                self.worker.FALLBACK_HTML_ROUTES["fixture"] = original_fallback
+
+        self.assertEqual([row["id"] for row in rows], ["direct"])
+        self.assertTrue(status["admitted"])
+        self.assertEqual(status["status"], "healthy")
+        self.assertEqual(status["health_reason_codes"], [])
+        self.assertEqual(status["quality"]["verification_failures"], 1)
+        self.assertEqual(status["quality"]["blocking_verification_failures"], 0)
+        self.assertEqual(status["route_results"][-1]["admitted_products"], 0)
+
+    def test_all_forbidden_retrieval_routes_use_precise_reason(self) -> None:
+        original_scan = self.worker.aggregate.scan_all_routes
+        original_fallback = self.worker.FALLBACK_HTML_ROUTES.pop("fixture", None)
+
+        def scan(_source: tuple):
+            return [], {
+                "source_id": "fixture",
+                "name": "Fixture Vendor",
+                "route_results": [
+                    {"route_id": "fixture-1", "url": "https://example.test/one", "status": "http_error", "http_status": 403},
+                    {"route_id": "fixture-2", "url": "https://example.test/two", "status": "http_error", "http_status": 403},
+                ],
+            }
+
+        self.worker.aggregate.scan_all_routes = scan
+        try:
+            rows, status = self.worker.scan_source(("fixture", "Fixture Vendor", []))
+        finally:
+            self.worker.aggregate.scan_all_routes = original_scan
+            if original_fallback is not None:
+                self.worker.FALLBACK_HTML_ROUTES["fixture"] = original_fallback
+
+        self.assertEqual(rows, [])
+        self.assertFalse(status["admitted"])
+        self.assertEqual(status["status"], "quarantined")
+        self.assertEqual(status["reason_codes"], ["source_access_forbidden"])
+
+    def test_healthy_empty_routes_remain_no_qualifying_products(self) -> None:
+        original_scan = self.worker.aggregate.scan_all_routes
+        original_fallback = self.worker.FALLBACK_HTML_ROUTES.pop("fixture", None)
+
+        def scan(_source: tuple):
+            return [], {
+                "source_id": "fixture",
+                "name": "Fixture Vendor",
+                "route_results": [
+                    {"route_id": "fixture-1", "url": "https://example.test/empty", "status": "empty", "http_status": 200},
+                ],
+            }
+
+        self.worker.aggregate.scan_all_routes = scan
+        try:
+            rows, status = self.worker.scan_source(("fixture", "Fixture Vendor", []))
+        finally:
+            self.worker.aggregate.scan_all_routes = original_scan
+            if original_fallback is not None:
+                self.worker.FALLBACK_HTML_ROUTES["fixture"] = original_fallback
+
+        self.assertEqual(rows, [])
+        self.assertEqual(status["reason_codes"], ["no_qualifying_products"])
+
     def test_fallback_candidate_uses_the_same_retry_contract(self) -> None:
         calls = 0
         candidate = {
@@ -211,6 +324,64 @@ class ProductDetailReliabilityTests(unittest.TestCase):
         self.assertEqual(calls, 2)
         self.assertEqual(candidate[detail_reliability._OUTCOME_KEY]["kind"], "verified")
         self.assertEqual(candidate[detail_reliability._OUTCOME_KEY]["attempts"], 2)
+
+
+    def test_partial_fallback_route_is_atomic(self) -> None:
+        original_fallback = self.worker.FALLBACK_HTML_ROUTES.get("fixture")
+        self.worker.FALLBACK_HTML_ROUTES["fixture"] = ["https://example.test/collection"]
+        collection = """
+        <a href="/products/good">Blue Dream THCA Flower</a>
+        <a href="/products/bad">Mystery Product</a>
+        """
+
+        def fetch(target: str):
+            if target.endswith("/collection"):
+                return collection, "text/html", 200
+            if target.endswith("/good"):
+                return self.qualifying_detail()
+            raise TimeoutError("persistent fallback timeout")
+
+        self.worker.core.fetch = fetch
+        try:
+            rows, attempts = detail_reliability._fallback_scan(
+                self.worker,
+                self.reliability,
+                ("fixture", "Fixture Vendor", []),
+            )
+        finally:
+            if original_fallback is None:
+                self.worker.FALLBACK_HTML_ROUTES.pop("fixture", None)
+            else:
+                self.worker.FALLBACK_HTML_ROUTES["fixture"] = original_fallback
+
+        self.assertEqual(rows, [])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["status"], "degraded")
+        self.assertEqual(attempts[0]["products"], 1)
+        self.assertEqual(attempts[0]["admitted_products"], 0)
+        self.assertEqual(attempts[0]["verification_failures"], 1)
+
+    def test_merge_keeps_nonblocking_fallback_failures_diagnostic(self) -> None:
+        public = autonomous_merge._source_status({
+            "source_id": "fixture",
+            "name": "Fixture Vendor",
+            "status": "healthy",
+            "quality": {"products": 1, "blocking_verification_failures": 0},
+            "route_results": [{
+                "route_id": "fixture-fallback-1",
+                "source_type": "html_card_product_detail",
+                "status": "degraded",
+                "products": 1,
+                "admitted_products": 0,
+                "verification_failures": 1,
+                "verification_failure_reasons": {"product_detail_fetch_error": 1},
+            }],
+        }, 1, 0)
+
+        self.assertEqual(public["status"], "healthy")
+        self.assertEqual(public["verification_failures"], 1)
+        self.assertEqual(public["blocking_verification_failures"], 0)
+        self.assertEqual(public["route_results"][0]["admitted_products"], 0)
 
     def test_merge_preserves_degraded_health_and_public_failure_records(self) -> None:
         public = autonomous_merge._source_status({

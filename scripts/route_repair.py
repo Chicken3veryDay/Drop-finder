@@ -19,8 +19,9 @@ Route = tuple[str, str, str]
 # Routes stay first-party and unauthenticated.
 ROUTE_REPAIRS: dict[str, tuple[Route, ...]] = {
     "arete": (
-        ("html", "https://arete.shop/", "storewide"),
+        ("html", "https://arete.shop/l/national/products/category/thca-flower", "thca_flower"),
         ("html", "https://arete.shop/l/national/products", "storewide"),
+        ("html", "https://arete.shop/", "storewide"),
     ),
     "bay_smokes": (
         ("shopify", "https://baysmokes.com/collections/thca-flower/products.json?limit=250", "thca_flower"),

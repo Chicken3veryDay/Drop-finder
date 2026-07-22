@@ -283,12 +283,14 @@ def _fallback_scan(worker: Any, reliability: Any, source: tuple) -> tuple[list[d
                 for candidate in candidates
                 if (outcome := candidate.get(_OUTCOME_KEY, {})).get("kind") == "rejection" and outcome.get("record")
             ]
+            accepted = extracted if not failures else []
             result.update(
                 http_status=http_status,
                 content_type=content_type,
                 status="degraded" if failures else "healthy" if extracted else "empty",
                 candidates=len(candidates),
                 products=len(extracted),
+                admitted_products=len(accepted),
                 verification_failures=len(failures),
                 verification_failure_reasons=_reason_counts(failures),
                 verification_failure_records=failures[:_FAILURE_RECORD_LIMIT],
@@ -296,7 +298,7 @@ def _fallback_scan(worker: Any, reliability: Any, source: tuple) -> tuple[list[d
                 verification_rejection_reasons=_reason_counts(rejections),
                 retry_attempts=sum(max(0, int((candidate.get(_OUTCOME_KEY) or {}).get("attempts") or 1) - 1) for candidate in candidates),
             )
-            rows.extend(extracted)
+            rows.extend(accepted)
         except Exception as error:
             result.update(status="error", error=f"{type(error).__name__}: {_bounded_text(error)}")
         result["duration_seconds"] = round(time.monotonic() - started, 3)
@@ -330,22 +332,32 @@ def _diagnostic_scan_source(worker: Any, reliability: Any, source: tuple) -> tup
         products = worker.resolve_route_overlaps([*products, *fallback])
     admitted, reasons, quality = worker.gate(products)
     status = dict(status)
-    route_results = [*list(status.get("route_results") or []), verification_route, *fallback_results]
+    retrieval_routes = list(status.get("route_results") or [])
+    if (
+        not products
+        and reasons == ["no_qualifying_products"]
+        and retrieval_routes
+        and all(int(route.get("http_status") or 0) == 403 for route in retrieval_routes)
+    ):
+        reasons = ["source_access_forbidden"]
+    route_results = [*retrieval_routes, verification_route, *fallback_results]
     total_failures = sum(int(route.get("verification_failures") or 0) for route in route_results)
+    blocking_failures = len(primary_failures)
     total_rejections = sum(int(route.get("verification_rejections") or 0) for route in route_results)
     quality = {
         **quality,
         "discovered_products": diagnostics["discovered_products"],
         "verification_failures": total_failures,
+        "blocking_verification_failures": blocking_failures,
         "verification_rejections": total_rejections,
     }
     healthy_routes = [route for route in route_results if route.get("status") == "healthy" and route.get("url")]
     status.update(
         admitted=admitted,
-        status="quarantined" if not admitted else "degraded" if total_failures else "healthy",
+        status="quarantined" if not admitted else "degraded" if blocking_failures else "healthy",
         products=len(products),
         reason_codes=reasons,
-        health_reason_codes=["product_detail_verification_incomplete"] if total_failures else [],
+        health_reason_codes=["product_detail_verification_incomplete"] if blocking_failures else [],
         quality=quality,
         worker="cloud_scan_v2+bounded_product_detail_verifier",
         route_results=route_results,
