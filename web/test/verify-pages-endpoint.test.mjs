@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import test from "node:test";
+import { verifyPagesEndpoint } from "../scripts/verify-pages-endpoint.mjs";
+
+const compactText = JSON.stringify({
+  generation_id: "generation-test",
+  product_count: 0,
+  in_stock_variant_count: 0,
+  products: [],
+});
+
+const bodies = new Map([
+  [
+    "",
+    '<!doctype html><link rel="manifest" href="./manifest.webmanifest"><link rel="icon" href="./icon.svg"><script src="./assets/app.js"></script>',
+  ],
+  [
+    "index.html",
+    '<!doctype html><link rel="manifest" href="./manifest.webmanifest"><link rel="icon" href="./icon.svg"><script src="./assets/app.js"></script>',
+  ],
+  [
+    "manifest.webmanifest",
+    JSON.stringify({ short_name: "DropFinder", start_url: "./", scope: "./" }),
+  ],
+  ["app-shell.json", JSON.stringify({ schema_version: "dropfinder-app-shell-v1", assets: [] })],
+  ["sw.js", "index.html manifest.webmanifest data/catalog.json data/status.json"],
+  ["data/catalog.json", JSON.stringify({ product_count: 0, products: [] })],
+  [
+    "data/status.json",
+    JSON.stringify({
+      degraded_sources: 0,
+      healthy_sources: 1,
+      enabled_sources: 1,
+      services: { publisher: "healthy" },
+    }),
+  ],
+  ["data/runtime.json", JSON.stringify({ zero_degraded_active_services: true })],
+  [
+    "data/catalog-v4/manifest.json",
+    JSON.stringify({
+      schema_version: "dropfinder-catalog-manifest-v4",
+      generation_id: "generation-test",
+      product_count: 0,
+      in_stock_variant_count: 0,
+      compact_index: {
+        sha256: createHash("sha256").update(compactText).digest("hex"),
+      },
+    }),
+  ],
+  ["data/catalog-v4/index.json", compactText],
+]);
+
+test("cache-busts every public endpoint request without changing evidence paths", async () => {
+  const requests = [];
+  const fetchImpl = async (value, options) => {
+    const url = new URL(value);
+    const prefix = "/Drop-finder/";
+    assert.ok(url.pathname.startsWith(prefix));
+    const path = url.pathname.slice(prefix.length);
+    requests.push({ url, options });
+    const body = bodies.get(path);
+    assert.notEqual(body, undefined, `unexpected endpoint path: ${path}`);
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "content-type": path.endsWith(".json") ? "application/json" : "text/plain",
+        "cache-control": "max-age=600",
+      },
+    });
+  };
+
+  const result = await verifyPagesEndpoint("https://example.test/Drop-finder/", {
+    fetchImpl,
+    verificationNonce: "release-123",
+  });
+
+  assert.equal(result.generationId, "generation-test");
+  assert.equal(requests.length, bodies.size);
+  for (const { url, options } of requests) {
+    assert.equal(url.searchParams.get("__dropfinder_verify"), "release-123");
+    assert.equal(options.cache, "no-store");
+    assert.equal(options.headers["Cache-Control"], "no-cache, no-store, max-age=0");
+    assert.equal(options.headers.Pragma, "no-cache");
+  }
+  for (const evidence of Object.values(result.endpoints)) {
+    assert.equal(evidence.path.includes("?"), false);
+  }
+});
+
+test("rejects an empty publication verification nonce", async () => {
+  await assert.rejects(
+    verifyPagesEndpoint("https://example.test/Drop-finder/", {
+      fetchImpl: async () => new Response(""),
+      verificationNonce: " ",
+    }),
+    /non-empty publication verification nonce/,
+  );
+});
