@@ -1,0 +1,53 @@
+name: Temporary Debug Metadata Fix
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    if: github.head_ref == 'fix/metadata-completeness'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/metadata-completeness
+          fetch-depth: 0
+      - name: Decode and check staged patch
+        shell: bash
+        run: |
+          set +e
+          mkdir -p metadata-debug
+          python - <<'PY' > metadata-debug/decode.log 2>&1
+          import base64, gzip, hashlib, pathlib, re
+          workflow = pathlib.Path('.github/workflows/tmp-apply-metadata-fix.yml').read_text(encoding='utf-8')
+          match = re.search(r"echo '([^']+)' \| base64", workflow)
+          if not match:
+              raise SystemExit('embedded patch payload not found')
+          encoded = match.group(1)
+          compressed = base64.b64decode(encoded, validate=True)
+          patch = gzip.decompress(compressed)
+          pathlib.Path('/tmp/metadata-fix.patch').write_bytes(patch)
+          print('encoded_bytes', len(encoded))
+          print('compressed_bytes', len(compressed))
+          print('patch_bytes', len(patch))
+          print('patch_sha256', hashlib.sha256(patch).hexdigest())
+          PY
+          echo "decode_exit=$?" >> metadata-debug/status.txt
+          git apply --check --verbose /tmp/metadata-fix.patch > metadata-debug/apply-check.log 2>&1
+          echo "apply_check_exit=$?" >> metadata-debug/status.txt
+          python -m py_compile scripts/cloud_scan.py scripts/catalog_v4/builder.py scripts/multi_product/runtime.py > metadata-debug/current-compile.log 2>&1
+          echo "current_compile_exit=$?" >> metadata-debug/status.txt
+          cat metadata-debug/status.txt
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: metadata-fix-debug
+          path: metadata-debug
+          if-no-files-found: error
+          retention-days: 7
