@@ -26,13 +26,13 @@ jobs:
 
           source = Path('scripts/source_recovery.py')
           text = source.read_text(encoding='utf-8')
-          anchor = '''_JSON_PRICE = re.compile(
-              r'["\\'](?:price|lowPrice|salePrice|priceValue|priceAmount)["\\']\\s*:\\s*'
-              r'["\\']?([0-9]{1,5}(?:\\.[0-9]{1,2})?)',
-              re.I,
-          )
-          '''
-          replacement = anchor + '''_MINOR_UNIT = re.compile(
+
+          if '_MINOR_UNIT = re.compile(' not in text:
+              marker = '_DOLLAR = re.compile'
+              index = text.find(marker)
+              if index < 0:
+                  raise SystemExit('dollar-regex insertion marker missing')
+              addition = '''_MINOR_UNIT = re.compile(
               r'["\\'](?:currency_minor_unit|currencyMinorUnit)["\\']\\s*:\\s*["\\']?([0-4])',
               re.I,
           )
@@ -41,20 +41,14 @@ jobs:
               re.I,
           )
           '''
-          if '_MINOR_UNIT = re.compile(' not in text:
-              if text.count(anchor) != 1:
-                  raise SystemExit(f'expected one JSON price anchor, found {text.count(anchor)}')
-              text = text.replace(anchor, replacement, 1)
+              text = text[:index] + addition + text[index:]
 
-          valid_anchor = '''def _valid_price(core: Any, value: Any) -> float | None:
-              parsed = core.num(value)
-              if parsed is None or parsed < 1 or parsed > 10000:
-                  return None
-              return parsed
-
-
-          '''
-          valid_replacement = valid_anchor + '''def _json_price(core: Any, raw: str, payload: str) -> float | None:
+          if 'def _json_price(' not in text:
+              marker = 'def extract_first_party_price('
+              index = text.find(marker)
+              if index < 0:
+                  raise SystemExit('price-function insertion marker missing')
+              addition = '''def _json_price(core: Any, raw: str, payload: str) -> float | None:
               parsed = _valid_price(core, raw)
               if parsed is None:
                   return None
@@ -71,49 +65,45 @@ jobs:
 
 
           '''
-          if 'def _json_price(' not in text:
-              if text.count(valid_anchor) != 1:
-                  raise SystemExit(f'expected one valid-price anchor, found {text.count(valid_anchor)}')
-              text = text.replace(valid_anchor, valid_replacement, 1)
+              text = text[:index] + addition + text[index:]
 
-          old_loop = '''        for raw in _JSON_PRICE.findall(payload[:1_500_000]):
-              parsed = _valid_price(core, raw)
-              if parsed is not None:
-                  candidates.append(parsed)
+          old = '''    if not candidates:
+              for raw in _JSON_PRICE.findall(payload[:1_500_000]):
+                  parsed = _valid_price(core, raw)
           '''
-          new_loop = '''        for raw in _JSON_PRICE.findall(payload[:1_500_000]):
-              parsed = _json_price(core, raw, payload)
-              if parsed is not None:
-                  candidates.append(parsed)
+          new = '''    if not candidates:
+              for raw in _JSON_PRICE.findall(payload[:1_500_000]):
+                  parsed = _json_price(core, raw, payload)
           '''
-          if new_loop not in text:
-              if text.count(old_loop) != 1:
-                  raise SystemExit(f'expected one JSON price loop, found {text.count(old_loop)}')
-              text = text.replace(old_loop, new_loop, 1)
+          if new not in text:
+              if text.count(old) != 1:
+                  raise SystemExit(f'expected one JSON fallback loop, found {text.count(old)}')
+              text = text.replace(old, new, 1)
           source.write_text(text, encoding='utf-8')
 
           test_path = Path('tests/catalog_v4/test_source_recovery.py')
           tests = test_path.read_text(encoding='utf-8')
-          marker = '''        self.assertIsNone(source_recovery.extract_first_party_price(PriceCore, unrelated))
-          '''
-          addition = marker + '''
-              def test_json_price_minor_units_are_normalized_only_with_framework_evidence(self):
-                  woo_minor = '<script>{"currency_minor_unit":2,"price":"2900"}</script>'
-                  shopify_theme = '<script>Shopify.theme={};{"price":3750,"price_min":3750}</script>'
-                  ordinary_dollars = '<script>{"price":1600}</script>'
-                  explicit_decimal = '<script>{"price":"37.50"}</script>'
-                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, woo_minor), 29.0)
-                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, shopify_theme), 37.5)
-                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, ordinary_dollars), 1600.0)
-                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, explicit_decimal), 37.5)
-          '''
           if 'test_json_price_minor_units_are_normalized_only_with_framework_evidence' not in tests:
-              if tests.count(marker) != 1:
-                  raise SystemExit(f'expected one price-test marker, found {tests.count(marker)}')
-              tests = tests.replace(marker, addition, 1)
+              marker = '    def test_route_overrides_remove_known_dead_paths(self):\n'
+              index = tests.find(marker)
+              if index < 0:
+                  raise SystemExit('source-recovery test insertion marker missing')
+              addition = '''    def test_json_price_minor_units_are_normalized_only_with_framework_evidence(self):
+              woo_minor = '<script>{"currency_minor_unit":2,"price":"2900"}</script>'
+              shopify_theme = '<script>Shopify.theme={};{"price":3750,"price_min":3750}</script>'
+              ordinary_dollars = '<script>{"price":1600}</script>'
+              explicit_decimal = '<script>{"price":"37.50"}</script>'
+              self.assertEqual(source_recovery.extract_first_party_price(PriceCore, woo_minor), 29.0)
+              self.assertEqual(source_recovery.extract_first_party_price(PriceCore, shopify_theme), 37.5)
+              self.assertEqual(source_recovery.extract_first_party_price(PriceCore, ordinary_dollars), 1600.0)
+              self.assertEqual(source_recovery.extract_first_party_price(PriceCore, explicit_decimal), 37.5)
+
+          '''
+              tests = tests[:index] + addition + tests[index:]
           test_path.write_text(tests, encoding='utf-8')
           PY
           git diff --check
+          python -m py_compile scripts/source_recovery.py
           python -m unittest -v tests.catalog_v4.test_source_recovery
           git config user.name 'dropfinder-maintenance-bot'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
