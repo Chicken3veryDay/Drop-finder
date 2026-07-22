@@ -1,4 +1,4 @@
-name: Temporary Live Acceptance 761f
+name: Temporary Live Acceptance 761f v2
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ jobs:
   acceptance:
     name: ${{ matrix.profile }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 22
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +69,7 @@ jobs:
           const engine = process.env.ENGINE;
           const deviceName = process.env.DEVICE;
           const pageUrl = process.env.PAGE_URL;
+          const evidencePath = `live-acceptance-${profile}.json`;
           const expected = {
             generation: process.env.EXPECTED_GENERATION,
             products: Number(process.env.EXPECTED_PRODUCTS),
@@ -80,32 +81,79 @@ jobs:
           const browserType = browserTypes[engine];
           if (!browserType) throw new Error(`Unsupported engine: ${engine}`);
 
-          const browser = await browserType.launch({ headless: true });
-          const contextOptions = {
-            ...(deviceName ? devices[deviceName] : { viewport: { width: 1440, height: 1000 } }),
-            serviceWorkers: 'allow',
-          };
-          const context = await browser.newContext(contextOptions);
-          const page = await context.newPage();
           const pageErrors = [];
-          page.on('pageerror', (error) => pageErrors.push(String(error?.stack || error)));
+          const consoleErrors = [];
+          const observed = {
+            profile,
+            engine,
+            device: deviceName || 'desktop',
+            navigationAttempts: 0,
+            controllerAttempts: 0,
+          };
+          let browser;
+          let context;
+
+          const persist = async (status, error = '') => {
+            const result = {
+              ...observed,
+              status,
+              error,
+              pageErrors,
+              consoleErrors,
+              checkedAt: new Date().toISOString(),
+            };
+            await writeFile(evidencePath, `${JSON.stringify(result, null, 2)}\n`);
+            console.log(JSON.stringify(result, null, 2));
+          };
 
           try {
-            const response = await page.goto(`${pageUrl}?live_acceptance=${Date.now()}`, {
-              waitUntil: 'domcontentloaded',
-              timeout: 60_000,
+            browser = await browserType.launch({ headless: true });
+            const contextOptions = {
+              ...(deviceName ? devices[deviceName] : { viewport: { width: 1440, height: 1000 } }),
+              serviceWorkers: 'allow',
+            };
+            context = await browser.newContext(contextOptions);
+            const page = await context.newPage();
+            page.on('pageerror', (error) => pageErrors.push(String(error?.stack || error)));
+            page.on('console', (message) => {
+              if (message.type() === 'error') consoleErrors.push(message.text());
             });
-            if (!response || !response.ok()) {
-              throw new Error(`Initial navigation failed: ${response?.status()}`);
+
+            let controlled = false;
+            for (let attempt = 1; attempt <= 4 && !controlled; attempt += 1) {
+              observed.navigationAttempts = attempt;
+              const response = await page.goto(`${pageUrl}?live_acceptance=${Date.now()}-${attempt}`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 60_000,
+              });
+              observed.lastNavigationStatus = response?.status() ?? null;
+              if (!response || !response.ok()) {
+                throw new Error(`Navigation failed: ${response?.status()}`);
+              }
+              await page.waitForFunction(
+                () => document.body?.innerText?.trim().length > 100,
+                null,
+                { timeout: 30_000 },
+              );
+              await page.evaluate(async () => {
+                if (!('serviceWorker' in navigator)) throw new Error('Service workers unavailable');
+                await navigator.serviceWorker.ready;
+              });
+              observed.controllerAttempts = attempt;
+              try {
+                await page.waitForFunction(
+                  () => Boolean(navigator.serviceWorker?.controller),
+                  null,
+                  { timeout: 20_000 },
+                );
+                controlled = true;
+              } catch {
+                if (attempt < 4) {
+                  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
+                  await page.waitForTimeout(1_500);
+                }
+              }
             }
-            await page.waitForFunction(() => document.body?.innerText?.trim().length > 100, null, { timeout: 30_000 });
-            await page.evaluate(async () => {
-              if (!('serviceWorker' in navigator)) throw new Error('Service workers unavailable');
-              await navigator.serviceWorker.ready;
-            });
-            await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
-            await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller), null, { timeout: 30_000 });
-            await page.waitForTimeout(2_000);
 
             const live = await page.evaluate(async () => {
               const nonce = Date.now();
@@ -127,9 +175,29 @@ jobs:
                 indexBytes: JSON.stringify(index).length,
                 controller: navigator.serviceWorker.controller?.scriptURL || '',
                 activeWorker: registration.active?.scriptURL || '',
+                installingWorker: registration.installing?.scriptURL || '',
+                waitingWorker: registration.waiting?.scriptURL || '',
                 bodyText: document.body.innerText,
-                interactiveElements: document.querySelectorAll('a,button,input,select,[role="button"],[role="listitem"],article').length,
+                interactiveElements: document.querySelectorAll(
+                  'a,button,input,select,[role="button"],[role="listitem"],article',
+                ).length,
               };
+            });
+            Object.assign(observed, {
+              generationId: live.manifest.generation_id,
+              legacyProducts: live.runtime.products,
+              catalogV4Products: live.manifest.product_count,
+              variants: live.manifest.in_stock_variant_count,
+              activeSources: live.runtime.active_sources,
+              runtimeStatus: live.runtime.status,
+              zeroDegraded: live.runtime.zero_degraded_active_services,
+              controller: live.controller,
+              activeWorker: live.activeWorker,
+              installingWorker: live.installingWorker,
+              waitingWorker: live.waitingWorker,
+              indexType: live.indexType,
+              indexBytes: live.indexBytes,
+              interactiveElements: live.interactiveElements,
             });
 
             const terminalPattern = /(unable to (?:load|activate)|generation[_ -]incomplete|catalog generation failed|terminal generation error)/i;
@@ -140,37 +208,25 @@ jobs:
             if (Number(live.runtime.products) !== expected.products) throw new Error(`Runtime product mismatch: ${live.runtime.products}`);
             if (Number(live.runtime.active_sources) !== expected.sources) throw new Error(`Active source mismatch: ${live.runtime.active_sources}`);
             if (live.runtime.status !== 'healthy' || live.runtime.zero_degraded_active_services !== true) throw new Error('Runtime is not healthy and zero-degraded');
-            if (!live.controller.endsWith('/sw.js') || !live.activeWorker.endsWith('/sw.js')) throw new Error('Service worker did not control the fresh profile');
+            if (!live.activeWorker.endsWith('/sw.js')) throw new Error(`No active service worker: ${live.activeWorker}`);
+            if (!controlled || !live.controller.endsWith('/sw.js')) throw new Error(`Service worker did not control the fresh profile after ${observed.controllerAttempts} attempts`);
             if (live.indexBytes < 10_000) throw new Error(`Catalog index unexpectedly small: ${live.indexBytes}`);
             if (live.interactiveElements < 5) throw new Error(`Application did not render enough interactive content: ${live.interactiveElements}`);
             if (pageErrors.length) throw new Error(`Uncaught page errors: ${pageErrors.join(' | ')}`);
 
-            const result = {
-              profile,
-              engine,
-              device: deviceName || 'desktop',
-              status: 'passed',
-              generationId: live.manifest.generation_id,
-              legacyProducts: live.runtime.products,
-              catalogV4Products: live.manifest.product_count,
-              variants: live.manifest.in_stock_variant_count,
-              activeSources: live.runtime.active_sources,
-              controller: live.controller,
-              activeWorker: live.activeWorker,
-              indexBytes: live.indexBytes,
-              interactiveElements: live.interactiveElements,
-              pageErrors,
-              checkedAt: new Date().toISOString(),
-            };
-            await writeFile(`live-acceptance-${profile}.json`, `${JSON.stringify(result, null, 2)}\n`);
-            console.log(JSON.stringify(result, null, 2));
+            await persist('passed');
+          } catch (error) {
+            const message = String(error?.stack || error);
+            await persist('failed', message);
+            throw error;
           } finally {
-            await context.close();
-            await browser.close();
+            await context?.close().catch(() => {});
+            await browser?.close().catch(() => {});
           }
           JS
           node live-acceptance.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: live-acceptance-${{ matrix.profile }}
           path: web/live-acceptance-${{ matrix.profile }}.json
@@ -178,6 +234,7 @@ jobs:
           retention-days: 90
 
   aggregate:
+    if: always()
     needs: acceptance
     runs-on: ubuntu-24.04
     steps:
@@ -192,19 +249,20 @@ jobs:
           import json
           from pathlib import Path
           rows = [json.loads(path.read_text()) for path in sorted(Path('evidence').glob('live-acceptance-*.json'))]
-          if len(rows) != 5 or any(row.get('status') != 'passed' for row in rows):
-              raise SystemExit('five-profile acceptance evidence is incomplete')
           result = {
-              'schema_version': 'dropfinder-live-acceptance-v1',
+              'schema_version': 'dropfinder-live-acceptance-v2',
               'generation_id': '761fa9cf20252f1943b47c8e2945f518',
               'profile_count': len(rows),
-              'status': 'passed',
+              'status': 'passed' if len(rows) == 5 and all(row.get('status') == 'passed' for row in rows) else 'failed',
               'profiles': rows,
           }
           Path('live-scraper-recovery-acceptance.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
           print(json.dumps(result, indent=2, sort_keys=True))
+          if result['status'] != 'passed':
+              raise SystemExit('five-profile acceptance evidence is incomplete or failed')
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: live-scraper-recovery-acceptance
           path: live-scraper-recovery-acceptance.json
