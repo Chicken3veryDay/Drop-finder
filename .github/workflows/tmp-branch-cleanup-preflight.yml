@@ -1,4 +1,4 @@
-name: Temporary Branch Cleanup Preflight
+name: Temporary Branch Cleanup Executor
 
 on:
   pull_request:
@@ -6,24 +6,55 @@ on:
 
 permissions:
   actions: read
-  contents: read
-  pull-requests: read
+  contents: write
+  pull-requests: write
 
 jobs:
-  inventory:
+  cleanup:
     if: github.head_ref == 'trigger/cache-convergence-monitor'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - name: Build fail-closed branch graph
+      - name: Wait for sibling monitor runs
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            gh api "repos/${REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" > sibling-runs.json
+            if python - <<'PY'
+          import json, os, sys
+          current = int(os.environ['CURRENT_RUN_ID'])
+          runs = json.load(open('sibling-runs.json', encoding='utf-8')).get('workflow_runs', [])
+          active = [
+              {'id': run.get('id'), 'name': run.get('name'), 'status': run.get('status')}
+              for run in runs
+              if int(run.get('id') or 0) != current and run.get('status') != 'completed'
+          ]
+          print(json.dumps(active, sort_keys=True))
+          sys.exit(0 if not active else 1)
+          PY
+            then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Sibling monitor runs did not settle.' >&2
+          exit 1
+      - name: Build final deletion proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -37,6 +68,7 @@ jobs:
 
           repo = os.environ['REPOSITORY']
           owner = repo.split('/', 1)[0]
+          current_run = int(os.environ['CURRENT_RUN_ID'])
 
           def run(*args, check=True):
               proc = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -47,18 +79,30 @@ jobs:
           def gh_json(path):
               return json.loads(subprocess.check_output(['gh', 'api', '--paginate', path], text=True))
 
-          branch_pages = gh_json(f'repos/{repo}/branches?per_page=100')
-          branches = branch_pages if isinstance(branch_pages, list) else []
+          branches = gh_json(f'repos/{repo}/branches?per_page=100')
           open_prs = gh_json(f'repos/{repo}/pulls?state=open&per_page=100')
           open_heads = {pr['head']['ref']: pr['number'] for pr in open_prs}
+          active_runs = []
+          for state in ('in_progress', 'queued'):
+              payload = gh_json(f'repos/{repo}/actions/runs?status={state}&per_page=100')
+              active_runs.extend(payload.get('workflow_runs', []) if isinstance(payload, dict) else [])
+          active_heads = {
+              run.get('head_branch')
+              for run in active_runs
+              if int(run.get('id') or 0) != current_run and run.get('head_branch')
+          }
 
           protected_names = {'main', 'gh-pages'}
           temp_patterns = (
               '.github/workflows/tmp-*',
+              '.github/tmp-*',
+              '.github/tmp/*',
               '.tmp/*',
               '.trigger-*',
               '.monitor-*',
               '.production-monitor-*',
+              'verification/*',
+              'scripts/tmp_*',
           )
 
           def ancestor(ref, target):
@@ -74,7 +118,18 @@ jobs:
               return [line for line in diff.splitlines() if line]
 
           def temp_only(paths):
-              return bool(paths) and all(any(fnmatch.fnmatch(path, pattern) for pattern in temp_patterns) for path in paths)
+              return bool(paths) and all(
+                  any(fnmatch.fnmatch(path, pattern) for pattern in temp_patterns)
+                  for path in paths
+              )
+
+          def content_equivalent_to_main(ref, paths):
+              if not paths:
+                  return False
+              return run(
+                  'git', 'diff', '--quiet', ref, 'refs/remotes/origin/main', '--', *paths,
+                  check=False,
+              ).returncode == 0
 
           ledger = []
           for item in sorted(branches, key=lambda row: row['name']):
@@ -93,9 +148,11 @@ jobs:
                       pr['number'] for pr in prs
                       if pr.get('merged_at') and (pr.get('head') or {}).get('sha') == tip
                   ]
+
               reasons = []
               safe = False
-              if name in protected_names or item.get('protected'):
+              protected = bool(item.get('protected')) or name in protected_names
+              if protected:
                   reasons.append('protected')
               else:
                   if ancestor(ref, 'refs/remotes/origin/main'):
@@ -110,14 +167,22 @@ jobs:
                   if temp_only(paths):
                       safe = True
                       reasons.append('temporary_only_unique_diff')
+                  if content_equivalent_to_main(ref, paths):
+                      safe = True
+                      reasons.append('unique_paths_byte_equivalent_on_main')
                   if name in open_heads and open_heads[name] != 456:
                       safe = False
                       reasons.append(f'open_pr_{open_heads[name]}')
+                  if name in active_heads and name != 'trigger/cache-convergence-monitor':
+                      safe = False
+                      reasons.append('active_workflow_branch')
+
               ledger.append({
                   'branch': name,
                   'tip': tip,
-                  'protected': bool(item.get('protected')) or name in protected_names,
+                  'protected': protected,
                   'open_pr': open_heads.get(name),
+                  'active_workflow_branch': name in active_heads,
                   'changed_paths_from_main_merge_base': paths,
                   'exact_tip_merged_prs': merged_exact,
                   'safe_to_delete': safe,
@@ -125,27 +190,97 @@ jobs:
               })
 
           payload = {
-              'schema_version': 'dropfinder-branch-cleanup-preflight-v1',
+              'schema_version': 'dropfinder-branch-cleanup-proof-v1',
               'main': run('git', 'rev-parse', 'refs/remotes/origin/main').stdout.strip(),
               'gh_pages': run('git', 'rev-parse', 'refs/remotes/origin/gh-pages').stdout.strip(),
               'open_prs': [
                   {'number': pr['number'], 'head': pr['head']['ref'], 'base': pr['base']['ref']}
                   for pr in open_prs
               ],
+              'active_workflow_heads': sorted(active_heads),
               'branches': ledger,
-              'safe_delete_count': sum(1 for row in ledger if row['safe_to_delete']),
+              'planned_deletions': [row['branch'] for row in ledger if row['safe_to_delete']],
               'retained_unprotected': [
                   row['branch'] for row in ledger
                   if not row['protected'] and not row['safe_to_delete']
               ],
           }
-          with open('branch-cleanup-preflight.json', 'w', encoding='utf-8') as handle:
+          with open('branch-cleanup-proof.json', 'w', encoding='utf-8') as handle:
               json.dump(payload, handle, indent=2, sort_keys=True)
           print(json.dumps(payload, indent=2, sort_keys=True))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: branch-cleanup-preflight
-          path: branch-cleanup-preflight.json
+          name: branch-cleanup-proof
+          path: branch-cleanup-proof.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
+      - name: Close monitor PR and delete proven refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          repo = os.environ['REPOSITORY']
+          proof = json.load(open('branch-cleanup-proof.json', encoding='utf-8'))
+          retained = proof['retained_unprotected']
+          if retained:
+              raise SystemExit(f'Fail-closed: unclassified branches remain: {retained}')
+
+          current_head = 'trigger/cache-convergence-monitor'
+          current_base = 'verification/cache-convergence-monitor'
+          planned = proof['planned_deletions']
+          ordered = [name for name in planned if name not in {current_head, current_base}]
+          ordered.extend([name for name in (current_head, current_base) if name in planned])
+
+          subprocess.check_call([
+              'gh', 'api', '--method', 'PATCH', f'repos/{repo}/pulls/456',
+              '-f', 'state=closed',
+              '-f', 'body=Temporary read-only monitor and fail-closed cleanup executor retired after exact-source Autonomous Cloud run 29961929686, Cloud CI run 29961929732, cache-busted public verification, canonical receipt creation, and branch reachability proof. Never merge.',
+          ])
+
+          deleted = []
+          failures = []
+          for name in ordered:
+              proc = subprocess.run(
+                  ['gh', 'api', '--method', 'DELETE', f'repos/{repo}/git/refs/heads/{name}'],
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+              )
+              if proc.returncode == 0:
+                  deleted.append(name)
+              else:
+                  failures.append({'branch': name, 'stderr': proc.stderr.strip()})
+
+          remaining = json.loads(subprocess.check_output([
+              'gh', 'api', '--paginate', f'repos/{repo}/branches?per_page=100'
+          ], text=True))
+          result = {
+              'schema_version': 'dropfinder-branch-cleanup-result-v1',
+              'deleted': deleted,
+              'delete_failures': failures,
+              'remaining_branches': [row['name'] for row in remaining],
+              'expected_remaining': ['gh-pages', 'main'],
+          }
+          with open('branch-cleanup-result.json', 'w', encoding='utf-8') as handle:
+              json.dump(result, handle, indent=2, sort_keys=True)
+          print(json.dumps(result, indent=2, sort_keys=True))
+          if failures:
+              raise SystemExit('One or more proven branch deletions failed.')
+          if sorted(result['remaining_branches']) != sorted(result['expected_remaining']):
+              raise SystemExit(f"Unexpected branches remain: {result['remaining_branches']}")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: branch-cleanup-result
+          path: branch-cleanup-result.json
+          if-no-files-found: warn
+          retention-days: 90
