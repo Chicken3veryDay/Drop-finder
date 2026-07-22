@@ -1,0 +1,96 @@
+name: Temporary Apply Rating Provenance Fix
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'fix/rating-provenance-normalization'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/rating-provenance-normalization
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Apply semantic rating provenance verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          verify = Path('scripts/catalog_v4/verify.py')
+          text = verify.read_text(encoding='utf-8')
+          import_needle = 'from .selection import select_active_variant\n'
+          if 'from .normalization import rating\n' not in text:
+              if import_needle not in text:
+                  raise SystemExit('verify import anchor missing')
+              text = text.replace(import_needle, 'from .normalization import rating\n' + import_needle, 1)
+          old = '''                if (rating_provenance.get("raw_score"), rating_provenance.get("raw_count")) != (rating_value, review_count):
+                    raise VerificationError(f"rating provenance value mismatch: {product_id}")
+'''
+          new = '''                provenance_score, provenance_count, _ = rating(
+                    rating_provenance.get("raw_score"),
+                    rating_provenance.get("raw_count"),
+                )
+                if (provenance_score, provenance_count) != (rating_value, review_count):
+                    raise VerificationError(f"rating provenance value mismatch: {product_id}")
+'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('rating provenance comparison anchor missing')
+          verify.write_text(text, encoding='utf-8')
+
+          tests = Path('tests/catalog_v4/test_identity_rating_integrity.py')
+          text = tests.read_text(encoding='utf-8')
+          anchor = '    def test_newer_complete_pair_wins_and_partial_records_never_compose(self) -> None:\n'
+          regression = '''    def test_verifier_accepts_source_rating_precision_after_normalization(self) -> None:
+        result = build_catalog(
+            [
+                row(
+                    variant="3.5g",
+                    price=25,
+                    collected_at="2026-01-01T00:00:00Z",
+                    rating=3.6667,
+                    review_count=3,
+                )
+            ],
+            generated_at="2026-03-01T00:00:00Z",
+            detail_shards=1,
+        )
+        index_product = payload(result.files["catalog-v4/index.json"])["products"][0]
+        self.assertEqual((index_product["rating"], index_product["review_count"]), (3.67, 3))
+        detail_product = payload(result.files["catalog-v4/details/000.json"])["products"][0]
+        self.assertEqual(detail_product["rating_provenance"]["raw_score"], 3.6667)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_result(result, root)
+            verified = verify_publication(root)
+            self.assertTrue(verified["verified"])
+
+'''
+          if 'test_verifier_accepts_source_rating_precision_after_normalization' not in text:
+              if anchor not in text:
+                  raise SystemExit('rating regression anchor missing')
+              text = text.replace(anchor, regression + anchor, 1)
+          tests.write_text(text, encoding='utf-8')
+          PY
+          rm -f .github/workflows/tmp-apply-rating-provenance-fix.yml
+          PYTHONPATH=. python -m unittest \
+            tests.catalog_v4.test_identity_rating_integrity \
+            tests.catalog_v4.test_verification \
+            tests.catalog_v4.test_strict_json -v
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: normalize rating provenance before verification'
+          git push origin HEAD:fix/rating-provenance-normalization
