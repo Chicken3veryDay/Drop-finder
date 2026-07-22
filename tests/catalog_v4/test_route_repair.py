@@ -115,5 +115,31 @@ class RouteRepairTests(unittest.TestCase):
         self.assertEqual([row["url"] for row in rows], ["https://example.test/blue-dream-thca-flower/"])
 
 
+    def test_recovery_routes_price_and_invalid_sibling_pruning(self):
+        self.assertIn("https://wnc-cbd.com/sitemap.php", [route[1] for route in route_repair.ROUTE_REPAIRS["wnc_cbd"]])
+        self.assertIn("https://www.veterangrownhemp.com/flower", [route[1] for route in route_repair.ROUTE_REPAIRS["veteran_grown_hemp"]])
+        payload = '<span class="woocommerce-Price-amount amount"><bdi><span>$</span>34.95</bdi></span>'
+        values = route_repair.enrich_meta_values(Core, lambda _payload: {}, payload)
+        self.assertEqual(values["product:price:amount"], "34.95")
+
+        class GateWorker:
+            @staticmethod
+            def gate(products):
+                return bool(products), [] if products else ["empty"], {"products": len(products)}
+
+        worker = GateWorker()
+        route_repair._install_invalid_sibling_pruning(worker)
+        rows = [
+            {"primary_type": "cannabis_flower", "classification_evidence": {"primary_type": "cannabis_flower"}},
+            {"primary_type": "cannabis_flower", "classification_evidence": {}},
+        ]
+        admitted, reasons, quality = worker.gate(rows)
+        self.assertTrue(admitted)
+        self.assertEqual(reasons, [])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(quality["discarded_invalid_rows"], 1)
+
+
+
 if __name__ == "__main__":
     unittest.main()

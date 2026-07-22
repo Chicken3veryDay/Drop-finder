@@ -348,3 +348,121 @@ def self_test() -> int:
         ("ftp", "ftp://example.test", "storewide"),
     ]) == [("html", "https://example.test/", "storewide")]
     return 0
+
+# SCRAPER_RECOVERY_CLOSURE_V1
+# Recover current first-party storefront paths and retain valid siblings when a
+# bounded number of malformed records appear in otherwise authoritative output.
+_RECOVERY_ROUTE_EXTENSIONS: dict[str, tuple[Route, ...]] = {
+    "beleafer": (
+        ("html", "https://beleafer.com/product-category/hemp-flower/", "storewide"),
+        ("html", "https://beleafer.com/product-category/hemp-flower/indoor/", "storewide"),
+    ),
+    "five_leaf_wellness": (
+        ("html", "https://fiveleafwellness.com/product-category/new-releases/", "storewide"),
+        ("html", "https://fiveleafwellness.com/product-category/top-shelf/", "storewide"),
+        ("html", "https://fiveleafwellness.com/product-category/mid-tier/", "storewide"),
+        ("html", "https://fiveleafwellness.com/", "storewide"),
+    ),
+    "veteran_grown_hemp": (
+        ("html", "https://www.veterangrownhemp.com/flower", "thca_flower"),
+        ("html", "https://www.veterangrownhemp.com/shop", "storewide"),
+        ("html", "https://www.veterangrownhemp.com/", "storewide"),
+    ),
+    "wnc_cbd": (
+        ("html", "https://wnc-cbd.com/sitemap.php", "storewide"),
+        ("html", "https://wnc-cbd.com/", "storewide"),
+    ),
+}
+for _source_id, _routes in _RECOVERY_ROUTE_EXTENSIONS.items():
+    ROUTE_REPAIRS[_source_id] = tuple(
+        _dedupe_routes([*_routes, *ROUTE_REPAIRS.get(_source_id, ())])
+    )
+    FALLBACK_REPAIRS[_source_id] = tuple(
+        route[1] for route in ROUTE_REPAIRS[_source_id] if route[0] == "html"
+    )
+
+_WOO_PRICE_WINDOW = re.compile(
+    r'class=["\'][^"\']*(?:woocommerce-Price-amount|amount)[^"\']*["\'][^>]*>.{0,420}',
+    re.I | re.S,
+)
+_WIX_FORMATTED_PRICE = re.compile(
+    r'"(?:formattedPrice|formattedDiscountedPrice)"\s*:\s*"\$\s*([0-9]{1,5}(?:\.[0-9]{1,2})?)"',
+    re.I,
+)
+_VISIBLE_LABELED_PRICE = re.compile(
+    r'(?:\bNow\s*:|\bPrice\s*:?)\s*\$\s*([0-9]{1,5}(?:\.[0-9]{1,2})?)',
+    re.I,
+)
+_DOLLAR_PRICE = re.compile(r'\$\s*([0-9]{1,5}(?:\.[0-9]{1,2})?)')
+_BASE_ENRICH_META_VALUES = enrich_meta_values
+
+
+def _recover_first_party_price(core: Any, payload: str) -> float | None:
+    for match in _WOO_PRICE_WINDOW.finditer(payload):
+        visible = core.text(_TAG.sub(" ", match.group(0)))
+        price_match = _DOLLAR_PRICE.search(visible)
+        parsed = core.num(price_match.group(1)) if price_match else None
+        if parsed is not None:
+            return parsed
+    for pattern in (_WIX_FORMATTED_PRICE, _VISIBLE_LABELED_PRICE):
+        match = pattern.search(payload)
+        parsed = core.num(match.group(1)) if match else None
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def enrich_meta_values(core: Any, original: Any, payload: str) -> dict[str, str]:
+    values = _BASE_ENRICH_META_VALUES(core, original, payload)
+    if "product:price:amount" not in values:
+        recovered = _recover_first_party_price(core, payload)
+        if recovered is not None:
+            values["product:price:amount"] = str(recovered)
+    return values
+
+
+def _consistent_product_evidence(row: dict[str, Any]) -> bool:
+    evidence = row.get("classification_evidence")
+    primary = str(row.get("primary_type") or "")
+    return bool(primary and isinstance(evidence, dict) and str(evidence.get("primary_type") or "") == primary)
+
+
+def _install_invalid_sibling_pruning(worker: Any) -> None:
+    if getattr(worker, "_invalid_sibling_pruning_installed", False):
+        return
+    original_gate = getattr(worker, "gate", None)
+    if not callable(original_gate):
+        return
+
+    def pruning_gate(products: list[dict[str, Any]]):
+        original_count = len(products)
+        products[:] = [row for row in products if _consistent_product_evidence(row)]
+        admitted, reasons, quality = original_gate(products)
+        quality = dict(quality)
+        quality["discarded_invalid_rows"] = original_count - len(products)
+        return admitted, reasons, quality
+
+    worker.gate = pruning_gate
+    worker._invalid_sibling_pruning_installed = True
+
+
+_BASE_INSTALL = install
+
+
+def install(worker: Any) -> dict[str, int]:
+    state = _BASE_INSTALL(worker)
+    for marker in ("/product-page/", "/products/"):
+        if marker not in worker.PRODUCT_PATHS:
+            worker.PRODUCT_PATHS = (*worker.PRODUCT_PATHS, marker)
+    if getattr(worker, "_scraper_recovery_closure_installed", False):
+        return {**state, "recovery_installed": 1}
+    original_run = worker.run
+
+    def recovery_run(*args: Any, **kwargs: Any):
+        apply_route_repairs(worker)
+        _install_invalid_sibling_pruning(worker)
+        return original_run(*args, **kwargs)
+
+    worker.run = recovery_run
+    worker._scraper_recovery_closure_installed = True
+    return {**state, "recovery_installed": 1}
