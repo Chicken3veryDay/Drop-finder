@@ -26,66 +26,69 @@ jobs:
 
           workflow = Path('.github/workflows/dropfinder-cloud.yml')
           text = workflow.read_text(encoding='utf-8')
-          if '      - "scripts/route_repair.py"' not in text:
-              needle = '      - "scripts/autonomous_merge.py"\n      - "scripts/catalog_v4/**"'
-              replacement = (
-                  '      - "scripts/autonomous_merge.py"\n'
-                  '      - "scripts/route_repair.py"\n'
-                  '      - "scripts/vendor_expansion.py"\n'
-                  '      - "scripts/catalog_v4/**"'
+
+          path_anchor = '      - "scripts/autonomous_merge.py"\n'
+          if '      - "scripts/route_repair.py"\n' not in text:
+              count = text.count(path_anchor)
+              if count != 2:
+                  raise SystemExit(f'expected two path anchors, found {count}')
+              text = text.replace(
+                  path_anchor,
+                  path_anchor
+                  + '      - "scripts/route_repair.py"\n'
+                  + '      - "scripts/vendor_expansion.py"\n',
               )
-              assert text.count(needle) == 2, text.count(needle)
-              text = text.replace(needle, replacement)
-          compile_needle = (
-              '            scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \\\n'
-              '            scripts/publication_release.py web/scripts/publication_gate.py'
-          )
-          compile_replacement = (
-              '            scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \\\n'
-              '            scripts/route_repair.py scripts/vendor_expansion.py \\\n'
-              '            scripts/publication_release.py web/scripts/publication_gate.py'
-          )
-          if 'scripts/route_repair.py scripts/vendor_expansion.py' not in text:
-              assert compile_needle in text
-              text = text.replace(compile_needle, compile_replacement, 1)
-          test_needle = (
-              '            tests.test_vendor_document_publication \\\n'
-              '            tests.test_dropfinder_cloud_workflow_permissions'
-          )
-          test_replacement = (
-              '            tests.test_vendor_document_publication \\\n'
-              '            tests.catalog_v4.test_route_repair \\\n'
-              '            tests.test_dropfinder_cloud_workflow_permissions'
-          )
-          if 'tests.catalog_v4.test_route_repair' not in text:
-              assert test_needle in text
-              text = text.replace(test_needle, test_replacement, 1)
+
+          compile_anchor = '            scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \\\n'
+          if '            scripts/route_repair.py scripts/vendor_expansion.py \\\n' not in text:
+              count = text.count(compile_anchor)
+              if count != 1:
+                  raise SystemExit(f'expected one compile anchor, found {count}')
+              text = text.replace(
+                  compile_anchor,
+                  compile_anchor + '            scripts/route_repair.py scripts/vendor_expansion.py \\\n',
+                  1,
+              )
+
+          unittest_anchor = '            tests.test_vendor_document_publication \\\n'
+          if '            tests.catalog_v4.test_route_repair \\\n' not in text:
+              count = text.count(unittest_anchor)
+              if count != 1:
+                  raise SystemExit(f'expected one unittest anchor, found {count}')
+              text = text.replace(
+                  unittest_anchor,
+                  unittest_anchor + '            tests.catalog_v4.test_route_repair \\\n',
+                  1,
+              )
           workflow.write_text(text, encoding='utf-8')
 
           test_path = Path('tests/test_dropfinder_cloud_workflow_permissions.py')
           tests = test_path.read_text(encoding='utf-8')
-          tuple_needle = (
-              '            \'      - "scripts/publication_release.py"\',\n'
-              '            \'      - "web/**"\','
-          )
-          tuple_replacement = (
-              '            \'      - "scripts/publication_release.py"\',\n'
-              '            \'      - "scripts/route_repair.py"\',\n'
-              '            \'      - "scripts/vendor_expansion.py"\',\n'
-              '            \'      - "web/**"\','
-          )
-          if '            \'      - "scripts/route_repair.py"\',' not in tests:
-              assert tuple_needle in tests
-              tests = tests.replace(tuple_needle, tuple_replacement, 1)
-          marker = '        self.assertIn("tests.test_publication_release", self.text)\n'
-          addition = (
-              marker
-              + '        self.assertIn("scripts/route_repair.py scripts/vendor_expansion.py", self.text)\n'
-              + '        self.assertIn("tests.catalog_v4.test_route_repair", self.text)\n'
-          )
+          tuple_anchor = '            \'      - "scripts/publication_release.py"\',\n'
+          if '            \'      - "scripts/route_repair.py"\',\n' not in tests:
+              count = tests.count(tuple_anchor)
+              if count != 1:
+                  raise SystemExit(f'expected one test tuple anchor, found {count}')
+              tests = tests.replace(
+                  tuple_anchor,
+                  tuple_anchor
+                  + '            \'      - "scripts/route_repair.py"\',\n'
+                  + '            \'      - "scripts/vendor_expansion.py"\',\n',
+                  1,
+              )
+
+          assertion_anchor = '        self.assertIn("tests.test_publication_release", self.text)\n'
           if 'self.assertIn("tests.catalog_v4.test_route_repair", self.text)' not in tests:
-              assert marker in tests
-              tests = tests.replace(marker, addition, 1)
+              count = tests.count(assertion_anchor)
+              if count != 1:
+                  raise SystemExit(f'expected one assertion anchor, found {count}')
+              tests = tests.replace(
+                  assertion_anchor,
+                  assertion_anchor
+                  + '        self.assertIn("scripts/route_repair.py scripts/vendor_expansion.py", self.text)\n'
+                  + '        self.assertIn("tests.catalog_v4.test_route_repair", self.text)\n',
+                  1,
+              )
           test_path.write_text(tests, encoding='utf-8')
           PY
           git diff --check
