@@ -80,14 +80,14 @@ jobs:
               index = tests.find(marker)
               assert index >= 0, 'source-recovery test insertion marker missing'
               addition = '''    def test_json_price_minor_units_are_normalized_only_with_framework_evidence(self):
-              woo_minor = '<script>{"currency_minor_unit":2,"price":"2900"}</script>'
-              shopify_theme = '<script>Shopify.theme={};{"price":3750,"price_min":3750}</script>'
-              ordinary_dollars = '<script>{"price":1600}</script>'
-              explicit_decimal = '<script>{"price":"37.50"}</script>'
-              self.assertEqual(source_recovery.extract_first_party_price(PriceCore, woo_minor), 29.0)
-              self.assertEqual(source_recovery.extract_first_party_price(PriceCore, shopify_theme), 37.5)
-              self.assertEqual(source_recovery.extract_first_party_price(PriceCore, ordinary_dollars), 1600.0)
-              self.assertEqual(source_recovery.extract_first_party_price(PriceCore, explicit_decimal), 37.5)
+                  woo_minor = '<script>{"currency_minor_unit":2,"price":"2900"}</script>'
+                  shopify_theme = '<script>Shopify.theme={};{"price":3750,"price_min":3750}</script>'
+                  ordinary_dollars = '<script>{"price":1600}</script>'
+                  explicit_decimal = '<script>{"price":"37.50"}</script>'
+                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, woo_minor), 29.0)
+                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, shopify_theme), 37.5)
+                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, ordinary_dollars), 1600.0)
+                  self.assertEqual(source_recovery.extract_first_party_price(PriceCore, explicit_decimal), 37.5)
 
           '''
               tests = tests[:index] + addition + tests[index:]
