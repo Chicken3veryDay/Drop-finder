@@ -18,6 +18,8 @@ on:
       - "scripts/autonomous_worker_v2.py"
       - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
+      - "scripts/route_repair.py"
+      - "scripts/vendor_expansion.py"
       - "scripts/catalog_v4/**"
       - "scripts/vendor_adapters/**"
       - "data/vendor_profiles.json"
@@ -38,6 +40,8 @@ on:
       - "scripts/autonomous_worker_v2.py"
       - "scripts/autonomous_worker_v4.py"
       - "scripts/autonomous_merge.py"
+      - "scripts/route_repair.py"
+      - "scripts/vendor_expansion.py"
       - "scripts/catalog_v4/**"
       - "scripts/vendor_adapters/**"
       - "data/vendor_profiles.json"
@@ -74,6 +78,7 @@ jobs:
             scripts/cloud_scan.py scripts/cloud_scan_v2.py \
             scripts/autonomous_worker.py scripts/autonomous_worker_v2.py \
             scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \
+            scripts/route_repair.py scripts/vendor_expansion.py \
             scripts/publication_release.py web/scripts/publication_gate.py
           python -m compileall -q scripts/vendor_adapters
           python scripts/cloud_scan_v2.py --self-test
@@ -83,6 +88,7 @@ jobs:
           python -m unittest -v \
             tests.test_publication_release \
             tests.test_vendor_document_publication \
+            tests.catalog_v4.test_route_repair \
             tests.test_dropfinder_cloud_workflow_permissions
 
   frontend:
