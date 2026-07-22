@@ -68,6 +68,14 @@ _JSON_PRICE = re.compile(
     r'["\']?([0-9]{1,5}(?:\.[0-9]{1,2})?)',
     re.I,
 )
+_MINOR_UNIT = re.compile(
+    r'["\'](?:currency_minor_unit|currencyMinorUnit)["\']\s*:\s*["\']?([0-4])',
+    re.I,
+)
+_SHOPIFY_CENT_STATE = re.compile(
+    r'(?:Shopify|["\']price_(?:min|max|varies)["\']|["\']compare_at_price["\'])',
+    re.I,
+)
 _DOLLAR = re.compile(r"\$\s*([0-9]{1,5}(?:\.[0-9]{1,2})?)")
 _LOC = re.compile(r"<loc>\s*(.*?)\s*</loc>", re.I | re.S)
 _SITEMAP_HINT = re.compile(r"(?:sitemap|xmlsitemap)", re.I)
@@ -112,6 +120,22 @@ def _valid_price(core: Any, value: Any) -> float | None:
     return parsed
 
 
+def _json_price(core: Any, raw: str, payload: str) -> float | None:
+    parsed = _valid_price(core, raw)
+    if parsed is None:
+        return None
+    raw_text = str(raw).strip()
+    if "." in raw_text or parsed < 1000:
+        return parsed
+    document = payload[:1_500_000]
+    minor_match = _MINOR_UNIT.search(document)
+    minor_unit = int(minor_match.group(1)) if minor_match else None
+    if minor_unit == 2 or _SHOPIFY_CENT_STATE.search(document):
+        normalized = round(parsed / 100, 4)
+        return normalized if normalized >= 1 else None
+    return parsed
+
+
 def extract_first_party_price(core: Any, payload: str) -> float | None:
     """Read a product price only from product-detail markup in this response."""
     candidates: list[float] = []
@@ -128,7 +152,7 @@ def extract_first_party_price(core: Any, payload: str) -> float | None:
                 candidates.append(parsed)
     if not candidates:
         for raw in _JSON_PRICE.findall(payload[:1_500_000]):
-            parsed = _valid_price(core, raw)
+            parsed = _json_price(core, raw, payload)
             if parsed is not None:
                 candidates.append(parsed)
     return min(candidates) if candidates else None
