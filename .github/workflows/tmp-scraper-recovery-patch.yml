@@ -15,10 +15,16 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: trigger/scraper-recovery-patch
+          ref: fix/scraper-recovery-closure
           fetch-depth: 0
+      - name: Load recovery patch from execution branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin trigger/scraper-recovery-patch
+          git show origin/trigger/scraper-recovery-patch:scripts/tmp_apply_scraper_recovery.py > /tmp/apply_scraper_recovery.py
       - name: Apply recovery patch
-        run: python scripts/tmp_apply_scraper_recovery.py
+        run: python /tmp/apply_scraper_recovery.py
       - name: Compile patched module
         run: python -m py_compile scripts/route_repair.py
       - name: Run route-repair unit tests
@@ -30,9 +36,6 @@ jobs:
         run: |
           set -euo pipefail
           git diff --check
-          rm -f .trigger-scraper-recovery-patch .trigger-scraper-recovery-run .trigger-scraper-recovery-execute
-          rm -f scripts/tmp_apply_scraper_recovery.py
-          rm -f .github/workflows/tmp-run-scraper-recovery.yml
           rm -f .github/workflows/tmp-scraper-recovery-patch.yml
           git config user.name 'dropfinder-maintenance-bot'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
