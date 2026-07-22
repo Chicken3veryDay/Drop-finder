@@ -1,0 +1,34 @@
+name: Temporary Route Repair Status
+
+on:
+  pull_request:
+    branches:
+      - verification/route-repair-deploy
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.head_ref == 'trigger/route-repair-deploy'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Snapshot exact source workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: 936aac4fd9c2762cd45475f832bf4c12931b12df
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SOURCE_SHA}&event=push&per_page=100" \
+            | jq '{source_commit:"'"${SOURCE_SHA}"'", workflow_runs:[.workflow_runs[] | {id,name,status,conclusion,created_at,updated_at,html_url}]}' \
+            > route-repair-status.json
+          cat route-repair-status.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: route-repair-status
+          path: route-repair-status.json
+          if-no-files-found: error
+          retention-days: 1
