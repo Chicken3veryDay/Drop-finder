@@ -18,9 +18,11 @@ jobs:
           ref: fix/cloud-route-trigger
           fetch-depth: 0
       - name: Patch autonomous workflow triggers and regression
+        id: patch
         shell: bash
         run: |
-          set -euo pipefail
+          set +e
+          (
           python - <<'PY'
           from pathlib import Path
 
@@ -94,10 +96,25 @@ jobs:
           git diff --check
           if git diff --quiet -- .github/workflows/dropfinder-cloud.yml tests/test_dropfinder_cloud_workflow_permissions.py; then
             echo 'Patch already present.'
-            exit 0
+          else
+            git config user.name 'dropfinder-maintenance-bot'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add .github/workflows/dropfinder-cloud.yml tests/test_dropfinder_cloud_workflow_permissions.py
+            git commit -m 'fix: trigger autonomous scans for route changes'
+            git push origin HEAD:fix/cloud-route-trigger
           fi
-          git config user.name 'dropfinder-maintenance-bot'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/dropfinder-cloud.yml tests/test_dropfinder_cloud_workflow_permissions.py
-          git commit -m 'fix: trigger autonomous scans for route changes'
-          git push origin HEAD:fix/cloud-route-trigger
+          ) >patch-output.txt 2>&1
+          rc=$?
+          cat patch-output.txt
+          echo "rc=${rc}" >> "${GITHUB_OUTPUT}"
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: cloud-route-trigger-patch-log
+          path: patch-output.txt
+          if-no-files-found: error
+          retention-days: 1
+      - name: Fail on patch error
+        if: steps.patch.outputs.rc != '0'
+        run: exit 1
