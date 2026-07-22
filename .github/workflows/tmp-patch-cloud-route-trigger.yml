@@ -1,0 +1,100 @@
+name: Temporary Patch Cloud Route Trigger
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'fix/cloud-route-trigger'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/cloud-route-trigger
+          fetch-depth: 0
+      - name: Patch autonomous workflow triggers and regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/dropfinder-cloud.yml')
+          text = workflow.read_text(encoding='utf-8')
+          if '      - "scripts/route_repair.py"' not in text:
+              needle = '      - "scripts/autonomous_merge.py"\n      - "scripts/catalog_v4/**"'
+              replacement = (
+                  '      - "scripts/autonomous_merge.py"\n'
+                  '      - "scripts/route_repair.py"\n'
+                  '      - "scripts/vendor_expansion.py"\n'
+                  '      - "scripts/catalog_v4/**"'
+              )
+              assert text.count(needle) == 2, text.count(needle)
+              text = text.replace(needle, replacement)
+          compile_needle = (
+              '            scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \\\n'
+              '            scripts/publication_release.py web/scripts/publication_gate.py'
+          )
+          compile_replacement = (
+              '            scripts/autonomous_worker_v4.py scripts/autonomous_merge.py \\\n'
+              '            scripts/route_repair.py scripts/vendor_expansion.py \\\n'
+              '            scripts/publication_release.py web/scripts/publication_gate.py'
+          )
+          if 'scripts/route_repair.py scripts/vendor_expansion.py' not in text:
+              assert compile_needle in text
+              text = text.replace(compile_needle, compile_replacement, 1)
+          test_needle = (
+              '            tests.test_vendor_document_publication \\\n'
+              '            tests.test_dropfinder_cloud_workflow_permissions'
+          )
+          test_replacement = (
+              '            tests.test_vendor_document_publication \\\n'
+              '            tests.catalog_v4.test_route_repair \\\n'
+              '            tests.test_dropfinder_cloud_workflow_permissions'
+          )
+          if 'tests.catalog_v4.test_route_repair' not in text:
+              assert test_needle in text
+              text = text.replace(test_needle, test_replacement, 1)
+          workflow.write_text(text, encoding='utf-8')
+
+          test_path = Path('tests/test_dropfinder_cloud_workflow_permissions.py')
+          tests = test_path.read_text(encoding='utf-8')
+          tuple_needle = (
+              '            \'      - "scripts/publication_release.py"\',\n'
+              '            \'      - "web/**"\','
+          )
+          tuple_replacement = (
+              '            \'      - "scripts/publication_release.py"\',\n'
+              '            \'      - "scripts/route_repair.py"\',\n'
+              '            \'      - "scripts/vendor_expansion.py"\',\n'
+              '            \'      - "web/**"\','
+          )
+          if '            \'      - "scripts/route_repair.py"\',' not in tests:
+              assert tuple_needle in tests
+              tests = tests.replace(tuple_needle, tuple_replacement, 1)
+          marker = '        self.assertIn("tests.test_publication_release", self.text)\n'
+          addition = (
+              marker
+              + '        self.assertIn("scripts/route_repair.py scripts/vendor_expansion.py", self.text)\n'
+              + '        self.assertIn("tests.catalog_v4.test_route_repair", self.text)\n'
+          )
+          if 'self.assertIn("tests.catalog_v4.test_route_repair", self.text)' not in tests:
+              assert marker in tests
+              tests = tests.replace(marker, addition, 1)
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+          git diff --check
+          if git diff --quiet -- .github/workflows/dropfinder-cloud.yml tests/test_dropfinder_cloud_workflow_permissions.py; then
+            echo 'Patch already present.'
+            exit 0
+          fi
+          git config user.name 'dropfinder-maintenance-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/dropfinder-cloud.yml tests/test_dropfinder_cloud_workflow_permissions.py
+          git commit -m 'fix: trigger autonomous scans for route changes'
+          git push origin HEAD:fix/cloud-route-trigger
