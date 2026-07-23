@@ -1,0 +1,37 @@
+name: Temporary Metadata Phase 2 Snapshot
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: github.head_ref == 'fix/metadata-completeness-phase2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Export exact parser, tests, and current catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p metadata-phase2-snapshot
+          tar -czf metadata-phase2-snapshot/source.tar.gz scripts tests
+          tar -czf metadata-phase2-snapshot/catalog.tar.gz \
+            cloud_pages/data/catalog-v4/index.json \
+            cloud_pages/data/catalog-v4/manifest.json \
+            cloud_pages/data/catalog-v4/details \
+            cloud_pages/data/status.json
+          git rev-parse HEAD > metadata-phase2-snapshot/checkout-sha.txt
+          find scripts tests -type f | sort > metadata-phase2-snapshot/files.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: metadata-phase2-snapshot
+          path: metadata-phase2-snapshot
+          if-no-files-found: error
+          retention-days: 14
