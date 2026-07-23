@@ -1,0 +1,75 @@
+name: Temporary Live Metadata Phase 2 Probe
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.head_ref == 'fix/metadata-completeness-phase2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/metadata-completeness-phase2
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Scan selected first-party sources and measure metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p metadata-phase2-live
+          PYTHONPATH=scripts python - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          sys.path.insert(0, 'scripts')
+          import autonomous_worker_v4 as production
+          from catalog_v4 import build_catalog
+
+          production.install_runtime()
+          worker = production.worker
+          selected_ids = {'plain_jane', 'gold_canna', 'bay_smokes'}
+          sources = [source for source in worker.core.SOURCES if source[0] in selected_ids]
+          all_rows = []
+          statuses = []
+          for source in sources:
+              rows, status = worker.scan_source(source)
+              all_rows.extend(rows)
+              statuses.append(status)
+
+          result = build_catalog(all_rows, generated_at='2026-07-23T00:00:00Z', detail_shards=4)
+          summary = {
+              'source_ids': [source[0] for source in sources],
+              'raw_rows': len(all_rows),
+              'raw_metadata': {
+                  'thca': sum(row.get('thca') not in (None, '') for row in all_rows),
+                  'direct_total_thc': sum(row.get('direct_total_thc') not in (None, '') for row in all_rows),
+                  'rating_pairs': sum(row.get('rating') not in (None, '') and row.get('review_count') not in (None, '') for row in all_rows),
+                  'lineage': sum(any(row.get(key) not in (None, '', 'unknown') for key in ('lineage', 'strain_type')) for row in all_rows),
+                  'documents': sum(bool(row.get('documents')) for row in all_rows),
+                  'descriptions': sum(bool(row.get('description')) for row in all_rows),
+              },
+              'catalog_products': result.product_count,
+              'catalog_variants': result.variant_count,
+              'metadata_coverage': result.manifest.get('metadata_coverage'),
+              'statuses': statuses,
+          }
+          pathlib.Path('metadata-phase2-live/summary.json').write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
+          pathlib.Path('metadata-phase2-live/raw-samples.json').write_text(json.dumps(all_rows[:30], indent=2, sort_keys=True) + '\n')
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: metadata-phase2-live-probe
+          path: metadata-phase2-live
+          if-no-files-found: error
+          retention-days: 14
