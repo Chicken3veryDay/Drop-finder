@@ -96,6 +96,30 @@ ENVIRONMENTS = {
     "sun-grown": "outdoor",
 }
 
+EFFECT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("Relaxed", re.compile(r"\b(?:relax(?:ed|ing|ation)|body relaxation)\b", re.I)),
+    ("Calm", re.compile(r"\b(?:calm(?:ing|ed)?|soothing)\b", re.I)),
+    ("Uplifted", re.compile(r"\b(?:uplift(?:ed|ing)|mood elevation)\b", re.I)),
+    ("Euphoric", re.compile(r"\b(?:euphori(?:a|c))\b", re.I)),
+    ("Energetic", re.compile(r"\b(?:energetic|energiz(?:e|es|ed|ing)|energy boost|(?:uplifting|invigorating|cerebral) energy)\b", re.I)),
+    ("Focused", re.compile(r"\b(?:focus(?:ed)?|mental focus|concentration)\b", re.I)),
+    ("Creative", re.compile(r"\b(?:creative|creativity)\b", re.I)),
+    ("Happy", re.compile(r"\b(?:happy|happiness|cheerful)\b", re.I)),
+    ("Social", re.compile(r"\b(?:social|sociable|talkative)\b", re.I)),
+    ("Sleepy", re.compile(r"\b(?:sleepy|sleepiness|bedtime|sleep support)\b", re.I)),
+    ("Sedating", re.compile(r"\b(?:sedat(?:e|ed|ing|ion)|couch[- ]lock)\b", re.I)),
+    ("Appetite", re.compile(r"\b(?:appetite|hungry|hunger|munchies)\b", re.I)),
+    ("Mental clarity", re.compile(r"\b(?:mental clarity|clear[- ]headed)\b", re.I)),
+    ("Pain relief", re.compile(r"\b(?:pain relief|reliev(?:e|es|ed|ing) pain)\b", re.I)),
+    ("Stress relief", re.compile(r"\b(?:stress relief|reliev(?:e|es|ed|ing) stress)\b", re.I)),
+    ("Tension relief", re.compile(r"\b(?:tension relief|eas(?:e|es|ed|ing) tension)\b", re.I)),
+)
+EFFECT_CONTEXT_PATTERN = re.compile(
+    r"\b(?:effects?(?:\s+of\s+[^.!?]{0,80})?|experience|delivers?|offers?|provides?|promotes?|supports?|known for|ideal for|great for)\b",
+    re.I,
+)
+EFFECT_NEGATION_PATTERN = re.compile(r"\b(?:without|not|non|no)\s+(?:\w+\s+){0,2}$", re.I)
+
 
 def clean_text(value: Any) -> str:
     if value is None:
@@ -320,7 +344,7 @@ def environment(value: Any, *fallback_text: Any) -> tuple[str, dict[str, Any]]:
     return "unknown", {"source": "unavailable", "raw": ""}
 
 
-def effects(value: Any) -> tuple[list[str], dict[str, Any]]:
+def effects(value: Any, *fallback_text: Any) -> tuple[list[str], dict[str, Any]]:
     raw_items: Iterable[Any]
     if isinstance(value, (list, tuple, set)):
         raw_items = value
@@ -331,15 +355,35 @@ def effects(value: Any) -> tuple[list[str], dict[str, Any]]:
     seen: set[str] = set()
     result: list[str] = []
     for item in raw_items:
-        text = clean_text(item).strip(" .")
-        key = normalized_search(text)
-        if not key or key in seen or len(text) > 80:
+        item_text = clean_text(item).strip(" .")
+        key = normalized_search(item_text)
+        if not key or key in seen or len(item_text) > 80:
             continue
         seen.add(key)
-        result.append(text)
+        result.append(item_text)
         if len(result) >= 12:
             break
-    return result, {"source": "source_exposed" if result else "unavailable", "raw": clean_text(value)}
+    if result:
+        return result, {"source": "source_exposed", "raw": clean_text(value)}
+
+    combined = clean_text(" ".join(clean_text(item) for item in fallback_text if item not in (None, "")))
+    contexts: list[str] = []
+    for match in EFFECT_CONTEXT_PATTERN.finditer(combined):
+        contexts.append(combined[max(0, match.start() - 40): min(len(combined), match.start() + 420)])
+    context = " ".join(contexts)
+    for label, pattern in EFFECT_PATTERNS:
+        for match in pattern.finditer(context):
+            before = context[max(0, match.start() - 35): match.start()]
+            if EFFECT_NEGATION_PATTERN.search(before):
+                continue
+            result.append(label)
+            break
+        if len(result) >= 12:
+            break
+    return result, {
+        "source": "conservative_text" if result else "unavailable",
+        "raw": combined if result else "",
+    }
 
 
 def rating(score: Any, count: Any) -> tuple[float | None, int | None, dict[str, Any]]:

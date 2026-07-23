@@ -55,6 +55,12 @@ TOTAL_THC_PATTERNS=(
 POTENCY=THCA_PATTERNS[0]
 LD=re.compile(r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',re.I|re.S); TAG=re.compile(r'<[^>]+>'); WS=re.compile(r'\s+')
 ANCHOR=re.compile(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',re.I|re.S)
+ANCHOR_FULL=re.compile(r'<a\b(?P<attrs>[^>]*)>(?P<body>.*?)</a>',re.I|re.S)
+OPEN_TAG=re.compile(r'<[^>]{1,1800}>',re.I|re.S)
+DOCUMENT_SIGNAL=re.compile(r'\b(?:coa|certificate\s+of\s+analysis|download\s+(?:the\s+)?coa|view\s+(?:the\s+)?coa|lab\s+(?:report|results?)|full\s+panel|test\s+results?)\b',re.I)
+DOCUMENT_PATH_SIGNAL=re.compile(r'(?:coa|certificate|lab[-_ ]?(?:report|result)|full[-_ ]?panel|test[-_ ]?result)',re.I)
+LINEAGE_FIELD=re.compile(r'\b(?:strain\s+(?:family|type|profile)|lineage)\s*[:\-]?\s*(indica(?:[- ](?:dominant|leaning)(?:[- ]hybrid)?)?|sativa(?:[- ](?:dominant|leaning)(?:[- ]hybrid)?)?|balanced[- ]hybrid|hybrid)\b',re.I)
+ENVIRONMENT_FIELD=re.compile(r'\b(?:grow(?:n|\s+method|\s+environment)?|cultivation|environment)\s*[:\-]?\s*(indoor|outdoor|greenhouse|mixed[- ]light|sun[- ]grown)\b',re.I)
 META=re.compile(r'<meta\b([^>]+)>',re.I); ATTR=re.compile(r'([:\w-]+)\s*=\s*["\']([^"\']*)["\']',re.I)
 TITLE=re.compile(r'<title\b[^>]*>(.*?)</title>',re.I|re.S)
 STOCK_SEPARATOR=re.compile(r'[_\-/]+')
@@ -104,6 +110,106 @@ def metadata_text(value):
  for key in ('category','keywords','material','slogan'):
   if value.get(key) not in (None,''):parts.append(joined_text(value.get(key)))
  return text(' '.join(parts))
+def first_percent_from_text(value,patterns):
+ source=text(value)
+ candidates=[]
+ for pattern in patterns:
+  for match in pattern.finditer(source):
+   parsed=percent_number(match.group(1))
+   if parsed is not None:candidates.append((match.start(),parsed))
+ return min(candidates,key=lambda item:item[0])[1] if candidates else None
+def asset_url(value,base):
+ try:parsed=urllib.parse.urlsplit(urllib.parse.urljoin(base,str(value or '')))
+ except ValueError:return ''
+ if parsed.scheme not in {'http','https'} or not parsed.netloc:return ''
+ return urllib.parse.urlunsplit((parsed.scheme.lower(),parsed.netloc.lower(),parsed.path or '/',parsed.query,''))
+def target_context(payload,target):
+ source=str(payload or '')[:LIMIT].replace('\\/','/')
+ try:handle=urllib.parse.unquote(urllib.parse.urlsplit(str(target or '')).path.rstrip('/').split('/')[-1]).casefold()
+ except ValueError:handle=''
+ if not handle:return source[:240000]
+ lowered=source.casefold();positions=[];start=0
+ while len(positions)<16:
+  index=lowered.find(handle,start)
+  if index<0:break
+  positions.append(index);start=index+len(handle)
+ if not positions:return source[:240000]
+ return '\n'.join(source[max(0,index-6000):min(len(source),index+9000)] for index in positions)
+def embedded_rating_pair(payload):
+ source=str(payload or '')[:500000]
+ pairs=(
+  re.compile(r'["\'](?:ratingValue|average_rating|averageRating|rating)["\']\s*:\s*["\']?([0-5](?:\.\d+)?)["\']?.{0,500}?["\'](?:reviewCount|ratingCount|review_count|reviews_count)["\']\s*:\s*["\']?(\d{1,8})',re.I|re.S),
+  re.compile(r'["\'](?:reviewCount|ratingCount|review_count|reviews_count)["\']\s*:\s*["\']?(\d{1,8})["\']?.{0,500}?["\'](?:ratingValue|average_rating|averageRating|rating)["\']\s*:\s*["\']?([0-5](?:\.\d+)?)',re.I|re.S),
+ )
+ for index,pattern in enumerate(pairs):
+  match=pattern.search(source)
+  if match:
+   score,count=(match.group(1),match.group(2)) if index==0 else (match.group(2),match.group(1))
+   pair=rating_pair(score,count)
+   if pair!=(None,None):return pair
+ for raw_tag in OPEN_TAG.findall(source):
+  attrs={key.casefold():html.unescape(value) for key,value in ATTR.findall(raw_tag)}
+  score=next((attrs.get(key) for key in ('data-rating','data-average-rating','data-rating-value') if attrs.get(key)),None)
+  count=next((attrs.get(key) for key in ('data-review-count','data-reviews-count','data-rating-count') if attrs.get(key)),None)
+  pair=rating_pair(score,count)
+  if pair!=(None,None):return pair
+ visible=text(source)
+ for pattern in (
+  re.compile(r'\b([0-5](?:\.\d+)?)\s*(?:out\s+of\s+5|/\s*5|stars?)\b.{0,160}?\b(\d{1,8})\s+(?:customer\s+)?reviews?\b',re.I|re.S),
+  re.compile(r'\brated\s+([0-5](?:\.\d+)?)\b.{0,160}?\b(?:based\s+on\s+)?(\d{1,8})\s+(?:customer\s+)?reviews?\b',re.I|re.S),
+ ):
+  match=pattern.search(visible)
+  if match:
+   pair=rating_pair(match.group(1),match.group(2))
+   if pair!=(None,None):return pair
+ return None,None
+def explicit_lineage(value):
+ source=text(value)
+ match=LINEAGE_FIELD.search(source)
+ if match:return text(match.group(1))
+ for pattern in (
+  re.compile(r'\b(indica|sativa)[- ](?:dominant|leaning)(?:[- ]hybrid)?\b',re.I),
+  re.compile(r'\bbalanced[- ]hybrid\b',re.I),
+ ):
+  match=pattern.search(source)
+  if match:return text(match.group(0))
+ return ''
+def explicit_environment(value):
+ match=ENVIRONMENT_FIELD.search(text(value))
+ return text(match.group(1)) if match else ''
+def detail_documents(payload,base,source_id,source_page):
+ output=[];seen=set();handle=urllib.parse.unquote(urllib.parse.urlsplit(str(source_page or '')).path.rstrip('/').split('/')[-1]).casefold()
+ for match in ANCHOR_FULL.finditer(str(payload or '')[:LIMIT]):
+  attrs={key.casefold():html.unescape(value) for key,value in ATTR.findall(match.group('attrs'))}
+  href=attrs.get('href','');label=text(f"{match.group('body')} {attrs.get('title','')} {attrs.get('aria-label','')}")
+  target=asset_url(href,base);signal=f'{label} {href}'
+  if not target:continue
+  path=urllib.parse.urlsplit(target).path
+  strong=bool(DOCUMENT_SIGNAL.search(signal));file_hint=path.casefold().endswith('.pdf') or bool(DOCUMENT_PATH_SIGNAL.search(path))
+  if not strong and not file_hint:continue
+  generic=label.casefold().strip() in {'lab results','lab reports','test results'}
+  if generic and not file_hint and handle and handle not in target.casefold():continue
+  if target in seen:continue
+  seen.add(target);kind='terpene' if 'terpene' in signal.casefold() and 'coa' not in signal.casefold() else 'coa'
+  output.append({'kind':kind,'url':target,'public_url':target,'mime_type':'application/pdf' if path.casefold().endswith('.pdf') else '', 'scope':'product','source_id':source_id,'vendor_id':source_id,'source_page':asset_url(source_page,base),'label':label,'discovered_label':label,'provenance':{'method':'first_party_product_detail_anchor','source_page':asset_url(source_page,base)}})
+  if len(output)>=12:break
+ return output
+def enrich_detail_rows(rows,payload,target,source_id):
+ if not rows:return rows
+ context=target_context(payload,target);thca=first_percent_from_text(context,THCA_PATTERNS);delta9=first_percent_from_text(context,DELTA9_PATTERNS);total=first_percent_from_text(context,TOTAL_THC_PATTERNS);score,count=embedded_rating_pair(context);lineage_value=explicit_lineage(context);environment_value=explicit_environment(context);documents=detail_documents(payload,target,source_id,target)
+ enriched=[]
+ for original in rows:
+  row=dict(original)
+  if row.get('thca') in (None,'') and thca is not None:row['thca']=thca;row['thca_source_path']=target;row['thca_confidence']='source_exposed_product_detail'
+  if row.get('delta9_thc') in (None,'') and delta9 is not None:row['delta9_thc']=delta9;row['delta9_thc_source_path']=target;row['delta9_thc_confidence']='source_exposed_product_detail'
+  if row.get('direct_total_thc') in (None,'') and total is not None:row['direct_total_thc']=total;row['total_thc_source_path']=target;row['total_thc_confidence']='source_exposed_product_detail'
+  if (row.get('rating') in (None,'') or row.get('review_count') in (None,'')) and score is not None and count is not None:row['rating']=score;row['review_count']=count;row['rating_source_path']=target;row['review_count_source_path']=target
+  if row.get('strain_type') in (None,'') and lineage_value:row['strain_type']=lineage_value;row['lineage_source_path']=target
+  if row.get('grow_environment') in (None,'') and environment_value:row['grow_environment']=environment_value;row['environment_source_path']=target
+  if documents:
+   existing=[item for item in row.get('documents',[]) if isinstance(item,dict)];known={str(item.get('url') or item.get('public_url') or '') for item in existing};row['documents']=[*existing,*[item for item in documents if str(item.get('url') or '') not in known]]
+  enriched.append(row)
+ return enriched
 def weight(s):
  m=GRAM.search(s)
  if m:return num(m.group(1)),text(m.group(0))
@@ -313,12 +419,12 @@ def meta_values(payload):
  return values
 def html_detail(payload,sid,vendor,route,target):
  rows=html_products(payload,sid,vendor,route)
- if rows:return rows
+ if rows:return enrich_detail_rows(rows,payload,target,sid)
  meta=meta_values(payload);title=meta.get('og:title') or meta.get('twitter:title');m=TITLE.search(payload)
  if not title and m:title=text(m.group(1)).split('|')[0].strip()
  desc=meta.get('og:description') or meta.get('description') or '';price=meta.get('product:price:amount') or meta.get('og:price:amount');stock=meta.get('product:availability') or '';image=meta.get('og:image') or meta.get('twitter:image') or '';rating_value=next((meta.get(key) for key in ('product:rating:value','rating','og:rating') if meta.get(key)),None);review_value=next((meta.get(key) for key in ('product:rating:count','review_count','rating_count') if meta.get(key)),None)
  row=record(sid,vendor,route,title,target,desc,price,stock,image,'',rating_value,review_value)
- return [row] if row else []
+ return enrich_detail_rows([row],payload,target,sid) if row else []
 def product_links(payload,route):
  base=urllib.parse.urlsplit(route[1]);seen=[]
  for href,label in ANCHOR.findall(payload):
