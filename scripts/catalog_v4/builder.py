@@ -711,7 +711,11 @@ class CatalogBuilder:
                 seed.get("source_title"),
                 seed.get("description"),
             )
-            effect_values, effects_provenance = effects(_merge_product_field(records_for_product, "effects"))
+            effect_values, effects_provenance = effects(
+                _merge_product_field(records_for_product, "effects"),
+                seed.get("source_title"),
+                seed.get("description"),
+            )
             rating_value, review_count, rating_provenance = _select_rating_pair(records_for_product)
             potency_candidates = [(_extract_total_thc(row), row) for row in records_for_product]
             potency_rank = {

@@ -1,6 +1,7 @@
 """Bounded product-detail retries and observable verification outcomes."""
 from __future__ import annotations
 
+import re
 import time
 import urllib.parse
 from collections import Counter, defaultdict
@@ -10,6 +11,20 @@ from typing import Any
 PRODUCT_DETAIL_RETRY_DELAYS = (0.0, 1.0, 3.0)
 RETRYABLE_HTTP = {202, 408, 425, 429, 500, 502, 503, 504}
 MAX_METADATA_DETAIL_TARGETS_PER_SOURCE = 120
+LISTING_METADATA_ROUTES: dict[str, tuple[str, ...]] = {
+    "plain_jane": (
+        "https://plainjane.com/",
+        "https://plainjane.com/collections/all?page=3",
+    ),
+    "gold_canna": (
+        "https://goldcanna.com/collections/thca-bulk",
+        "https://goldcanna.com/collections/all",
+    ),
+}
+_PRODUCT_CARD = re.compile(r"<product-card\b.*?</product-card>", re.I | re.S)
+_PRODUCT_HREF = re.compile(r"href=[\"']([^\"']*/products/[^\"'?#]+)", re.I)
+_PLAIN_LINEAGE = re.compile(r"(?:Strain\s+(?:family|profile)\s*:\s*|plainjane-strain-spectrum--)(indica|sativa|hybrid)", re.I)
+_GOLD_LINEAGE = re.compile(r"(?:strain-bg-|bs-badge-strain[^>]*>\s*)(indica|sativa|hybrid)", re.I)
 _FAILURE_RECORD_LIMIT = 24
 _OUTCOME_KEY = "_product_detail_verification_outcome"
 
@@ -136,6 +151,14 @@ def _metadata_missing_score(product: dict[str, Any]) -> int:
         score += 2
     if not (_metadata_present(product.get("rating")) and _metadata_present(product.get("review_count"))):
         score += 2
+    if not any(_metadata_present(product.get(field)) for field in ("lineage", "strain_type")):
+        score += 1
+    if not any(_metadata_present(product.get(field)) for field in ("grow_environment", "environment")):
+        score += 1
+    if not _metadata_present(product.get("effects")):
+        score += 1
+    if not _metadata_present(product.get("documents")):
+        score += 1
     return score
 
 
@@ -143,12 +166,14 @@ def _same_product_target(left: Any, right: Any) -> bool:
     return _metadata_detail_target(left).rstrip("/").casefold() == _metadata_detail_target(right).rstrip("/").casefold()
 
 
-def _detail_row_score(product: dict[str, Any], detail: dict[str, Any]) -> tuple[int, int, int, int]:
+def _detail_row_score(product: dict[str, Any], detail: dict[str, Any]) -> tuple[int, int, int, int, int, int]:
     rating_pair = int(_metadata_present(detail.get("rating")) and _metadata_present(detail.get("review_count")))
     potency = int(any(_metadata_present(detail.get(field)) for field in ("thca", "thca_percent", "delta9_thc", "direct_total_thc", "total_thc")))
+    documents = int(_metadata_present(detail.get("documents")))
+    classification = int(any(_metadata_present(detail.get(field)) for field in ("lineage", "strain_type", "grow_environment", "environment")))
     description = int(_metadata_present(detail.get("description")))
     target_match = int(_same_product_target(product.get("url"), detail.get("url")))
-    return target_match, rating_pair, potency, description
+    return target_match, rating_pair, potency, documents, classification, description
 
 
 def _select_detail_row(worker: Any, product: dict[str, Any], payload: str, target: str) -> dict[str, Any] | None:
@@ -171,7 +196,10 @@ def _select_detail_row(worker: Any, product: dict[str, Any], payload: str, targe
 def _merge_detail_metadata(product: dict[str, Any], detail: dict[str, Any], target: str) -> tuple[dict[str, Any], int]:
     merged = dict(product)
     changed = 0
-    for field in ("description", "thca", "thca_percent", "delta9_thc", "direct_total_thc", "total_thc"):
+    for field in (
+        "description", "thca", "thca_percent", "delta9_thc", "direct_total_thc", "total_thc",
+        "lineage", "strain_type", "grow_environment", "environment", "effects",
+    ):
         if not _metadata_present(merged.get(field)) and _metadata_present(detail.get(field)):
             merged[field] = detail[field]
             merged[f"{field}_source_path"] = target
@@ -189,6 +217,14 @@ def _merge_detail_metadata(product: dict[str, Any], detail: dict[str, Any], targ
     if not _metadata_present(merged.get("image")) and _metadata_present(detail.get("image")):
         merged["image"] = detail["image"]
         changed += 1
+    parent_documents = [item for item in merged.get("documents") or [] if isinstance(item, dict)]
+    detail_documents = [item for item in detail.get("documents") or [] if isinstance(item, dict)]
+    if detail_documents:
+        known = {str(item.get("url") or item.get("public_url") or "") for item in parent_documents}
+        additions = [item for item in detail_documents if str(item.get("url") or item.get("public_url") or "") not in known]
+        if additions:
+            merged["documents"] = [*parent_documents, *additions]
+            changed += 1
     return merged, changed
 
 
@@ -310,6 +346,115 @@ def _enrich_authoritative_products(
     }
 
 
+def _listing_target(value: Any, base: str) -> str:
+    raw = urllib.parse.urljoin(base, str(value or ""))
+    return _metadata_detail_target(raw)
+
+
+def _listing_metadata_from_html(worker: Any, payload: str, route: str) -> dict[str, dict[str, Any]]:
+    source = str(payload or "")[:8_000_000]
+    metadata: dict[str, dict[str, Any]] = {}
+
+    def merge(target: str, context: str) -> None:
+        key = _listing_target(target, route).rstrip("/").casefold()
+        if not key:
+            return
+        current = dict(metadata.get(key) or {})
+        lineage_match = _PLAIN_LINEAGE.search(context) or _GOLD_LINEAGE.search(context)
+        lineage = lineage_match.group(1) if lineage_match else worker.core.explicit_lineage(context)
+        thca = worker.core.first_percent_from_text(context, worker.core.THCA_PATTERNS)
+        delta9 = worker.core.first_percent_from_text(context, worker.core.DELTA9_PATTERNS)
+        total = worker.core.first_percent_from_text(context, worker.core.TOTAL_THC_PATTERNS)
+        rating, review_count = worker.core.embedded_rating_pair(context)
+        if lineage and not current.get("strain_type"):
+            current["strain_type"] = lineage
+        if thca is not None and current.get("thca") in (None, ""):
+            current["thca"] = thca
+        if delta9 is not None and current.get("delta9_thc") in (None, ""):
+            current["delta9_thc"] = delta9
+        if total is not None and current.get("direct_total_thc") in (None, ""):
+            current["direct_total_thc"] = total
+        if rating is not None and review_count is not None and current.get("rating") in (None, ""):
+            current["rating"] = rating
+            current["review_count"] = review_count
+        if current:
+            current["source_path"] = route
+            metadata[key] = current
+
+    for match in _PRODUCT_CARD.finditer(source):
+        block = match.group(0)
+        href = _PRODUCT_HREF.search(block)
+        if href:
+            merge(href.group(1), block)
+
+    anchors = list(_PRODUCT_HREF.finditer(source))
+    for index, match in enumerate(anchors):
+        start = max(0, match.start() - 900)
+        end = min(len(source), match.end() + 3200)
+        if index + 1 < len(anchors):
+            end = min(end, anchors[index + 1].start() + 700)
+        merge(match.group(1), source[start:end])
+    return metadata
+
+
+def _enrich_listing_metadata(
+    worker: Any,
+    products: list[dict[str, Any]],
+    source_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    routes = LISTING_METADATA_ROUTES.get(source_id, ())
+    if not routes or not products:
+        return products, {"routes": 0, "records": 0, "enriched_products": 0, "changed_fields": 0, "failures": []}
+    metadata: dict[str, dict[str, Any]] = {}
+    failures: list[dict[str, Any]] = []
+    retry_attempts = 0
+    for route in routes:
+        fetched = _fetch_detail(worker, route)
+        retry_attempts += max(0, int(fetched.get("attempts") or 1) - 1)
+        if fetched.get("kind") == "failure":
+            failures.append({"url": route, "reason": fetched.get("reason"), "attempts": fetched.get("attempts")})
+            continue
+        for key, value in _listing_metadata_from_html(worker, fetched["payload"], route).items():
+            current = dict(metadata.get(key) or {})
+            for field, field_value in value.items():
+                if field_value not in (None, "", [], {}) and current.get(field) in (None, "", [], {}):
+                    current[field] = field_value
+            metadata[key] = current
+    output: list[dict[str, Any]] = []
+    changed_fields = 0
+    enriched_products = 0
+    for product in products:
+        key = _metadata_detail_target(product.get("url")).rstrip("/").casefold()
+        evidence = metadata.get(key) or {}
+        merged = dict(product)
+        changed = 0
+        source_path = str(evidence.get("source_path") or "")
+        for field in ("strain_type", "thca", "delta9_thc", "direct_total_thc"):
+            if not _metadata_present(merged.get(field)) and _metadata_present(evidence.get(field)):
+                merged[field] = evidence[field]
+                merged[f"{field}_source_path"] = source_path
+                merged[f"{field}_confidence"] = "source_exposed_listing_card"
+                changed += 1
+        if not (_metadata_present(merged.get("rating")) and _metadata_present(merged.get("review_count"))):
+            if _metadata_present(evidence.get("rating")) and _metadata_present(evidence.get("review_count")):
+                merged["rating"] = evidence["rating"]
+                merged["review_count"] = evidence["review_count"]
+                merged["rating_source_path"] = source_path
+                merged["review_count_source_path"] = source_path
+                changed += 2
+        output.append(merged)
+        changed_fields += changed
+        enriched_products += int(changed > 0)
+    return worker.core.dedupe(output), {
+        "routes": len(routes),
+        "records": len(metadata),
+        "enriched_products": enriched_products,
+        "changed_fields": changed_fields,
+        "retry_attempts": retry_attempts,
+        "failures": failures[:_FAILURE_RECORD_LIMIT],
+    }
+
+
 def _verify_product(worker: Any, reliability: Any, product: dict[str, Any]) -> dict[str, Any]:
     if reliability._authoritative_structured_product(product):
         return {"kind": "verified", "product": product, "attempts": 0}
@@ -348,7 +493,7 @@ def verify_products_with_diagnostics(
     source_id: str,
     vendor: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    del source_id, vendor
+    del vendor
     discovered = worker.core.dedupe(products)
     outcomes: list[dict[str, Any]] = []
     if discovered:
@@ -371,6 +516,8 @@ def verify_products_with_diagnostics(
     failures = [outcome["record"] for outcome in outcomes if outcome.get("kind") == "failure"]
     rejections = [outcome["record"] for outcome in outcomes if outcome.get("kind") == "rejection"]
     enriched, enrichment = _enrich_authoritative_products(worker, reliability, verified)
+    enriched, listing_enrichment = _enrich_listing_metadata(worker, enriched, source_id)
+    enrichment = {**enrichment, "listing_metadata": listing_enrichment}
     return enriched, {
         "discovered_products": len(discovered),
         "verified_products": len(enriched),
@@ -379,6 +526,7 @@ def verify_products_with_diagnostics(
         "retry_attempts": (
             sum(max(0, int(outcome.get("attempts") or 0) - 1) for outcome in outcomes)
             + int(enrichment.get("retry_attempts") or 0)
+            + int(listing_enrichment.get("retry_attempts") or 0)
         ),
         "metadata_enrichment": enrichment,
     }
