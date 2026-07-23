@@ -1,0 +1,36 @@
+name: Temporary Actionable Metadata Evidence Export
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: github.head_ref == 'audit/remaining-metadata-gaps'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: audit/remaining-metadata-gaps
+          fetch-depth: 0
+      - name: Export coupled production evidence and builder source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p actionable-metadata-evidence
+          cp cloud_pages/data/catalog.json actionable-metadata-evidence/catalog.json
+          cp cloud_pages/data/catalog-v4/index.json actionable-metadata-evidence/index.json
+          cp cloud_pages/data/catalog-v4/manifest.json actionable-metadata-evidence/manifest.json
+          tar -czf actionable-metadata-evidence/details.tar.gz cloud_pages/data/catalog-v4/details
+          tar -czf actionable-metadata-evidence/source.tar.gz scripts/catalog_v4 scripts/cloud_scan.py scripts/product_detail_reliability.py tests
+          git rev-parse HEAD > actionable-metadata-evidence/checkout-sha.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: actionable-metadata-evidence
+          path: actionable-metadata-evidence
+          if-no-files-found: error
+          retention-days: 14
