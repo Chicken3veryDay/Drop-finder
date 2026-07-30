@@ -2,32 +2,32 @@
   "active_verification_failures": 0,
   "candidate_sources": 39,
   "degraded_sources": 0,
-  "diagnostic_verification_failures": 48,
-  "enabled_sources": 32,
-  "fallback_active_sources": 9,
-  "generated_at": "2026-07-30T20:02:31+00:00",
-  "healthy_routes": 123,
-  "healthy_sources": 32,
+  "diagnostic_verification_failures": 15,
+  "enabled_sources": 29,
+  "fallback_active_sources": 8,
+  "generated_at": "2026-07-30T22:35:28+00:00",
+  "healthy_routes": 114,
+  "healthy_sources": 29,
   "limitations": [
     "Every active source passed retrieval, price, stock, and type-specific product evidence gates.",
     "Psilocybin records are public informational metadata with purchase links removed.",
     "Failed candidates are quarantined and retried automatically."
   ],
   "mode": "credential_free_github_actions",
-  "non_healthy_routes": 29,
-  "product_count": 1709,
+  "non_healthy_routes": 26,
+  "product_count": 1551,
   "products_by_type": {
-    "cannabis_flower": 1686,
-    "cannabis_vape": 4,
+    "cannabis_flower": 1529,
+    "cannabis_vape": 3,
     "psilocybin_mushroom": 19
   },
-  "quarantined_sources": 7,
-  "rejected_products": 1837,
+  "quarantined_sources": 10,
+  "rejected_products": 1823,
   "rejection_reasons": {
-    "missing_current_price": 34,
-    "missing_vape_volume": 12,
-    "not_explicitly_in_stock": 1633,
-    "unsupported_vape_mass_quantity": 158
+    "missing_current_price": 33,
+    "missing_vape_volume": 13,
+    "not_explicitly_in_stock": 1638,
+    "unsupported_vape_mass_quantity": 139
   },
   "schema_version": "dropfinder-autonomous-runtime-v3-multi-product",
   "services": {
@@ -42,36 +42,36 @@
     {
       "active_route": "https://baysmokes.com/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 87.672,
+      "duration_seconds": 87.116,
       "enabled": true,
       "fallback_active": false,
-      "healthy_routes": 4,
+      "healthy_routes": 5,
       "name": "Bay Smokes",
-      "non_healthy_routes": 1,
-      "products": 225,
+      "non_healthy_routes": 0,
+      "products": 230,
       "quality": {
         "admission_rejection_reasons": {},
         "admission_rejections": 0,
         "blocking_verification_failures": 0,
         "discarded_invalid_rows": 3,
-        "discovered_products": 502,
-        "evidenced_products": 499,
-        "priced_products": 499,
-        "products": 225,
+        "discovered_products": 508,
+        "evidenced_products": 513,
+        "priced_products": 513,
+        "products": 230,
         "products_by_type": {
-          "cannabis_flower": 387,
-          "cannabis_vape": 112
+          "cannabis_flower": 399,
+          "cannabis_vape": 114
         },
-        "rejected_products": 271,
+        "rejected_products": 279,
         "url_coverage": 1.0,
-        "verification_failures": 24,
-        "verification_rejections": 1
+        "verification_failures": 0,
+        "verification_rejections": 15
       },
       "retry_attempts": 1,
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.619,
+          "duration_seconds": 0.882,
           "http_status": 200,
           "products": 98,
           "retry_attempt": 1,
@@ -82,7 +82,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 2.029,
+          "duration_seconds": 1.653,
           "http_status": 200,
           "products": 396,
           "retry_attempt": 1,
@@ -93,9 +93,9 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 75.684,
+          "duration_seconds": 57.823,
           "http_status": 200,
-          "products": 130,
+          "products": 139,
           "retry_attempt": 1,
           "route_id": "bay_smokes-3",
           "source_type": "html",
@@ -103,8 +103,8 @@
           "url": "https://baysmokes.com/"
         },
         {
-          "candidates": 502,
-          "products": 502,
+          "candidates": 508,
+          "products": 508,
           "retry_attempts": 0,
           "route_id": "bay_smokes-product-verification",
           "source_type": "product_detail_verification",
@@ -112,206 +112,32 @@
           "verification_rejections": 0
         },
         {
-          "admitted_products": 0,
+          "admitted_products": 11,
           "candidates": 26,
           "content_type": "text/html",
-          "duration_seconds": 2.643,
+          "duration_seconds": 15.511,
           "http_status": 200,
-          "products": 1,
+          "products": 11,
           "retry_attempts": 0,
           "route_id": "bay_smokes-fallback-1",
           "source_type": "html_card_product_detail",
-          "status": "degraded",
+          "status": "healthy",
           "url": "https://baysmokes.com/",
-          "verification_failure_reasons": {
-            "product_detail_fetch_error": 24
-          },
-          "verification_failure_records": [
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/blue-cherry-gelato-thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/blue-cherry-gelato-thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/thca-snowballs-smalls-thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/thca-snowballs-smalls-thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/thca-flower-snowballs-shake",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/thca-flower-snowballs-shake"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/gorilla-glue-thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/gorilla-glue-thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/thca-sativa-flower-space-junky",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/thca-sativa-flower-space-junky"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/white-truffle-thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/white-truffle-thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/mango-dream-thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/mango-dream-thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/sour-diesel-thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/sour-diesel-thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/mr-nasty-thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/mr-nasty-thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/snowballs-thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/snowballs-thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/thca-exotic-smalls",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/thca-exotic-smalls"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/exotic-thca-shake",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/exotic-thca-shake"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/thca-flower-club",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/thca-flower-club"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/collections/thca-carts",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/collections/thca-carts"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/collections/thca-flower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/collections/thca-flower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/collections/thca-smalls",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/collections/thca-smalls"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/thca-smalls",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/thca-smalls"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/thca-mini-prerolls-7pack",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/thca-mini-prerolls-7pack"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/mini-thca-prerolls-5g",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/mini-thca-prerolls-5g"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/thca-seeds-feminized-autoflower",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/thca-seeds-feminized-autoflower"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/products/starter-bundle",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/products/starter-bundle"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/collections/thca-concentrates",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/collections/thca-concentrates"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/collections/thca-pre-rolls",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/collections/thca-pre-rolls"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://baysmokes.com/collections/thca-diamonds",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://baysmokes.com/collections/thca-diamonds"
-            }
-          ],
-          "verification_failures": 24,
           "verification_rejection_reasons": {
-            "product_detail_missing_evidence": 1
+            "product_detail_missing_evidence": 15
           },
-          "verification_rejections": 1
+          "verification_rejections": 15
         }
       ],
       "routes_attempted": 5,
       "source_id": "bay_smokes",
       "status": "healthy",
-      "verification_failures": 24
+      "verification_failures": 0
     },
     {
       "active_route": "https://www.blacktiecbd.net/",
       "blocking_verification_failures": 0,
-      "duration_seconds": 3.224,
+      "duration_seconds": 3.751,
       "enabled": true,
       "fallback_active": true,
       "healthy_routes": 5,
@@ -339,7 +165,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 0.88,
+          "duration_seconds": 1.151,
           "http_status": 200,
           "products": 9,
           "retry_attempt": 1,
@@ -350,7 +176,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 0.705,
+          "duration_seconds": 0.83,
           "http_status": 200,
           "products": 23,
           "retry_attempt": 1,
@@ -372,7 +198,7 @@
           "admitted_products": 10,
           "candidates": 14,
           "content_type": "text/html",
-          "duration_seconds": 0.912,
+          "duration_seconds": 0.952,
           "http_status": 200,
           "products": 10,
           "retry_attempts": 0,
@@ -389,7 +215,7 @@
           "admitted_products": 6,
           "candidates": 10,
           "content_type": "text/html",
-          "duration_seconds": 0.72,
+          "duration_seconds": 0.811,
           "http_status": 200,
           "products": 6,
           "retry_attempts": 0,
@@ -411,7 +237,7 @@
     {
       "active_route": "https://botanyfarms.com/collections/thca-flower/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 12.133,
+      "duration_seconds": 7.119,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 4,
@@ -439,7 +265,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.709,
+          "duration_seconds": 0.358,
           "http_status": 200,
           "products": 28,
           "retry_attempt": 1,
@@ -450,7 +276,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 5.935,
+          "duration_seconds": 3.08,
           "http_status": 200,
           "products": 16,
           "retry_attempt": 1,
@@ -472,7 +298,7 @@
           "admitted_products": 5,
           "candidates": 6,
           "content_type": "text/html",
-          "duration_seconds": 2.357,
+          "duration_seconds": 1.566,
           "http_status": 200,
           "products": 5,
           "retry_attempts": 0,
@@ -494,7 +320,7 @@
     {
       "active_route": "https://cbdhemp.direct/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower",
       "blocking_verification_failures": 0,
-      "duration_seconds": 179.48,
+      "duration_seconds": 142.016,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 6,
@@ -522,7 +348,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 124.424,
+          "duration_seconds": 88.836,
           "http_status": 200,
           "products": 30,
           "retry_attempt": 1,
@@ -533,7 +359,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 26.291,
+          "duration_seconds": 24.751,
           "http_status": 200,
           "products": 20,
           "retry_attempt": 1,
@@ -544,7 +370,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 14.242,
+          "duration_seconds": 13.737,
           "http_status": 200,
           "products": 10,
           "retry_attempt": 1,
@@ -566,7 +392,7 @@
           "admitted_products": 17,
           "candidates": 23,
           "content_type": "text/html",
-          "duration_seconds": 6.806,
+          "duration_seconds": 6.428,
           "http_status": 200,
           "products": 17,
           "retry_attempts": 0,
@@ -583,7 +409,7 @@
           "admitted_products": 12,
           "candidates": 19,
           "content_type": "text/html",
-          "duration_seconds": 4.888,
+          "duration_seconds": 5.476,
           "http_status": 200,
           "products": 12,
           "retry_attempts": 0,
@@ -605,7 +431,7 @@
     {
       "active_route": "https://calicanna.cc/wp-json/wc/store/v1/products?per_page=100",
       "blocking_verification_failures": 0,
-      "duration_seconds": 153.44,
+      "duration_seconds": 158.478,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 5,
@@ -618,23 +444,23 @@
         "blocking_verification_failures": 0,
         "discarded_invalid_rows": 0,
         "discovered_products": 21,
-        "evidenced_products": 34,
-        "priced_products": 34,
+        "evidenced_products": 31,
+        "priced_products": 31,
         "products": 16,
         "products_by_type": {
-          "cannabis_vape": 18,
+          "cannabis_vape": 15,
           "psilocybin_mushroom": 16
         },
-        "rejected_products": 18,
+        "rejected_products": 15,
         "url_coverage": 1.0,
         "verification_failures": 0,
-        "verification_rejections": 83
+        "verification_rejections": 85
       },
       "retry_attempts": 1,
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 2.394,
+          "duration_seconds": 2.181,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -645,7 +471,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 87.382,
+          "duration_seconds": 96.667,
           "http_status": 200,
           "products": 19,
           "retry_attempt": 1,
@@ -656,7 +482,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 9.603,
+          "duration_seconds": 4.108,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -667,9 +493,9 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 4.767,
+          "duration_seconds": 6.075,
           "http_status": 200,
-          "products": 3,
+          "products": 2,
           "retry_attempt": 1,
           "route_id": "cali_canna-4",
           "source_type": "html",
@@ -689,7 +515,7 @@
           "admitted_products": 1,
           "candidates": 59,
           "content_type": "text/html",
-          "duration_seconds": 26.459,
+          "duration_seconds": 22.447,
           "http_status": 200,
           "products": 1,
           "retry_attempts": 0,
@@ -703,21 +529,21 @@
           "verification_rejections": 58
         },
         {
-          "admitted_products": 15,
-          "candidates": 40,
+          "admitted_products": 12,
+          "candidates": 39,
           "content_type": "text/html",
-          "duration_seconds": 14.997,
+          "duration_seconds": 19.775,
           "http_status": 200,
-          "products": 15,
+          "products": 12,
           "retry_attempts": 0,
           "route_id": "cali_canna-fallback-2",
           "source_type": "html_card_product_detail",
           "status": "healthy",
           "url": "https://calicanna.cc/",
           "verification_rejection_reasons": {
-            "product_detail_missing_evidence": 25
+            "product_detail_missing_evidence": 27
           },
-          "verification_rejections": 25
+          "verification_rejections": 27
         }
       ],
       "routes_attempted": 7,
@@ -728,7 +554,7 @@
     {
       "active_route": "https://cannanc.com/indoor-smalls-thca-flower/",
       "blocking_verification_failures": 0,
-      "duration_seconds": 25.203,
+      "duration_seconds": 33.829,
       "enabled": true,
       "fallback_active": true,
       "healthy_routes": 8,
@@ -756,7 +582,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 0.828,
+          "duration_seconds": 0.71,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -767,7 +593,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 11.073,
+          "duration_seconds": 19.129,
           "http_status": 200,
           "products": 13,
           "retry_attempt": 1,
@@ -778,7 +604,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 1.189,
+          "duration_seconds": 1.152,
           "http_status": 200,
           "products": 1,
           "retry_attempt": 1,
@@ -789,7 +615,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 0.812,
+          "duration_seconds": 0.789,
           "http_status": 200,
           "products": 1,
           "retry_attempt": 1,
@@ -811,7 +637,7 @@
           "admitted_products": 3,
           "candidates": 17,
           "content_type": "text/html",
-          "duration_seconds": 4.336,
+          "duration_seconds": 4.858,
           "http_status": 200,
           "products": 3,
           "retry_attempts": 0,
@@ -828,7 +654,7 @@
           "admitted_products": 15,
           "candidates": 16,
           "content_type": "text/html",
-          "duration_seconds": 1.97,
+          "duration_seconds": 1.934,
           "http_status": 200,
           "products": 15,
           "retry_attempts": 0,
@@ -845,7 +671,7 @@
           "admitted_products": 3,
           "candidates": 16,
           "content_type": "text/html",
-          "duration_seconds": 4.194,
+          "duration_seconds": 4.232,
           "http_status": 200,
           "products": 3,
           "retry_attempts": 0,
@@ -862,7 +688,7 @@
           "admitted_products": 3,
           "candidates": 3,
           "content_type": "text/html",
-          "duration_seconds": 0.797,
+          "duration_seconds": 1.016,
           "http_status": 200,
           "products": 3,
           "retry_attempts": 0,
@@ -881,7 +707,7 @@
     {
       "active_route": "https://crysp.co/wp-json/wc/store/v1/products?per_page=100&search=flower",
       "blocking_verification_failures": 0,
-      "duration_seconds": 55.862,
+      "duration_seconds": 63.57,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 3,
@@ -910,7 +736,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 22.987,
+          "duration_seconds": 24.25,
           "http_status": 200,
           "products": 34,
           "retry_attempt": 1,
@@ -921,7 +747,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 32.759,
+          "duration_seconds": 39.144,
           "http_status": 200,
           "products": 29,
           "retry_attempt": 1,
@@ -946,9 +772,9 @@
       "verification_failures": 0
     },
     {
-      "active_route": "https://www.drganja.com/thca-hemp-flower",
+      "active_route": "https://www.drganja.com/",
       "blocking_verification_failures": 0,
-      "duration_seconds": 27.85,
+      "duration_seconds": 24.648,
       "enabled": true,
       "fallback_active": true,
       "healthy_routes": 5,
@@ -961,23 +787,23 @@
         "blocking_verification_failures": 0,
         "discarded_invalid_rows": 0,
         "discovered_products": 1,
-        "evidenced_products": 3,
-        "priced_products": 3,
+        "evidenced_products": 4,
+        "priced_products": 4,
         "products": 2,
         "products_by_type": {
           "cannabis_flower": 2,
-          "cannabis_vape": 1
+          "cannabis_vape": 2
         },
-        "rejected_products": 1,
+        "rejected_products": 2,
         "url_coverage": 1.0,
         "verification_failures": 0,
-        "verification_rejections": 27
+        "verification_rejections": 29
       },
       "retry_attempts": 3,
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 4.382,
+          "duration_seconds": 3.553,
           "http_status": 200,
           "products": 1,
           "retry_attempt": 1,
@@ -987,7 +813,7 @@
           "url": "https://www.drganja.com/thca-hemp-flower"
         },
         {
-          "duration_seconds": 0.274,
+          "duration_seconds": 0.085,
           "error": "RemoteDisconnected: Remote end closed connection without response",
           "retry_attempt": 1,
           "route_id": "dr_ganja-2",
@@ -997,7 +823,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 2.485,
+          "duration_seconds": 1.667,
           "http_status": 200,
           "products": 1,
           "retry_attempt": 1,
@@ -1007,7 +833,7 @@
           "url": "https://www.drganja.com/"
         },
         {
-          "duration_seconds": 0.272,
+          "duration_seconds": 0.129,
           "error": "RemoteDisconnected: Remote end closed connection without response",
           "retry_attempt": 2,
           "route_id": "dr_ganja-2",
@@ -1016,7 +842,7 @@
           "url": "https://www.drganja.com/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower"
         },
         {
-          "duration_seconds": 0.26,
+          "duration_seconds": 0.05,
           "error": "RemoteDisconnected: Remote end closed connection without response",
           "retry_attempt": 3,
           "route_id": "dr_ganja-2",
@@ -1037,7 +863,7 @@
           "admitted_products": 2,
           "candidates": 24,
           "content_type": "text/html",
-          "duration_seconds": 9.083,
+          "duration_seconds": 7.34,
           "http_status": 200,
           "products": 2,
           "retry_attempts": 0,
@@ -1051,21 +877,21 @@
           "verification_rejections": 22
         },
         {
-          "admitted_products": 2,
-          "candidates": 7,
+          "admitted_products": 3,
+          "candidates": 10,
           "content_type": "text/html",
-          "duration_seconds": 4.092,
+          "duration_seconds": 4.822,
           "http_status": 200,
-          "products": 2,
+          "products": 3,
           "retry_attempts": 0,
           "route_id": "dr_ganja-fallback-2",
           "source_type": "html_card_product_detail",
           "status": "healthy",
           "url": "https://www.drganja.com/",
           "verification_rejection_reasons": {
-            "product_detail_missing_evidence": 5
+            "product_detail_missing_evidence": 7
           },
-          "verification_rejections": 5
+          "verification_rejections": 7
         }
       ],
       "routes_attempted": 8,
@@ -1076,7 +902,7 @@
     {
       "active_route": "https://earthyselect.com/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower",
       "blocking_verification_failures": 0,
-      "duration_seconds": 42.28,
+      "duration_seconds": 71.251,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 3,
@@ -1104,7 +930,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 10.391,
+          "duration_seconds": 21.1,
           "http_status": 200,
           "products": 105,
           "retry_attempt": 1,
@@ -1115,7 +941,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 30.109,
+          "duration_seconds": 45.099,
           "http_status": 200,
           "products": 105,
           "retry_attempt": 1,
@@ -1126,7 +952,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 0.127,
+          "duration_seconds": 2.493,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -1148,7 +974,7 @@
           "admitted_products": 0,
           "candidates": 0,
           "content_type": "text/html",
-          "duration_seconds": 0.058,
+          "duration_seconds": 0.056,
           "http_status": 200,
           "products": 0,
           "retry_attempts": 0,
@@ -1167,7 +993,7 @@
     {
       "active_route": "https://eighthorseshemp.com/collections/hemp-flower-type-1-2/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 75.613,
+      "duration_seconds": 59.559,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 2,
@@ -1195,7 +1021,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.766,
+          "duration_seconds": 0.745,
           "http_status": 200,
           "products": 7,
           "retry_attempt": 1,
@@ -1206,7 +1032,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 10.972,
+          "duration_seconds": 10.864,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -1228,7 +1054,7 @@
           "admitted_products": 0,
           "candidates": 18,
           "content_type": "text/html",
-          "duration_seconds": 62.961,
+          "duration_seconds": 47.25,
           "http_status": 200,
           "products": 0,
           "retry_attempts": 0,
@@ -1250,7 +1076,7 @@
     {
       "active_route": "https://www.exhalewell.com/wp-json/wc/store/v1/products?per_page=100&search=thca%20flower",
       "blocking_verification_failures": 0,
-      "duration_seconds": 104.007,
+      "duration_seconds": 196.944,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 6,
@@ -1280,7 +1106,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 32.296,
+          "duration_seconds": 33.591,
           "http_status": 200,
           "products": 11,
           "retry_attempt": 1,
@@ -1291,7 +1117,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 17.861,
+          "duration_seconds": 26.756,
           "http_status": 200,
           "products": 48,
           "retry_attempt": 1,
@@ -1302,7 +1128,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 6.645,
+          "duration_seconds": 45.511,
           "http_status": 200,
           "products": 10,
           "retry_attempt": 1,
@@ -1324,7 +1150,7 @@
           "admitted_products": 24,
           "candidates": 38,
           "content_type": "text/html",
-          "duration_seconds": 21.035,
+          "duration_seconds": 44.007,
           "http_status": 200,
           "products": 24,
           "retry_attempts": 0,
@@ -1341,7 +1167,7 @@
           "admitted_products": 16,
           "candidates": 27,
           "content_type": "text/html",
-          "duration_seconds": 9.514,
+          "duration_seconds": 8.012,
           "http_status": 200,
           "products": 16,
           "retry_attempts": 0,
@@ -1363,13 +1189,13 @@
     {
       "active_route": "https://flowgardens.com/collections/flower-type-1-flower-high-thca/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 7.018,
+      "duration_seconds": 7.553,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 3,
       "name": "Flow Gardens",
       "non_healthy_routes": 1,
-      "products": 145,
+      "products": 144,
       "quality": {
         "admission_rejection_reasons": {},
         "admission_rejections": 0,
@@ -1378,11 +1204,11 @@
         "discovered_products": 170,
         "evidenced_products": 170,
         "priced_products": 170,
-        "products": 145,
+        "products": 144,
         "products_by_type": {
           "cannabis_flower": 170
         },
-        "rejected_products": 25,
+        "rejected_products": 26,
         "url_coverage": 1.0,
         "verification_failures": 0,
         "verification_rejections": 0
@@ -1391,7 +1217,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.579,
+          "duration_seconds": 1.039,
           "http_status": 200,
           "products": 169,
           "retry_attempt": 1,
@@ -1402,7 +1228,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 1.56,
+          "duration_seconds": 1.909,
           "http_status": 200,
           "products": 1,
           "retry_attempt": 1,
@@ -1421,7 +1247,7 @@
           "verification_rejections": 0
         },
         {
-          "duration_seconds": 0.055,
+          "duration_seconds": 0.04,
           "error": "HTTPError: HTTP Error 429: Too Many Requests",
           "route_id": "flow_gardens-fallback-1",
           "source_type": "html_card_product_detail",
@@ -1437,13 +1263,13 @@
     {
       "active_route": "https://goldcanna.com/collections/all/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 16.404,
+      "duration_seconds": 14.623,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 3,
       "name": "Gold Canna",
       "non_healthy_routes": 1,
-      "products": 12,
+      "products": 14,
       "quality": {
         "admission_rejection_reasons": {},
         "admission_rejections": 0,
@@ -1452,12 +1278,12 @@
         "discovered_products": 256,
         "evidenced_products": 256,
         "priced_products": 256,
-        "products": 12,
+        "products": 14,
         "products_by_type": {
           "cannabis_flower": 255,
           "cannabis_vape": 1
         },
-        "rejected_products": 244,
+        "rejected_products": 242,
         "url_coverage": 1.0,
         "verification_failures": 0,
         "verification_rejections": 0
@@ -1466,7 +1292,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 1.485,
+          "duration_seconds": 1.983,
           "http_status": 200,
           "products": 250,
           "retry_attempt": 1,
@@ -1477,7 +1303,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 3.592,
+          "duration_seconds": 4.508,
           "http_status": 200,
           "products": 6,
           "retry_attempt": 1,
@@ -1512,7 +1338,7 @@
     {
       "active_route": "https://greatcbdshop.com/collections/thca-flower",
       "blocking_verification_failures": 0,
-      "duration_seconds": 70.079,
+      "duration_seconds": 56.28,
       "enabled": true,
       "fallback_active": true,
       "healthy_routes": 3,
@@ -1540,7 +1366,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 2.452,
+          "duration_seconds": 2.262,
           "error": "JSONDecodeError: Expecting value: line 1 column 1 (char 0)",
           "http_status": 200,
           "retry_attempt": 1,
@@ -1551,7 +1377,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 32.066,
+          "duration_seconds": 26.836,
           "http_status": 200,
           "products": 10,
           "retry_attempt": 1,
@@ -1573,7 +1399,7 @@
           "admitted_products": 12,
           "candidates": 34,
           "content_type": "text/html",
-          "duration_seconds": 35.553,
+          "duration_seconds": 27.178,
           "http_status": 200,
           "products": 12,
           "retry_attempts": 0,
@@ -1595,7 +1421,7 @@
     {
       "active_route": "https://greenunicornfarms.com/wp-json/wc/store/v1/products?per_page=100",
       "blocking_verification_failures": 0,
-      "duration_seconds": 259.73,
+      "duration_seconds": 218.145,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 6,
@@ -1623,7 +1449,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 124.669,
+          "duration_seconds": 102.744,
           "http_status": 200,
           "products": 34,
           "retry_attempt": 1,
@@ -1634,7 +1460,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 39.118,
+          "duration_seconds": 29.887,
           "http_status": 200,
           "products": 58,
           "retry_attempt": 1,
@@ -1645,7 +1471,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 37.243,
+          "duration_seconds": 33.852,
           "http_status": 200,
           "products": 66,
           "retry_attempt": 1,
@@ -1670,7 +1496,7 @@
           "admitted_products": 8,
           "candidates": 39,
           "content_type": "text/html",
-          "duration_seconds": 11.243,
+          "duration_seconds": 9.05,
           "http_status": 200,
           "products": 8,
           "retry_attempts": 0,
@@ -1687,7 +1513,7 @@
           "admitted_products": 8,
           "candidates": 39,
           "content_type": "text/html",
-          "duration_seconds": 11.482,
+          "duration_seconds": 9.519,
           "http_status": 200,
           "products": 8,
           "retry_attempts": 0,
@@ -1709,24 +1535,24 @@
     {
       "active_route": "https://shophellomary.com/wp-json/wc/store/v1/products?per_page=100&search=flower",
       "blocking_verification_failures": 0,
-      "duration_seconds": 174.27,
+      "duration_seconds": 133.364,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 5,
       "name": "Hello Mary",
       "non_healthy_routes": 0,
-      "products": 81,
+      "products": 83,
       "quality": {
         "admission_rejection_reasons": {},
         "admission_rejections": 0,
         "blocking_verification_failures": 0,
         "discarded_invalid_rows": 0,
-        "discovered_products": 95,
-        "evidenced_products": 113,
-        "priced_products": 113,
-        "products": 81,
+        "discovered_products": 97,
+        "evidenced_products": 115,
+        "priced_products": 115,
+        "products": 83,
         "products_by_type": {
-          "cannabis_flower": 95,
+          "cannabis_flower": 97,
           "cannabis_vape": 18
         },
         "rejected_products": 32,
@@ -1738,7 +1564,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 22.513,
+          "duration_seconds": 7.898,
           "http_status": 200,
           "products": 14,
           "retry_attempt": 1,
@@ -1749,9 +1575,9 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 53.157,
+          "duration_seconds": 40.725,
           "http_status": 200,
-          "products": 80,
+          "products": 82,
           "retry_attempt": 1,
           "route_id": "hello_mary-2",
           "source_type": "woo",
@@ -1760,9 +1586,9 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 83.365,
+          "duration_seconds": 63.669,
           "http_status": 200,
-          "products": 71,
+          "products": 70,
           "retry_attempt": 1,
           "route_id": "hello_mary-3",
           "source_type": "woo",
@@ -1770,8 +1596,8 @@
           "url": "https://shophellomary.com/wp-json/wc/store/v1/products?per_page=100"
         },
         {
-          "candidates": 95,
-          "products": 95,
+          "candidates": 97,
+          "products": 97,
           "retry_attempts": 0,
           "route_id": "hello_mary-product-verification",
           "source_type": "product_detail_verification",
@@ -1782,7 +1608,7 @@
           "admitted_products": 20,
           "candidates": 32,
           "content_type": "text/html",
-          "duration_seconds": 6.112,
+          "duration_seconds": 9.768,
           "http_status": 200,
           "products": 20,
           "retry_attempts": 0,
@@ -1804,7 +1630,7 @@
     {
       "active_route": "https://hemphop.co/collections/thca-flower-and-prerolls/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 27.433,
+      "duration_seconds": 24.77,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 4,
@@ -1833,7 +1659,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 2.051,
+          "duration_seconds": 1.59,
           "http_status": 200,
           "products": 266,
           "retry_attempt": 1,
@@ -1844,7 +1670,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 2.283,
+          "duration_seconds": 1.877,
           "http_status": 200,
           "products": 136,
           "retry_attempt": 1,
@@ -1855,7 +1681,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 19.539,
+          "duration_seconds": 16.951,
           "http_status": 200,
           "products": 47,
           "retry_attempt": 1,
@@ -1874,7 +1700,7 @@
           "verification_rejections": 0
         },
         {
-          "duration_seconds": 0.033,
+          "duration_seconds": 0.027,
           "error": "HTTPError: HTTP Error 429: Too Many Requests",
           "route_id": "hemp_hop-fallback-1",
           "source_type": "html_card_product_detail",
@@ -1890,26 +1716,26 @@
     {
       "active_route": "https://litfarms.com/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 37.786,
+      "duration_seconds": 21.643,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 3,
       "name": "LIT Farms",
       "non_healthy_routes": 1,
-      "products": 135,
+      "products": 128,
       "quality": {
         "admission_rejection_reasons": {},
         "admission_rejections": 0,
         "blocking_verification_failures": 0,
         "discarded_invalid_rows": 0,
-        "discovered_products": 800,
-        "evidenced_products": 800,
-        "priced_products": 800,
-        "products": 135,
+        "discovered_products": 799,
+        "evidenced_products": 799,
+        "priced_products": 799,
+        "products": 128,
         "products_by_type": {
-          "cannabis_flower": 800
+          "cannabis_flower": 799
         },
-        "rejected_products": 665,
+        "rejected_products": 671,
         "url_coverage": 1.0,
         "verification_failures": 0,
         "verification_rejections": 0
@@ -1918,9 +1744,9 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 26.534,
+          "duration_seconds": 14.057,
           "http_status": 200,
-          "products": 129,
+          "products": 127,
           "retry_attempt": 1,
           "route_id": "lit_farms-1",
           "source_type": "html",
@@ -1929,7 +1755,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 2.815,
+          "duration_seconds": 2.742,
           "http_status": 200,
           "products": 695,
           "retry_attempt": 1,
@@ -1939,8 +1765,8 @@
           "url": "https://litfarms.com/products.json?limit=250"
         },
         {
-          "candidates": 800,
-          "products": 800,
+          "candidates": 799,
+          "products": 799,
           "retry_attempts": 0,
           "route_id": "lit_farms-product-verification",
           "source_type": "product_detail_verification",
@@ -1948,7 +1774,7 @@
           "verification_rejections": 0
         },
         {
-          "duration_seconds": 0.193,
+          "duration_seconds": 0.037,
           "error": "HTTPError: HTTP Error 429: Too Many Requests",
           "route_id": "lit_farms-fallback-1",
           "source_type": "html_card_product_detail",
@@ -1964,7 +1790,7 @@
     {
       "active_route": "https://loudhempproducts.com/wp-json/wc/store/v1/products?per_page=100",
       "blocking_verification_failures": 0,
-      "duration_seconds": 30.506,
+      "duration_seconds": 34.051,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 3,
@@ -1993,7 +1819,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 2.508,
+          "duration_seconds": 3.351,
           "http_status": 200,
           "products": 6,
           "retry_attempt": 1,
@@ -2015,7 +1841,7 @@
           "admitted_products": 4,
           "candidates": 4,
           "content_type": "text/html",
-          "duration_seconds": 12.11,
+          "duration_seconds": 13.514,
           "http_status": 200,
           "products": 4,
           "retry_attempts": 0,
@@ -2034,38 +1860,38 @@
     {
       "active_route": "https://luckyelk.com/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 18.471,
+      "duration_seconds": 18.645,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 4,
       "name": "Lucky Elk",
       "non_healthy_routes": 0,
-      "products": 51,
+      "products": 58,
       "quality": {
         "admission_rejection_reasons": {},
         "admission_rejections": 0,
         "blocking_verification_failures": 0,
         "discarded_invalid_rows": 0,
-        "discovered_products": 110,
-        "evidenced_products": 124,
-        "priced_products": 124,
-        "products": 51,
+        "discovered_products": 114,
+        "evidenced_products": 129,
+        "priced_products": 129,
+        "products": 58,
         "products_by_type": {
-          "cannabis_flower": 101,
+          "cannabis_flower": 106,
           "cannabis_vape": 23
         },
-        "rejected_products": 73,
+        "rejected_products": 71,
         "url_coverage": 1.0,
         "verification_failures": 0,
-        "verification_rejections": 14
+        "verification_rejections": 13
       },
       "retry_attempts": 1,
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.394,
+          "duration_seconds": 0.406,
           "http_status": 200,
-          "products": 84,
+          "products": 88,
           "retry_attempt": 1,
           "route_id": "lucky_elk-1",
           "source_type": "shopify",
@@ -2074,9 +1900,9 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 0.549,
+          "duration_seconds": 0.646,
           "http_status": 200,
-          "products": 110,
+          "products": 114,
           "retry_attempt": 1,
           "route_id": "lucky_elk-2",
           "source_type": "shopify",
@@ -2084,8 +1910,8 @@
           "url": "https://luckyelk.com/products.json?limit=250"
         },
         {
-          "candidates": 110,
-          "products": 110,
+          "candidates": 114,
+          "products": 114,
           "retry_attempts": 0,
           "route_id": "lucky_elk-product-verification",
           "source_type": "product_detail_verification",
@@ -2093,21 +1919,21 @@
           "verification_rejections": 0
         },
         {
-          "admitted_products": 14,
+          "admitted_products": 15,
           "candidates": 28,
           "content_type": "text/html",
-          "duration_seconds": 15.608,
+          "duration_seconds": 15.479,
           "http_status": 200,
-          "products": 14,
+          "products": 15,
           "retry_attempts": 0,
           "route_id": "lucky_elk-fallback-1",
           "source_type": "html_card_product_detail",
           "status": "healthy",
           "url": "https://luckyelk.com/collections/all",
           "verification_rejection_reasons": {
-            "product_detail_missing_evidence": 14
+            "product_detail_missing_evidence": 13
           },
-          "verification_rejections": 14
+          "verification_rejections": 13
         }
       ],
       "routes_attempted": 4,
@@ -2118,7 +1944,7 @@
     {
       "active_route": "https://hellomood.co/",
       "blocking_verification_failures": 0,
-      "duration_seconds": 15.369,
+      "duration_seconds": 12.708,
       "enabled": true,
       "fallback_active": true,
       "healthy_routes": 1,
@@ -2146,7 +1972,7 @@
       "retry_attempts": 1,
       "route_results": [
         {
-          "duration_seconds": 0.893,
+          "duration_seconds": 0.551,
           "error": "HTTP 404",
           "http_status": 404,
           "retry_attempt": 1,
@@ -2157,7 +1983,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 0.91,
+          "duration_seconds": 0.717,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -2179,7 +2005,7 @@
           "admitted_products": 18,
           "candidates": 26,
           "content_type": "text/html",
-          "duration_seconds": 13.566,
+          "duration_seconds": 11.439,
           "http_status": 200,
           "products": 18,
           "retry_attempts": 0,
@@ -2201,7 +2027,7 @@
     {
       "active_route": "https://plainjane.com/",
       "blocking_verification_failures": 0,
-      "duration_seconds": 26.289,
+      "duration_seconds": 14.119,
       "enabled": true,
       "fallback_active": true,
       "healthy_routes": 3,
@@ -2230,7 +2056,7 @@
       "route_results": [
         {
           "content_type": "text/html",
-          "duration_seconds": 21.493,
+          "duration_seconds": 11.157,
           "http_status": 200,
           "products": 44,
           "retry_attempt": 1,
@@ -2252,7 +2078,7 @@
           "admitted_products": 26,
           "candidates": 26,
           "content_type": "text/html",
-          "duration_seconds": 3.306,
+          "duration_seconds": 2.168,
           "http_status": 200,
           "products": 26,
           "retry_attempts": 0,
@@ -2271,7 +2097,7 @@
     {
       "active_route": "https://purerootsbotanicals.com/",
       "blocking_verification_failures": 0,
-      "duration_seconds": 5.515,
+      "duration_seconds": 1.862,
       "enabled": true,
       "fallback_active": true,
       "healthy_routes": 3,
@@ -2298,7 +2124,7 @@
       "retry_attempts": 1,
       "route_results": [
         {
-          "duration_seconds": 0.577,
+          "duration_seconds": 0.173,
           "error": "HTTP 404",
           "http_status": 404,
           "retry_attempt": 1,
@@ -2308,7 +2134,7 @@
           "url": "https://purerootsbotanicals.com/wp-json/wc/store/v1/products?per_page=100&search=flower"
         },
         {
-          "duration_seconds": 0.277,
+          "duration_seconds": 0.091,
           "error": "HTTP 404",
           "http_status": 404,
           "retry_attempt": 1,
@@ -2319,7 +2145,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 3.245,
+          "duration_seconds": 0.986,
           "http_status": 200,
           "products": 5,
           "retry_attempt": 1,
@@ -2341,7 +2167,7 @@
           "admitted_products": 3,
           "candidates": 6,
           "content_type": "text/html",
-          "duration_seconds": 1.414,
+          "duration_seconds": 0.61,
           "http_status": 200,
           "products": 3,
           "retry_attempts": 0,
@@ -2363,7 +2189,7 @@
     {
       "active_route": "https://secretnature.com/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 11.724,
+      "duration_seconds": 11.587,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 4,
@@ -2393,7 +2219,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.78,
+          "duration_seconds": 0.849,
           "http_status": 200,
           "products": 72,
           "retry_attempt": 1,
@@ -2404,7 +2230,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 1.795,
+          "duration_seconds": 1.33,
           "http_status": 200,
           "products": 109,
           "retry_attempt": 1,
@@ -2415,7 +2241,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 1.878,
+          "duration_seconds": 2.028,
           "http_status": 200,
           "products": 20,
           "retry_attempt": 1,
@@ -2437,7 +2263,7 @@
           "verification_rejections": 1
         },
         {
-          "duration_seconds": 0.076,
+          "duration_seconds": 0.055,
           "error": "HTTPError: HTTP Error 429: Too Many Requests",
           "route_id": "secret_nature-fallback-1",
           "source_type": "html_card_product_detail",
@@ -2451,93 +2277,9 @@
       "verification_failures": 0
     },
     {
-      "active_route": "https://sherlocksglass.com/wp-json/wc/store/v1/products?per_page=100&search=flower",
-      "blocking_verification_failures": 0,
-      "duration_seconds": 163.864,
-      "enabled": true,
-      "fallback_active": false,
-      "healthy_routes": 3,
-      "name": "Sherlocks Glass & Dispensary",
-      "non_healthy_routes": 1,
-      "products": 126,
-      "quality": {
-        "admission_rejection_reasons": {},
-        "admission_rejections": 0,
-        "blocking_verification_failures": 0,
-        "discarded_invalid_rows": 0,
-        "discovered_products": 137,
-        "evidenced_products": 137,
-        "priced_products": 137,
-        "products": 126,
-        "products_by_type": {
-          "cannabis_flower": 126,
-          "cannabis_vape": 11
-        },
-        "rejected_products": 11,
-        "url_coverage": 1.0,
-        "verification_failures": 0,
-        "verification_rejections": 18
-      },
-      "retry_attempts": 1,
-      "route_results": [
-        {
-          "content_type": "application/json",
-          "duration_seconds": 88.744,
-          "http_status": 200,
-          "products": 126,
-          "retry_attempt": 1,
-          "route_id": "sherlocks_glass-1",
-          "source_type": "woo",
-          "status": "healthy",
-          "url": "https://sherlocksglass.com/wp-json/wc/store/v1/products?per_page=100&search=flower"
-        },
-        {
-          "content_type": "application/json",
-          "duration_seconds": 31.609,
-          "http_status": 200,
-          "products": 31,
-          "retry_attempt": 1,
-          "route_id": "sherlocks_glass-2",
-          "source_type": "woo",
-          "status": "healthy",
-          "url": "https://sherlocksglass.com/wp-json/wc/store/v1/products?per_page=100"
-        },
-        {
-          "candidates": 137,
-          "products": 137,
-          "retry_attempts": 0,
-          "route_id": "sherlocks_glass-product-verification",
-          "source_type": "product_detail_verification",
-          "status": "healthy",
-          "verification_rejections": 0
-        },
-        {
-          "admitted_products": 0,
-          "candidates": 18,
-          "content_type": "text/html",
-          "duration_seconds": 11.391,
-          "http_status": 200,
-          "products": 0,
-          "retry_attempts": 0,
-          "route_id": "sherlocks_glass-fallback-1",
-          "source_type": "html_card_product_detail",
-          "status": "empty",
-          "url": "https://sherlocksglass.com/shop/",
-          "verification_rejection_reasons": {
-            "product_detail_missing_evidence": 18
-          },
-          "verification_rejections": 18
-        }
-      ],
-      "routes_attempted": 4,
-      "source_id": "sherlocks_glass",
-      "status": "healthy",
-      "verification_failures": 0
-    },
-    {
       "active_route": "https://simplymary.co/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 18.676,
+      "duration_seconds": 32.674,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 3,
@@ -2559,14 +2301,14 @@
         },
         "rejected_products": 83,
         "url_coverage": 1.0,
-        "verification_failures": 24,
-        "verification_rejections": 0
+        "verification_failures": 15,
+        "verification_rejections": 7
       },
       "retry_attempts": 1,
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 4.864,
+          "duration_seconds": 1.026,
           "http_status": 200,
           "products": 133,
           "retry_attempt": 1,
@@ -2577,7 +2319,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 7.622,
+          "duration_seconds": 7.553,
           "http_status": 200,
           "products": 29,
           "retry_attempt": 1,
@@ -2599,32 +2341,18 @@
           "admitted_products": 0,
           "candidates": 24,
           "content_type": "text/html",
-          "duration_seconds": 0.29,
+          "duration_seconds": 3.24,
           "http_status": 200,
-          "products": 0,
+          "products": 2,
           "retry_attempts": 0,
           "route_id": "simply_mary-fallback-1",
           "source_type": "html_card_product_detail",
           "status": "degraded",
           "url": "https://simplymary.co/",
           "verification_failure_reasons": {
-            "product_detail_fetch_error": 24
+            "product_detail_fetch_error": 15
           },
           "verification_failure_records": [
-            {
-              "attempts": 1,
-              "product_id": "https://simplymary.co/products/thca-live-resin-vape",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/products/thca-live-resin-vape"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://simplymary.co/collections/thca-flower-smalls",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/collections/thca-flower-smalls"
-            },
             {
               "attempts": 1,
               "product_id": "https://simplymary.co/collections/thca-rosin-vape",
@@ -2676,13 +2404,6 @@
             },
             {
               "attempts": 1,
-              "product_id": "https://simplymary.co/collections/thca-flower-for-relaxing",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/collections/thca-flower-for-relaxing"
-            },
-            {
-              "attempts": 1,
               "product_id": "https://simplymary.co/products/banana-punch-rosin-thca",
               "reason": "product_detail_fetch_error",
               "retryable": false,
@@ -2694,13 +2415,6 @@
               "reason": "product_detail_fetch_error",
               "retryable": false,
               "url": "https://simplymary.co/products/rosin-gummies-2"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://simplymary.co/products/rosin-gummies-puffin",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/products/rosin-gummies-puffin"
             },
             {
               "attempts": 1,
@@ -2725,45 +2439,10 @@
             },
             {
               "attempts": 1,
-              "product_id": "https://simplymary.co/products/rosin-vape",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/products/rosin-vape"
-            },
-            {
-              "attempts": 1,
               "product_id": "https://simplymary.co/products/rosin-vape-14",
               "reason": "product_detail_fetch_error",
               "retryable": false,
               "url": "https://simplymary.co/products/rosin-vape-14"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://simplymary.co/collections/thca-cold-cure",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/collections/thca-cold-cure"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://simplymary.co/collections/thca-full-melt",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/collections/thca-full-melt"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://simplymary.co/collections/thca-diamonds",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/collections/thca-diamonds"
-            },
-            {
-              "attempts": 1,
-              "product_id": "https://simplymary.co/collections/thca-crumble",
-              "reason": "product_detail_fetch_error",
-              "retryable": false,
-              "url": "https://simplymary.co/collections/thca-crumble"
             },
             {
               "attempts": 1,
@@ -2780,187 +2459,22 @@
               "url": "https://simplymary.co/collections/thca-rosin-jam"
             }
           ],
-          "verification_failures": 24,
-          "verification_rejections": 0
+          "verification_failures": 15,
+          "verification_rejection_reasons": {
+            "product_detail_missing_evidence": 7
+          },
+          "verification_rejections": 7
         }
       ],
       "routes_attempted": 4,
       "source_id": "simply_mary",
       "status": "healthy",
-      "verification_failures": 24
-    },
-    {
-      "active_route": "https://www.smokymountaincbd.com/wp-json/wc/store/v1/products?per_page=100",
-      "blocking_verification_failures": 0,
-      "duration_seconds": 97.297,
-      "enabled": true,
-      "fallback_active": false,
-      "healthy_routes": 4,
-      "name": "Smoky Mountain CBD",
-      "non_healthy_routes": 1,
-      "products": 37,
-      "quality": {
-        "admission_rejection_reasons": {},
-        "admission_rejections": 0,
-        "blocking_verification_failures": 0,
-        "discarded_invalid_rows": 0,
-        "discovered_products": 46,
-        "evidenced_products": 47,
-        "priced_products": 47,
-        "products": 37,
-        "products_by_type": {
-          "cannabis_flower": 39,
-          "cannabis_vape": 8
-        },
-        "rejected_products": 10,
-        "url_coverage": 1.0,
-        "verification_failures": 0,
-        "verification_rejections": 37
-      },
-      "retry_attempts": 1,
-      "route_results": [
-        {
-          "content_type": "application/json",
-          "duration_seconds": 2.948,
-          "http_status": 200,
-          "products": 0,
-          "retry_attempt": 1,
-          "route_id": "smoky_mountain_cbd-1",
-          "source_type": "woo",
-          "status": "empty",
-          "url": "https://www.smokymountaincbd.com/wp-json/wc/store/v1/products?per_page=100&search=flower"
-        },
-        {
-          "content_type": "application/json",
-          "duration_seconds": 30.912,
-          "http_status": 200,
-          "products": 40,
-          "retry_attempt": 1,
-          "route_id": "smoky_mountain_cbd-2",
-          "source_type": "woo",
-          "status": "healthy",
-          "url": "https://www.smokymountaincbd.com/wp-json/wc/store/v1/products?per_page=100"
-        },
-        {
-          "content_type": "text/html",
-          "duration_seconds": 13.262,
-          "http_status": 200,
-          "products": 6,
-          "retry_attempt": 1,
-          "route_id": "smoky_mountain_cbd-3",
-          "source_type": "html",
-          "status": "healthy",
-          "url": "https://www.smokymountaincbd.com/"
-        },
-        {
-          "candidates": 46,
-          "products": 46,
-          "retry_attempts": 0,
-          "route_id": "smoky_mountain_cbd-product-verification",
-          "source_type": "product_detail_verification",
-          "status": "healthy",
-          "verification_rejections": 0
-        },
-        {
-          "admitted_products": 20,
-          "candidates": 57,
-          "content_type": "text/html",
-          "duration_seconds": 19.388,
-          "http_status": 200,
-          "products": 20,
-          "retry_attempts": 0,
-          "route_id": "smoky_mountain_cbd-fallback-1",
-          "source_type": "html_card_product_detail",
-          "status": "healthy",
-          "url": "https://www.smokymountaincbd.com/",
-          "verification_rejection_reasons": {
-            "product_detail_missing_evidence": 37
-          },
-          "verification_rejections": 37
-        }
-      ],
-      "routes_attempted": 5,
-      "source_id": "smoky_mountain_cbd",
-      "status": "healthy",
-      "verification_failures": 0
-    },
-    {
-      "active_route": "https://www.snapdragonhemp.com/",
-      "blocking_verification_failures": 0,
-      "duration_seconds": 14.855,
-      "enabled": true,
-      "fallback_active": true,
-      "healthy_routes": 3,
-      "name": "Snapdragon Hemp",
-      "non_healthy_routes": 0,
-      "products": 4,
-      "quality": {
-        "admission_rejection_reasons": {},
-        "admission_rejections": 0,
-        "blocking_verification_failures": 0,
-        "discarded_invalid_rows": 0,
-        "discovered_products": 5,
-        "evidenced_products": 5,
-        "priced_products": 4,
-        "products": 4,
-        "products_by_type": {
-          "cannabis_flower": 4,
-          "cannabis_vape": 1
-        },
-        "rejected_products": 1,
-        "url_coverage": 1.0,
-        "verification_failures": 0,
-        "verification_rejections": 9
-      },
-      "retry_attempts": 1,
-      "route_results": [
-        {
-          "content_type": "text/html",
-          "duration_seconds": 8.859,
-          "http_status": 200,
-          "products": 5,
-          "retry_attempt": 1,
-          "route_id": "snapdragon_hemp-1",
-          "source_type": "html",
-          "status": "healthy",
-          "url": "https://www.snapdragonhemp.com/"
-        },
-        {
-          "candidates": 5,
-          "products": 5,
-          "retry_attempts": 0,
-          "route_id": "snapdragon_hemp-product-verification",
-          "source_type": "product_detail_verification",
-          "status": "healthy",
-          "verification_rejections": 0
-        },
-        {
-          "admitted_products": 4,
-          "candidates": 13,
-          "content_type": "text/html",
-          "duration_seconds": 5.994,
-          "http_status": 200,
-          "products": 4,
-          "retry_attempts": 0,
-          "route_id": "snapdragon_hemp-fallback-1",
-          "source_type": "html_card_product_detail",
-          "status": "healthy",
-          "url": "https://www.snapdragonhemp.com/",
-          "verification_rejection_reasons": {
-            "product_detail_missing_evidence": 9
-          },
-          "verification_rejections": 9
-        }
-      ],
-      "routes_attempted": 3,
-      "source_id": "snapdragon_hemp",
-      "status": "healthy",
-      "verification_failures": 0
+      "verification_failures": 15
     },
     {
       "active_route": "https://stoneybranch.com/collections/thca/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 4.287,
+      "duration_seconds": 6.389,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 4,
@@ -2988,7 +2502,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.489,
+          "duration_seconds": 0.372,
           "http_status": 200,
           "products": 20,
           "retry_attempt": 1,
@@ -2999,7 +2513,7 @@
         },
         {
           "content_type": "application/json",
-          "duration_seconds": 0.376,
+          "duration_seconds": 0.351,
           "http_status": 200,
           "products": 20,
           "retry_attempt": 1,
@@ -3021,7 +2535,7 @@
           "admitted_products": 3,
           "candidates": 21,
           "content_type": "text/html",
-          "duration_seconds": 2.841,
+          "duration_seconds": 4.272,
           "http_status": 200,
           "products": 3,
           "retry_attempts": 0,
@@ -3043,38 +2557,38 @@
     {
       "active_route": "https://thehempcollect.com/collections/thca-flower",
       "blocking_verification_failures": 0,
-      "duration_seconds": 72.747,
+      "duration_seconds": 77.722,
       "enabled": true,
       "fallback_active": true,
       "healthy_routes": 4,
       "name": "The Hemp Collect",
       "non_healthy_routes": 0,
-      "products": 12,
+      "products": 13,
       "quality": {
         "admission_rejection_reasons": {},
         "admission_rejections": 0,
         "blocking_verification_failures": 0,
         "discarded_invalid_rows": 0,
-        "discovered_products": 19,
-        "evidenced_products": 23,
-        "priced_products": 23,
-        "products": 12,
+        "discovered_products": 18,
+        "evidenced_products": 20,
+        "priced_products": 20,
+        "products": 13,
         "products_by_type": {
-          "cannabis_flower": 15,
-          "cannabis_vape": 8
+          "cannabis_flower": 14,
+          "cannabis_vape": 6
         },
-        "rejected_products": 11,
+        "rejected_products": 7,
         "url_coverage": 1.0,
         "verification_failures": 0,
-        "verification_rejections": 18
+        "verification_rejections": 20
       },
       "retry_attempts": 1,
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.312,
+          "duration_seconds": 0.332,
           "http_status": 200,
-          "products": 2,
+          "products": 1,
           "retry_attempt": 1,
           "route_id": "the_hemp_collect-1",
           "source_type": "shopify",
@@ -3083,7 +2597,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 10.816,
+          "duration_seconds": 11.218,
           "http_status": 200,
           "products": 17,
           "retry_attempt": 1,
@@ -3093,8 +2607,8 @@
           "url": "https://thehempcollect.com/collections/thca-flower"
         },
         {
-          "candidates": 19,
-          "products": 19,
+          "candidates": 18,
+          "products": 18,
           "retry_attempts": 0,
           "route_id": "the_hemp_collect-product-verification",
           "source_type": "product_detail_verification",
@@ -3102,22 +2616,22 @@
           "verification_rejections": 0
         },
         {
-          "admitted_products": 11,
-          "candidates": 29,
+          "admitted_products": 8,
+          "candidates": 28,
           "content_type": "text/html",
-          "duration_seconds": 61.269,
+          "duration_seconds": 65.902,
           "http_status": 200,
-          "products": 11,
+          "products": 8,
           "retry_attempts": 0,
           "route_id": "the_hemp_collect-fallback-1",
           "source_type": "html_card_product_detail",
           "status": "healthy",
           "url": "https://thehempcollect.com/collections/thca-flower",
           "verification_rejection_reasons": {
-            "product_detail_missing_evidence": 16,
-            "product_detail_record_rejected": 2
+            "product_detail_missing_evidence": 19,
+            "product_detail_record_rejected": 1
           },
-          "verification_rejections": 18
+          "verification_rejections": 20
         }
       ],
       "routes_attempted": 4,
@@ -3128,7 +2642,7 @@
     {
       "active_route": "https://wnc-cbd.com/xmlsitemap.php",
       "blocking_verification_failures": 0,
-      "duration_seconds": 9.144,
+      "duration_seconds": 9.364,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 2,
@@ -3157,7 +2671,7 @@
       "route_results": [
         {
           "content_type": "text/xml",
-          "duration_seconds": 2.3,
+          "duration_seconds": 2.433,
           "http_status": 200,
           "products": 6,
           "retry_attempt": 1,
@@ -3168,7 +2682,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 1.327,
+          "duration_seconds": 1.151,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -3179,7 +2693,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 2.072,
+          "duration_seconds": 2.503,
           "http_status": 200,
           "products": 0,
           "retry_attempt": 1,
@@ -3201,7 +2715,7 @@
           "admitted_products": 0,
           "candidates": 6,
           "content_type": "text/html",
-          "duration_seconds": 1.631,
+          "duration_seconds": 1.443,
           "http_status": 200,
           "products": 0,
           "retry_attempts": 0,
@@ -3218,7 +2732,7 @@
           "admitted_products": 0,
           "candidates": 7,
           "content_type": "text/html",
-          "duration_seconds": 1.811,
+          "duration_seconds": 1.832,
           "http_status": 200,
           "products": 0,
           "retry_attempts": 0,
@@ -3240,7 +2754,7 @@
     {
       "active_route": "https://wildflowerhempco.com/collections/flower/products.json?limit=250",
       "blocking_verification_failures": 0,
-      "duration_seconds": 12.352,
+      "duration_seconds": 6.213,
       "enabled": true,
       "fallback_active": false,
       "healthy_routes": 4,
@@ -3269,7 +2783,7 @@
       "route_results": [
         {
           "content_type": "application/json",
-          "duration_seconds": 0.433,
+          "duration_seconds": 0.455,
           "http_status": 200,
           "products": 83,
           "retry_attempt": 1,
@@ -3280,7 +2794,7 @@
         },
         {
           "content_type": "text/html",
-          "duration_seconds": 6.983,
+          "duration_seconds": 3.027,
           "http_status": 200,
           "products": 4,
           "retry_attempt": 1,
@@ -3302,7 +2816,7 @@
           "admitted_products": 5,
           "candidates": 7,
           "content_type": "text/html",
-          "duration_seconds": 2.598,
+          "duration_seconds": 1.745,
           "http_status": 200,
           "products": 5,
           "retry_attempts": 0,
