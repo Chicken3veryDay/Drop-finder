@@ -1,0 +1,230 @@
+name: Temporary Remaining Metadata Gap Audit
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    if: github.head_ref == 'audit/remaining-metadata-gaps'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: audit/remaining-metadata-gaps
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.13'
+      - name: Classify remaining metadata gaps by vendor and pipeline stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p remaining-metadata-audit
+          PYTHONPATH=scripts python - <<'PY'
+          import json
+          import pathlib
+          import re
+          import urllib.parse
+          from collections import Counter, defaultdict
+
+          from catalog_v4.normalization import effects as normalize_effects
+
+          root = pathlib.Path('cloud_pages/data')
+          details = []
+          for path in sorted((root / 'catalog-v4/details').glob('*.json')):
+              payload = json.loads(path.read_text(encoding='utf-8'))
+              details.extend(row for row in payload.get('products', []) if isinstance(row, dict))
+
+          legacy_payload = json.loads((root / 'catalog.json').read_text(encoding='utf-8'))
+
+          def rows_from(value):
+              if isinstance(value, list):
+                  out = []
+                  for item in value:
+                      if isinstance(item, dict):
+                          if any(key in item for key in ('url', 'product_url', 'canonical_product_url')) and any(key in item for key in ('name', 'title', 'strain_name')):
+                              out.append(item)
+                          out.extend(rows_from(item))
+                  return out
+              if isinstance(value, dict):
+                  out = []
+                  for child in value.values():
+                      out.extend(rows_from(child))
+                  return out
+              return []
+
+          legacy_rows = rows_from(legacy_payload)
+
+          def canonical(value):
+              try:
+                  parsed = urllib.parse.urlsplit(str(value or ''))
+              except ValueError:
+                  return ''
+              if not parsed.netloc:
+                  return ''
+              path = parsed.path.rstrip('/') or '/'
+              return urllib.parse.urlunsplit((parsed.scheme.lower() or 'https', parsed.netloc.lower(), path, '', ''))
+
+          raw_by_url = defaultdict(list)
+          raw_by_vendor_name = defaultdict(list)
+          for row in legacy_rows:
+              target = canonical(row.get('canonical_product_url') or row.get('product_url') or row.get('url'))
+              if target:
+                  raw_by_url[target].append(row)
+              vendor = str(row.get('vendor') or row.get('vendor_name') or row.get('source_name') or row.get('source_id') or '').casefold().strip()
+              name = str(row.get('name') or row.get('title') or row.get('strain_name') or '').casefold().strip()
+              if vendor and name:
+                  raw_by_vendor_name[(vendor, name)].append(row)
+
+          missing_tokens = {'', 'unknown', 'unavailable', 'n/a', 'na', 'none', '-', '—'}
+          potency_keys = ('thca', 'thca_percent', 'delta9_thc', 'delta_9_thc', 'd9_thc', 'direct_total_thc', 'source_total_thc', 'total_thc')
+          lineage_keys = ('lineage', 'strain_type')
+          environment_keys = ('grow_environment', 'environment')
+          potency_pattern = re.compile(r'\b(?:thc-?a|total\s+thc|delta\s*[- ]?9)\b.{0,50}?\b\d{1,3}(?:\.\d+)?\s*(?:%|percent)', re.I | re.S)
+          lineage_pattern = re.compile(r'\b(?:indica|sativa|hybrid)(?:[- ](?:dominant|leaning)(?:[- ]hybrid)?)?\b', re.I)
+          document_pattern = re.compile(r'\b(?:coa|certificate\s+of\s+analysis|lab\s+(?:report|results?)|full\s+panel|test\s+results?)\b', re.I)
+
+          def present(value):
+              if value is None:
+                  return False
+              if isinstance(value, str):
+                  return value.strip().casefold() not in missing_tokens
+              if isinstance(value, (list, tuple, set, dict)):
+                  return bool(value)
+              return True
+
+          def text_blob(row):
+              return ' '.join(str(row.get(key) or '') for key in ('name', 'title', 'source_title', 'description', 'body_html', 'variant', 'tags', 'product_type'))
+
+          def raw_signal(rows, field):
+              for row in rows:
+                  blob = text_blob(row)
+                  if field == 'lineage':
+                      if any(present(row.get(key)) for key in lineage_keys) or lineage_pattern.search(blob):
+                          return True
+                  elif field == 'total_thc':
+                      if any(present(row.get(key)) for key in potency_keys) or potency_pattern.search(blob):
+                          return True
+                  elif field == 'rating':
+                      if present(row.get('rating')) and present(row.get('review_count')):
+                          return True
+                  elif field == 'effects':
+                      if present(row.get('effects')):
+                          return True
+                      values, _ = normalize_effects(None, row.get('source_title'), row.get('description'))
+                      if values:
+                          return True
+                  elif field == 'documents':
+                      if present(row.get('documents')) or document_pattern.search(blob):
+                          return True
+                  elif field == 'grow_environment':
+                      if any(present(row.get(key)) for key in environment_keys):
+                          return True
+                      if re.search(r'\b(?:indoor|outdoor|greenhouse|mixed[- ]light|sun[- ]grown)\b', blob, re.I):
+                          return True
+              return False
+
+          def product_has(product, field):
+              if field == 'lineage':
+                  return present(product.get('lineage')) and str(product.get('lineage')).casefold() != 'unknown'
+              if field == 'total_thc':
+                  return isinstance(product.get('total_thc'), dict) and product['total_thc'].get('display_percent') is not None
+              if field == 'rating':
+                  return product.get('rating') is not None and product.get('review_count') is not None
+              if field == 'effects':
+                  return bool(product.get('effects'))
+              if field == 'documents':
+                  return any(variant.get('documents') for variant in product.get('variants') or [] if isinstance(variant, dict))
+              if field == 'grow_environment':
+                  return present(product.get('grow_environment')) and str(product.get('grow_environment')).casefold() != 'unknown'
+              return False
+
+          fields = ('lineage', 'total_thc', 'rating', 'effects', 'documents', 'grow_environment')
+          vendors = defaultdict(lambda: {'products': 0, 'fields': {field: Counter() for field in fields}, 'examples': {field: [] for field in fields}})
+          global_counts = {field: Counter() for field in fields}
+
+          for product in details:
+              vendor_name = str(product.get('provenance', {}).get('vendor_name') or product.get('vendor_name') or product.get('vendor_id') or 'unknown')
+              vendor_key = str(product.get('vendor_id') or vendor_name)
+              vendors[vendor_key]['vendor_name'] = vendor_name
+              vendors[vendor_key]['products'] += 1
+              url = canonical(product.get('canonical_product_url'))
+              raw = list(raw_by_url.get(url, []))
+              if not raw:
+                  vendor = vendor_name.casefold().strip()
+                  name = str(product.get('strain_name') or product.get('source_title') or '').casefold().strip()
+                  raw = list(raw_by_vendor_name.get((vendor, name), []))
+              for field in fields:
+                  if product_has(product, field):
+                      category = 'populated'
+                  elif raw_signal(raw, field):
+                      category = 'raw_evidence_not_published'
+                  elif raw:
+                      category = 'no_raw_evidence'
+                  else:
+                      category = 'no_matching_raw_record'
+                  vendors[vendor_key]['fields'][field][category] += 1
+                  global_counts[field][category] += 1
+                  if category != 'populated' and len(vendors[vendor_key]['examples'][field]) < 6:
+                      vendors[vendor_key]['examples'][field].append({
+                          'product_id': product.get('product_id'),
+                          'name': product.get('strain_name'),
+                          'url': product.get('canonical_product_url'),
+                          'category': category,
+                          'raw_rows': len(raw),
+                      })
+
+          vendor_rows = []
+          for vendor_id, value in vendors.items():
+              row = {
+                  'vendor_id': vendor_id,
+                  'vendor_name': value.get('vendor_name'),
+                  'products': value['products'],
+                  'fields': {field: dict(value['fields'][field]) for field in fields},
+                  'examples': value['examples'],
+              }
+              vendor_rows.append(row)
+          vendor_rows.sort(key=lambda row: (-row['products'], row['vendor_id']))
+
+          actionable = {}
+          for field in fields:
+              ranked = sorted(
+                  vendor_rows,
+                  key=lambda row: (-row['fields'][field].get('raw_evidence_not_published', 0), -row['fields'][field].get('no_raw_evidence', 0), row['vendor_id']),
+              )
+              actionable[field] = [
+                  {
+                      'vendor_id': row['vendor_id'],
+                      'vendor_name': row['vendor_name'],
+                      'products': row['products'],
+                      **row['fields'][field],
+                  }
+                  for row in ranked[:12]
+              ]
+
+          report = {
+              'schema_version': 'dropfinder-remaining-metadata-gap-audit-v1',
+              'generation_id': json.loads((root / 'catalog-v4/manifest.json').read_text())['generation_id'],
+              'catalog_products': len(details),
+              'legacy_candidate_rows': len(legacy_rows),
+              'global': {field: dict(counter) for field, counter in global_counts.items()},
+              'actionable_by_field': actionable,
+              'vendors': vendor_rows,
+          }
+          pathlib.Path('remaining-metadata-audit/report.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+          pathlib.Path('remaining-metadata-audit/summary.txt').write_text(
+              '\n'.join(f'{field}: {dict(counter)}' for field, counter in global_counts.items()) + '\n'
+          )
+          print(json.dumps(report['global'], indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: remaining-metadata-gap-audit
+          path: remaining-metadata-audit
+          if-no-files-found: error
+          retention-days: 30
